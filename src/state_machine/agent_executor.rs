@@ -374,10 +374,36 @@ impl AgentStateMachine {
                 stages::memory_write::execute(&self.config, context, &self.event_tx).await
             }
             HarnessStage::Complete => {
+                let duration_ms = context.start_time.elapsed().as_millis() as u64;
+                let total_tokens = context.total_input_tokens + context.total_output_tokens;
+
+                // metrics 이벤트 발행
+                let _ = self.event_tx.send(SseEvent {
+                    event: "metrics".to_string(),
+                    data: serde_json::json!({
+                        "duration_ms": duration_ms,
+                        "input_tokens": context.total_input_tokens,
+                        "output_tokens": context.total_output_tokens,
+                        "total_tokens": total_tokens,
+                        "llm_calls": context.llm_call_count,
+                        "model": context.model_override.as_deref().unwrap_or(&self.config.model),
+                        "eval_score": context.eval_score,
+                    }),
+                    id: None,
+                });
+
+                // last_output에 메트릭 병합
+                let mut output = context.last_output.clone();
+                if let Some(obj) = output.as_object_mut() {
+                    obj.insert("duration_ms".to_string(), serde_json::json!(duration_ms));
+                    obj.insert("total_tokens".to_string(), serde_json::json!(total_tokens));
+                    obj.insert("llm_calls".to_string(), serde_json::json!(context.llm_call_count));
+                }
+
                 Ok(StageResult {
                     stage: HarnessStage::Complete,
-                    output: context.last_output.clone(),
-                    score: None,
+                    output,
+                    score: context.eval_score,
                     error: None,
                 })
             }
@@ -414,9 +440,17 @@ impl AgentStateMachine {
                 }
             }
 
-            // ToolExecute 완료 → 다시 LLMCall로 복귀 (루프)
+            // ToolExecute 완료 → 도구를 실행했으면 LLMCall 복귀, 아니면 Next
             HarnessStage::ToolExecute => {
-                StageTransition::JumpTo(HarnessStage::LLMCall)
+                let tools_executed = result.output["tools_executed"]
+                    .as_u64()
+                    .unwrap_or(0);
+                if tools_executed > 0 {
+                    StageTransition::JumpTo(HarnessStage::LLMCall)
+                } else {
+                    // 도구 0개 실행 = tool_calls가 없었음 → 루프 탈출
+                    StageTransition::Next
+                }
             }
 
             // Decide → 점수 미달이면 Plan으로 점프 (재시도)

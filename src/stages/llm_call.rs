@@ -241,7 +241,26 @@ pub async fn execute(
         return Err(last_error.unwrap_or_else(|| anyhow::anyhow!("LLM call failed after retries")));
     };
     // --- End retry loop ---
-    let has_tool_calls = !response.tool_calls.is_empty();
+    // 도구가 0개인데 LLM이 tool_calls를 hallucination으로 생성한 경우 → 무시
+    let has_tool_calls = if !response.tool_calls.is_empty() && tools.is_empty() {
+        warn!(
+            ghost_tools = response.tool_calls.len(),
+            "LLMCall: LLM generated tool_calls but no tools available — ignoring"
+        );
+        let _ = event_tx.send(SseEvent {
+            event: "debug_log".to_string(),
+            data: serde_json::json!({
+                "message": format!(
+                    "LLMCall: tool_calls {} 무시 (도구 0개, hallucination)",
+                    response.tool_calls.iter().map(|tc| tc.name.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+            }),
+            id: None,
+        });
+        false
+    } else {
+        !response.tool_calls.is_empty()
+    };
 
     if has_tool_calls {
         // assistant 메시지 + tool_calls를 컨텍스트에 추가
