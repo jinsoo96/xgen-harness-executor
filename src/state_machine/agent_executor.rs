@@ -111,7 +111,10 @@ impl AgentStateMachine {
         // ── 입력 복잡도 기반 자동 바이패스 ────────────────────────
         // "hi" 같은 단순 입력에 12단계 전부 돌리는 건 낭비.
         // classify → 현재 파이프라인이 과도하면 다운그레이드.
+        // 단, 사용자가 stages를 명시적으로 지정했으면 바이패스 비활성화.
+        let stages_explicit = input.get("stages_explicit").and_then(|v| v.as_bool()).unwrap_or(false);
         let input_text = input.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if !stages_explicit {
         if let Some(downgraded_preset) = stages::classify::should_downgrade(
             &self.current_preset_name(),
             input_text,
@@ -138,6 +141,7 @@ impl AgentStateMachine {
                 id: None,
             });
         }
+        } // if !stages_explicit
 
         info!(
             agent_id = %self.agent_id,

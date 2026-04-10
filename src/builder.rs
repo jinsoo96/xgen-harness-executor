@@ -55,6 +55,8 @@ pub struct HarnessBuilder {
     user_id: Option<String>,
     attached_files: Vec<serde_json::Value>,
     previous_results: Vec<String>,
+    /// 사용자가 stages를 명시적으로 지정했으면 true — 자동 바이패스 비활성화
+    stages_explicit: bool,
 }
 
 impl Default for HarnessBuilder {
@@ -80,6 +82,7 @@ impl Default for HarnessBuilder {
             user_id: None,
             attached_files: vec![],
             previous_results: vec![],
+            stages_explicit: false,
         }
     }
 }
@@ -127,11 +130,13 @@ impl HarnessBuilder {
     }
 
     /// 단계 목록. 예: `["init", "execute", "validate", "decide", "complete"]`
+    /// 명시적으로 지정 시 자동 바이패스(classify.rs) 비활성화
     pub fn stages<S: AsRef<str>>(mut self, stages: impl IntoIterator<Item = S>) -> Self {
         self.stages = stages
             .into_iter()
             .filter_map(|s| HarnessStage::from_str(s.as_ref()))
             .collect();
+        self.stages_explicit = true;
         self
     }
 
@@ -256,6 +261,9 @@ impl HarnessBuilder {
         }
         if !self.previous_results.is_empty() {
             input["previous_results"] = serde_json::json!(self.previous_results);
+        }
+        if self.stages_explicit {
+            input["stages_explicit"] = serde_json::json!(true);
         }
 
         // 이벤트 수신 태스크

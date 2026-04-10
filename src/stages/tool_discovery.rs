@@ -19,6 +19,13 @@ pub async fn execute(
         let index = registry.get_tool_index();
         let total = registry.total_tools();
 
+        // 전체 도구 이름 목록 (디버그용)
+        let all_tool_names: Vec<String> = registry
+            .get_tools_for_role(&crate::tools::registry::AgentRole::Generator)
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+
         if !index.is_empty() {
             let tool_lines: Vec<String> = index
                 .iter()
@@ -39,8 +46,8 @@ pub async fn execute(
             let _ = event_tx.send(SseEvent {
                 event: "debug_log".to_string(),
                 data: serde_json::json!({
-                    "message": format!("ToolDiscovery: {} categories, {} tools injected",
-                        index.len(), total),
+                    "message": format!("ToolDiscovery: {}개 카테고리, {}개 도구 주입 ({})",
+                        index.len(), total, all_tool_names.join(", ")),
                 }),
                 id: None,
             });
@@ -48,12 +55,23 @@ pub async fn execute(
             info!(categories = index.len(), total, "Tool index injected into system prompt");
             (index.len(), total)
         } else {
-            (0, config.tools.len())
+            let _ = event_tx.send(SseEvent {
+                event: "debug_log".to_string(),
+                data: serde_json::json!({
+                    "message": format!("ToolDiscovery: 카테고리 없음, 전체 도구 {}개 ({})",
+                        total, all_tool_names.join(", ")),
+                }),
+                id: None,
+            });
+            (0, total)
         }
     } else {
         let _ = event_tx.send(SseEvent {
             event: "debug_log".to_string(),
-            data: serde_json::json!({"message": "ToolDiscovery: no tool registry available"}),
+            data: serde_json::json!({
+                "message": format!("ToolDiscovery: MCP 연결 없음 (config.tools={}개)",
+                    config.tools.len()),
+            }),
             id: None,
         });
         (0, 0)
