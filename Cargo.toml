@@ -10,13 +10,18 @@ license = "MIT"
 [lib]
 name = "xgen_harness_executor"
 path = "src/lib.rs"
-# cdylib: Python .so 빌드 (maturin), rlib: Rust 라이브러리 의존성
-crate-type = ["cdylib", "rlib"]
+# rlib: Rust 라이브러리 (python feature로 빌드 시 maturin이 cdylib 자동 설정)
+crate-type = ["rlib"]
 
 [[bin]]
 name = "xgen-harness-executor"
 path = "src/main.rs"
 required-features = ["server"]
+
+[[bin]]
+name = "xgen-harness-stdio"
+path = "src/stdio_main.rs"
+required-features = ["stdio"]
 
 # ── Feature flags ─────────────────────────────────────────────
 # - core (default): 상태 머신 + LLM + MCP + Builder
@@ -24,8 +29,9 @@ required-features = ["server"]
 # - server: HTTP 서버 (axum, CORS, JWT) + 바이너리
 #   → 독립 서비스로 Docker 실행 시 사용
 [features]
-default = ["core", "server"]
+default = ["core", "stdio"]
 core = []
+stdio = ["core"]
 server = ["core", "dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:jsonwebtoken"]
 python = ["core", "dep:pyo3"]
 

@@ -41,6 +41,10 @@ pub mod workflow;
 #[cfg(feature = "server")]
 pub mod api;
 
+// ── stdio JSON-RPC (feature = "stdio" 일 때만) ──────────────
+#[cfg(feature = "stdio")]
+pub mod stdio;
+
 // ── Python 바인딩 (feature = "python" 일 때만) ───────────────
 #[cfg(feature = "python")]
 pub mod python;
