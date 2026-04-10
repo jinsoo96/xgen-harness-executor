@@ -102,6 +102,19 @@ impl JsonRpcNotification {
 
 // ── harness/run 파라미터 ─────────────────────────────────────
 
+/// 첨부 파일 (Python이 텍스트 추출 / base64 인코딩 후 전달)
+#[derive(Debug, Deserialize, Clone, serde::Serialize)]
+pub struct AttachedFile {
+    pub name: String,
+    pub content: String,
+    #[serde(default = "default_file_type")]
+    pub file_type: String,
+    #[serde(default)]
+    pub is_image: bool,
+}
+
+fn default_file_type() -> String { "text/plain".to_string() }
+
 #[derive(Debug, Deserialize)]
 pub struct HarnessRunParams {
     pub text: String,
@@ -115,8 +128,13 @@ pub struct HarnessRunParams {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub stages: Option<Vec<String>>,
+    /// 프리셋 이름 (minimal/standard/anthropic/full) — stages가 없으면 이걸로 결정
+    #[serde(default)]
+    pub harness_pipeline: Option<String>,
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub modules: Option<Vec<String>>,
     #[serde(default = "default_temperature")]
     pub temperature: f64,
     #[serde(default = "default_max_tokens")]
@@ -125,6 +143,22 @@ pub struct HarnessRunParams {
     pub max_retries: u32,
     #[serde(default = "default_eval_threshold")]
     pub eval_threshold: f64,
+
+    // ── 워크플로우 컨텍스트 (xgen-workflow에서 전달) ──
+    #[serde(default)]
+    pub workflow_data: Option<serde_json::Value>,
+    #[serde(default)]
+    pub workflow_id: Option<String>,
+    #[serde(default)]
+    pub workflow_name: Option<String>,
+    #[serde(default)]
+    pub interaction_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub attached_files: Option<Vec<AttachedFile>>,
+    #[serde(default)]
+    pub previous_results: Option<Vec<String>>,
 }
 
 fn default_provider() -> String { "anthropic".to_string() }

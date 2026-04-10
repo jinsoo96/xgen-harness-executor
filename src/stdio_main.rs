@@ -131,11 +131,51 @@ async fn run_harness(params: HarnessRunParams) -> anyhow::Result<String> {
     if let Some(prompt) = params.system_prompt {
         builder = builder.system_prompt(prompt);
     }
+
+    // stages: 명시적 배열 > harness_pipeline 프리셋 > 기본값
     if let Some(stages) = params.stages {
         builder = builder.stages(stages);
+    } else if let Some(ref pipeline) = params.harness_pipeline {
+        use xgen_harness_executor::state_machine::stage::HarnessStage;
+        let preset_stages: Vec<String> = HarnessStage::preset(pipeline)
+            .iter()
+            .map(|s| s.user_id().to_string())
+            .collect();
+        builder = builder.stages(preset_stages);
     }
+
     if let Some(tools) = params.tools {
         builder = builder.tools(tools);
+    }
+    if let Some(modules) = params.modules {
+        builder = builder.modules(modules);
+    }
+
+    // ── 워크플로우 컨텍스트 ──
+    if let Some(wd) = params.workflow_data {
+        builder = builder.workflow_data(wd);
+    }
+    if let Some(id) = params.workflow_id {
+        builder = builder.workflow_id(id);
+    }
+    if let Some(name) = params.workflow_name {
+        builder = builder.workflow_name(name);
+    }
+    if let Some(id) = params.interaction_id {
+        builder = builder.interaction_id(id);
+    }
+    if let Some(id) = params.user_id {
+        builder = builder.user_id(id);
+    }
+    if let Some(files) = params.attached_files {
+        let json_files: Vec<serde_json::Value> = files
+            .into_iter()
+            .map(|f| serde_json::to_value(f).unwrap_or_default())
+            .collect();
+        builder = builder.attached_files(json_files);
+    }
+    if let Some(results) = params.previous_results {
+        builder = builder.previous_results(results);
     }
 
     // 이벤트 콜백에서 stdout 사용 (매번 lock/flush)

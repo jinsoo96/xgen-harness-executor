@@ -225,13 +225,17 @@ pub fn convert_legacy_to_harness(
     };
 
     let agents: Vec<HarnessAgentDef> = if agent_nodes.is_empty() {
+        let mut tools = vec!["mcp://bridge/services".to_string()];
+        if has_non_agent_nodes {
+            tools.push("mcp://bridge/nodes".to_string());
+        }
         vec![HarnessAgentDef {
             id: "auto-agent".to_string(),
             name: workflow_name.to_string(),
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
             stages: StagesConfig::Preset("minimal".to_string()),
-            tools: vec!["mcp://bridge/services".to_string()],
+            tools,
             config: AgentConfigOverride::default(),
         }]
     } else {
@@ -241,6 +245,10 @@ pub fn convert_legacy_to_harness(
                 let mut agent = convert_agent_node(node);
                 // 모든 에이전트에 서비스 도구(문서검색 등) 자동 연결
                 agent.tools.push("mcp://bridge/services".to_string());
+                // 비에이전트 노드 존재 시 Node MCP Bridge 자동 연결
+                if has_non_agent_nodes {
+                    agent.tools.push("mcp://bridge/nodes".to_string());
+                }
                 agent
             })
             .collect()

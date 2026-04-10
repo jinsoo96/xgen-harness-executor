@@ -47,6 +47,14 @@ pub struct HarnessBuilder {
     /// API 키 직접 주입 (없으면 환경변수에서 읽음)
     api_key: Option<String>,
     base_url: Option<String>,
+    // ── 워크플로우 컨텍스트 ──
+    workflow_data: Option<serde_json::Value>,
+    workflow_id: Option<String>,
+    workflow_name: Option<String>,
+    interaction_id: Option<String>,
+    user_id: Option<String>,
+    attached_files: Vec<serde_json::Value>,
+    previous_results: Vec<String>,
 }
 
 impl Default for HarnessBuilder {
@@ -65,6 +73,13 @@ impl Default for HarnessBuilder {
             modules: vec![],
             api_key: None,
             base_url: None,
+            workflow_data: None,
+            workflow_id: None,
+            workflow_name: None,
+            interaction_id: None,
+            user_id: None,
+            attached_files: vec![],
+            previous_results: vec![],
         }
     }
 }
@@ -142,6 +157,43 @@ impl HarnessBuilder {
         self
     }
 
+    // ── 워크플로우 컨텍스트 setter ──
+
+    pub fn workflow_data(mut self, data: serde_json::Value) -> Self {
+        self.workflow_data = Some(data);
+        self
+    }
+
+    pub fn workflow_id(mut self, id: impl Into<String>) -> Self {
+        self.workflow_id = Some(id.into());
+        self
+    }
+
+    pub fn workflow_name(mut self, name: impl Into<String>) -> Self {
+        self.workflow_name = Some(name.into());
+        self
+    }
+
+    pub fn interaction_id(mut self, id: impl Into<String>) -> Self {
+        self.interaction_id = Some(id.into());
+        self
+    }
+
+    pub fn user_id(mut self, id: impl Into<String>) -> Self {
+        self.user_id = Some(id.into());
+        self
+    }
+
+    pub fn attached_files(mut self, files: Vec<serde_json::Value>) -> Self {
+        self.attached_files = files;
+        self
+    }
+
+    pub fn previous_results(mut self, results: Vec<String>) -> Self {
+        self.previous_results = results;
+        self
+    }
+
     /// SSE 이벤트를 콜백으로 수신하며 실행. 완료 시 최종 텍스트 반환.
     pub async fn run_with_events<F>(self, mut on_event: F) -> Result<String>
     where
@@ -182,7 +234,29 @@ impl HarnessBuilder {
             modules: self.modules,
         };
 
-        let input = serde_json::json!({ "text": self.text });
+        let mut input = serde_json::json!({ "text": self.text });
+        // 워크플로우 컨텍스트 주입 — 각 단계가 input에서 필요한 값을 꺼내 씀
+        if let Some(ref wd) = self.workflow_data {
+            input["workflow_data"] = wd.clone();
+        }
+        if let Some(ref id) = self.workflow_id {
+            input["workflow_id"] = serde_json::json!(id);
+        }
+        if let Some(ref name) = self.workflow_name {
+            input["workflow_name"] = serde_json::json!(name);
+        }
+        if let Some(ref id) = self.interaction_id {
+            input["interaction_id"] = serde_json::json!(id);
+        }
+        if let Some(ref id) = self.user_id {
+            input["user_id"] = serde_json::json!(id);
+        }
+        if !self.attached_files.is_empty() {
+            input["attached_files"] = serde_json::json!(self.attached_files);
+        }
+        if !self.previous_results.is_empty() {
+            input["previous_results"] = serde_json::json!(self.previous_results);
+        }
 
         // 이벤트 수신 태스크
         let event_handle = tokio::spawn(async move {

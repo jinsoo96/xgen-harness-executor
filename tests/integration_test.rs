@@ -11,36 +11,57 @@ mod state_machine_tests {
     fn test_stage_presets() {
         use xgen_harness_executor::state_machine::stage::HarnessStage;
 
+        // minimal: input, system_prompt, llm, complete (4단계)
         let minimal = HarnessStage::preset("minimal");
-        assert_eq!(minimal.len(), 3);
-        assert_eq!(minimal[0], HarnessStage::Init);
-        assert_eq!(minimal[1], HarnessStage::Execute);
-        assert_eq!(minimal[2], HarnessStage::Complete);
+        assert_eq!(minimal.len(), 4);
+        assert_eq!(minimal[0], HarnessStage::Bootstrap);
+        assert_eq!(minimal[1], HarnessStage::ContextBuild);
+        assert_eq!(minimal[2], HarnessStage::LLMCall);
+        assert_eq!(minimal[3], HarnessStage::Complete);
 
+        // standard: 7단계
+        let standard = HarnessStage::preset("standard");
+        assert_eq!(standard.len(), 7);
+        assert!(standard.contains(&HarnessStage::Plan));
+        assert!(standard.contains(&HarnessStage::ToolDiscovery));
+
+        // anthropic: 11단계
         let anthropic = HarnessStage::preset("anthropic");
-        assert_eq!(anthropic.len(), 6);
+        assert_eq!(anthropic.len(), 11);
         assert!(anthropic.contains(&HarnessStage::Plan));
         assert!(anthropic.contains(&HarnessStage::Validate));
         assert!(anthropic.contains(&HarnessStage::Decide));
 
+        // full: 12단계
         let full = HarnessStage::preset("full");
-        assert_eq!(full.len(), 6);
+        assert_eq!(full.len(), 12);
+        assert!(full.contains(&HarnessStage::MemoryWrite));
 
         // unknown → minimal 폴백
         let unknown = HarnessStage::preset("nonexistent");
-        assert_eq!(unknown.len(), 3);
+        assert_eq!(unknown.len(), 4);
     }
 
     #[test]
     fn test_stage_display_names() {
         use xgen_harness_executor::state_machine::stage::HarnessStage;
 
-        assert_eq!(HarnessStage::Init.display_name(), "Init");
+        // 12단계 신규 이름
+        assert_eq!(HarnessStage::Bootstrap.display_name(), "Input");
+        assert_eq!(HarnessStage::MemoryRead.display_name(), "Memory");
+        assert_eq!(HarnessStage::ContextBuild.display_name(), "System Prompt");
         assert_eq!(HarnessStage::Plan.display_name(), "Plan");
-        assert_eq!(HarnessStage::Execute.display_name(), "Execute");
+        assert_eq!(HarnessStage::ToolDiscovery.display_name(), "Tool Index");
+        assert_eq!(HarnessStage::ContextCompact.display_name(), "Context");
+        assert_eq!(HarnessStage::LLMCall.display_name(), "LLM");
+        assert_eq!(HarnessStage::ToolExecute.display_name(), "Execute");
         assert_eq!(HarnessStage::Validate.display_name(), "Validate");
         assert_eq!(HarnessStage::Decide.display_name(), "Decide");
+        assert_eq!(HarnessStage::MemoryWrite.display_name(), "Save");
         assert_eq!(HarnessStage::Complete.display_name(), "Complete");
+        // 레거시 compat
+        assert_eq!(HarnessStage::Init.display_name(), "Init");
+        assert_eq!(HarnessStage::Execute.display_name(), "Execute(legacy)");
         assert_eq!(HarnessStage::Error.display_name(), "Error");
     }
 
