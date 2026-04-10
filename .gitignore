@@ -1,0 +1,15 @@
+target/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.dylib
+*.dll
+*.log
+.env
+*.local
+.DS_Store
+*.swp
+*.swo
+*~
