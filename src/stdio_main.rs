@@ -105,12 +105,28 @@ fn main() {
                 req_id,
                 serde_json::json!({ "text": text }),
             ));
+            // stdout fd를 닫아서 Python pipe에 EOF 전달
+            let _ = io::stdout().flush();
+            #[cfg(unix)]
+            {
+                extern "C" { fn close(fd: i32) -> i32; fn _exit(status: i32) -> !; }
+                unsafe { close(1); _exit(0); }  // fd 1 = stdout
+            }
+            #[cfg(not(unix))]
+            std::process::exit(0);
         }
         Err(e) => {
             write_json_line(&JsonRpcError::execution_error(
                 req_id,
                 e.to_string(),
             ));
+            let _ = io::stdout().flush();
+            #[cfg(unix)]
+            {
+                extern "C" { fn close(fd: i32) -> i32; fn _exit(status: i32) -> !; }
+                unsafe { close(1); _exit(1); }
+            }
+            #[cfg(not(unix))]
             std::process::exit(1);
         }
     }
