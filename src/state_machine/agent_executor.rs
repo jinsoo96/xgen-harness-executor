@@ -340,9 +340,7 @@ impl AgentStateMachine {
             }
 
             // ── Phase 2: 계획 ──────────────────────────────
-            HarnessStage::Plan => {
-                stages::plan::execute(&self.config, context, self.provider.as_ref(), &self.event_tx).await
-            }
+            // Plan 단계 삭제됨 — from_str에서 None 반환하므로 여기 도달 안 함
             HarnessStage::ToolDiscovery => {
                 stages::tool_discovery::execute(&self.config, context, &self.event_tx).await
             }
@@ -466,14 +464,11 @@ impl AgentStateMachine {
                 }
             }
 
-            // Decide → 점수 미달이면 Plan으로 점프 (재시도)
+            // Decide → 점수 미달이면 LLMCall로 재시도
             HarnessStage::Decide => {
                 if let Some(score) = result.score {
                     if score < self.config.eval_threshold {
-                        // Plan이 있으면 Plan으로, 없으면 LLMCall로 점프
-                        let target = if self.stages.contains(&HarnessStage::Plan) {
-                            HarnessStage::Plan
-                        } else if self.stages.contains(&HarnessStage::LLMCall) {
+                        let target = if self.stages.contains(&HarnessStage::LLMCall) {
                             HarnessStage::LLMCall
                         } else {
                             HarnessStage::Execute

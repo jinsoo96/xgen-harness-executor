@@ -18,9 +18,7 @@ pub enum HarnessStage {
     /// PromptSectionManager로 시스템 프롬프트 + 입력 메시지 조립
     ContextBuild,
 
-    // ── Phase 2: 계획 ──────────────────────────────────────
-    /// 스프린트 계약 (목표, 필요정보, 검색전략, 완료기준)
-    Plan,
+    // ── Phase 2: 도구 준비 ────────────────────────────────
     /// MCP 도구 탐색 + 시스템 프롬프트에 도구 인덱스 주입
     ToolDiscovery,
 
@@ -35,7 +33,7 @@ pub enum HarnessStage {
     // ── Phase 4: 검증 ──────────────────────────────────────
     /// 독립 평가 LLM 호출 (관련성/완전성/정확성, 0~1 채점)
     Validate,
-    /// 재시도/통과 결정 (score < threshold → Plan으로 점프)
+    /// 재시도/통과 결정 (score < threshold → LLM으로 재시도)
     Decide,
 
     // ── Phase 5: 마무리 ─────────────────────────────────────
@@ -95,7 +93,6 @@ impl HarnessStage {
             HarnessStage::Bootstrap => "Input",
             HarnessStage::MemoryRead => "Memory",
             HarnessStage::ContextBuild => "System Prompt",
-            HarnessStage::Plan => "Plan",
             HarnessStage::ToolDiscovery => "Tool Index",
             HarnessStage::ContextCompact => "Context",
             HarnessStage::LLMCall => "LLM",
@@ -115,7 +112,6 @@ impl HarnessStage {
             HarnessStage::Bootstrap => "입력 설정",
             HarnessStage::MemoryRead => "이전 기억",
             HarnessStage::ContextBuild => "시스템 프롬프트",
-            HarnessStage::Plan => "실행 계획",
             HarnessStage::ToolDiscovery => "도구 인덱싱",
             HarnessStage::ContextCompact => "컨텍스트 최적화",
             HarnessStage::LLMCall => "LLM 호출",
@@ -135,7 +131,6 @@ impl HarnessStage {
             HarnessStage::Bootstrap => "API 키 확인, 설정 초기화",
             HarnessStage::MemoryRead => "이전 실행 결과에서 관련 내용 불러오기 (키워드 매칭)",
             HarnessStage::ContextBuild => "에이전트 역할/지시사항 조립 + 입력 메시지 구성",
-            HarnessStage::Plan => "목표 선언, 검색 전략, 완료 기준 수립 (스프린트 계약)",
             HarnessStage::ToolDiscovery => "연결된 MCP 도구 목록 탐색 → 시스템 프롬프트에 주입",
             HarnessStage::ContextCompact => "토큰 한도 초과 시 자동 압축 (3단계: 잘라내기→RAG축소→요약)",
             HarnessStage::LLMCall => "LLM API 스트리밍 호출 → tool_calls 있으면 Execute로",
@@ -153,7 +148,7 @@ impl HarnessStage {
     pub fn phase(&self) -> &'static str {
         match self {
             HarnessStage::Bootstrap | HarnessStage::MemoryRead | HarnessStage::ContextBuild | HarnessStage::Init => "init",
-            HarnessStage::Plan | HarnessStage::ToolDiscovery => "plan",
+            HarnessStage::ToolDiscovery => "plan",
             HarnessStage::ContextCompact | HarnessStage::LLMCall | HarnessStage::ToolExecute | HarnessStage::Execute => "exec",
             HarnessStage::Validate | HarnessStage::Decide => "validate",
             HarnessStage::MemoryWrite | HarnessStage::Complete => "finish",
@@ -172,7 +167,7 @@ impl HarnessStage {
             "input"         => Some(HarnessStage::Bootstrap),
             "memory"        => Some(HarnessStage::MemoryRead),
             "system_prompt" | "systemprompt" => Some(HarnessStage::ContextBuild),
-            "plan"          => Some(HarnessStage::Plan),
+            "plan"          => None,  // Plan 단계 삭제됨
             "tool_index"    | "toolindex"    => Some(HarnessStage::ToolDiscovery),
             "context"       => Some(HarnessStage::ContextCompact),
             "llm"           => Some(HarnessStage::LLMCall),
@@ -205,7 +200,6 @@ impl HarnessStage {
             HarnessStage::Bootstrap     => "input",
             HarnessStage::MemoryRead    => "memory",
             HarnessStage::ContextBuild  => "system_prompt",
-            HarnessStage::Plan          => "plan",
             HarnessStage::ToolDiscovery => "tool_index",
             HarnessStage::ContextCompact=> "context",
             HarnessStage::LLMCall       => "llm",
