@@ -431,7 +431,7 @@ impl AgentStateMachine {
     /// 전이 결정 로직
     fn decide_transition(&self, stage: HarnessStage, result: &StageResult) -> StageTransition {
         match stage {
-            // LLMCall → tool_calls 있으면 ToolExecute로, 없으면 Next
+            // LLMCall → tool_calls 있으면 ToolExecute로, 없으면 ToolExecute 건너뛰기
             HarnessStage::LLMCall => {
                 let has_tool_calls = result.output["has_tool_calls"]
                     .as_bool()
@@ -439,8 +439,17 @@ impl AgentStateMachine {
                 if has_tool_calls && self.stages.contains(&HarnessStage::ToolExecute) {
                     StageTransition::JumpTo(HarnessStage::ToolExecute)
                 } else {
-                    // tool_calls 없음 = 최종 응답 → Next (Validate 또는 MemoryWrite 또는 Complete)
-                    StageTransition::Next
+                    // tool_calls 없음 = 최종 응답 → ToolExecute 건너뛰고 다음 단계로
+                    // 파이프라인에서 ToolExecute 다음 단계를 찾아 점프
+                    if let Some(te_idx) = self.stages.iter().position(|s| *s == HarnessStage::ToolExecute) {
+                        if te_idx + 1 < self.stages.len() {
+                            StageTransition::JumpTo(self.stages[te_idx + 1])
+                        } else {
+                            StageTransition::Next
+                        }
+                    } else {
+                        StageTransition::Next
+                    }
                 }
             }
 

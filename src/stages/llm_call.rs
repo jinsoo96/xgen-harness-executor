@@ -264,11 +264,22 @@ pub async fn execute(
 
     if has_tool_calls {
         // assistant 메시지 + tool_calls를 컨텍스트에 추가
-        // ToolExecute 단계에서 읽어서 실행
+        // OpenAI 형식: tool_calls[].function.{name, arguments}
+        let tool_calls_json: Vec<serde_json::Value> = response.tool_calls.iter().map(|tc| {
+            serde_json::json!({
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": serde_json::to_string(&tc.input).unwrap_or_default(),
+                }
+            })
+        }).collect();
+
         context.messages.push(serde_json::json!({
             "role": "assistant",
             "content": response.content,
-            "tool_calls": response.tool_calls,
+            "tool_calls": tool_calls_json,
         }));
 
         for tc in &response.tool_calls {

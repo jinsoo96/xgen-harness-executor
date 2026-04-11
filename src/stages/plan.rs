@@ -32,21 +32,28 @@ pub async fn execute(
         context.system_prompt, SPRINT_CONTRACT_PROMPT
     );
 
+    // Plan은 도구 없이 호출 → tool/assistant(tool_calls) 메시지 제거
+    let plan_messages: Vec<ChatMessage> = context.messages.iter()
+        .filter(|m| {
+            let role = m["role"].as_str().unwrap_or("");
+            role != "tool" && !(role == "assistant" && !m["tool_calls"].is_null())
+        })
+        .map(|m| ChatMessage {
+            role: m["role"].as_str().unwrap_or("user").to_string(),
+            content: MessageContent::Text(
+                m["content"].as_str().unwrap_or("").to_string()
+            ),
+            tool_calls: None,
+            tool_call_id: None,
+        })
+        .collect();
+
     let request = ChatRequest {
         model: config.model.clone(),
-        messages: context.messages.clone().into_iter().map(|m| {
-            ChatMessage {
-                role: m["role"].as_str().unwrap_or("user").to_string(),
-                content: MessageContent::Text(
-                    m["content"].as_str().unwrap_or("").to_string()
-                ),
-                tool_calls: None,
-                tool_call_id: None,
-            }
-        }).collect(),
+        messages: plan_messages,
         system: Some(plan_system),
         temperature: config.temperature,
-        max_tokens: 1024, // 계획은 짧게
+        max_tokens: 1024,
         tools: None,
     };
 
