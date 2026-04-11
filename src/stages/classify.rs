@@ -1,15 +1,15 @@
 //! 입력 복잡도 분류기 — 단순 인사/질문 vs 복잡한 분석 요청 판별
 //!
 //! "hi" → minimal (4단계)
-//! "이 CSV 분석해줘" → standard (7단계)
-//! "RAG 검색 후 보고서 작성해줘, 품질 검증까지" → full (12단계)
+//! "이 CSV 분석해줘" → standard (6단계)
+//! "RAG 검색 후 보고서 작성해줘, 품질 검증까지" → full (8단계)
 //!
 //! LLM 호출 없이 규칙 기반으로 판별 (0ms).
 
 /// 입력 복잡도 등급
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputComplexity {
-    /// 단순 인사/짧은 질문 — Plan/Validate 불필요
+    /// 단순 인사/짧은 질문 — Validate 불필요
     Simple,
     /// 도구 사용이 필요한 중간 복잡도
     Moderate,

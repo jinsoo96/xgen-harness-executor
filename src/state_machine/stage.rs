@@ -69,21 +69,15 @@ impl HarnessStage {
             // 4단계: 단순 대화
             "minimal" | "none" => &["input", "system_prompt", "llm", "complete"],
 
-            // 7단계: 계획 + 도구
-            "claude_code" | "standard" => &[
-                "input", "system_prompt", "plan", "tool_index", "llm", "execute", "complete",
+            // 6단계: 도구 사용
+            "standard" | "claude_code" => &[
+                "input", "system_prompt", "tool_index", "llm", "execute", "complete",
             ],
 
-            // 11단계: 계획 + 도구 + 검증/재시도
-            "anthropic" => &[
-                "input", "memory", "system_prompt", "plan", "tool_index",
-                "context", "llm", "execute", "validate", "decide", "complete",
-            ],
-
-            // 12단계: 전체
-            "full" => &[
-                "input", "memory", "system_prompt", "plan", "tool_index",
-                "context", "llm", "execute", "validate", "decide", "save", "complete",
+            // 8단계: 도구 + 검증/재시도 + 저장
+            "full" | "anthropic" => &[
+                "input", "system_prompt", "tool_index", "llm", "execute",
+                "validate", "decide", "save", "complete",
             ],
 
             // 하위 호환
