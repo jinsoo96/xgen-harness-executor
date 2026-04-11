@@ -276,7 +276,10 @@ def scan_nodes(nodes_dir: str, categories: Optional[List[str]] = None) -> List[N
             if categories and fid not in categories:
                 continue
 
+            # OpenAI는 도구 이름에 [a-zA-Z0-9_-]만 허용
+            import re
             tool_id = f"node_{nid.replace('/', '_')}"
+            tool_id = re.sub(r'[^a-zA-Z0-9_-]', '_', tool_id)
             wrapper = NodeToolWrapper(obj, tool_id)
             discovered.append(wrapper)
             print(f"  + {tool_id} ({wrapper.node_name})", file=sys.stderr)
