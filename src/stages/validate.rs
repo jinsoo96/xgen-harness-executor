@@ -28,10 +28,9 @@ Score each criterion from 0.0 to 1.0:
    - Is the information factually correct?
    - Are claims properly grounded in the provided context?
 
-4. **Contract Compliance** (weight: 0.2)
-   - Did the response fulfill the Completion Criteria from the Sprint Plan?
-   - Were the planned tools/strategies actually used?
-   - If no sprint plan was provided, score 1.0 for this criterion.
+4. **Clarity** (weight: 0.2)
+   - Is the response clear and well-structured?
+   - Is the language appropriate for the user?
 
 ## Output Format
 
@@ -41,7 +40,7 @@ Respond with ONLY a JSON object:
   "relevance": 0.0-1.0,
   "completeness": 0.0-1.0,
   "accuracy": 0.0-1.0,
-  "contract_compliance": 0.0-1.0,
+  "clarity": 0.0-1.0,
   "overall": 0.0-1.0,
   "verdict": "pass" | "retry",
   "feedback": "Brief explanation for the score"
@@ -81,31 +80,9 @@ pub async fn execute(
         .and_then(|m| m["content"].as_str())
         .unwrap_or("");
 
-    // 스프린트 계약 추출 (system_prompt에서 "## Current Sprint Plan" 이후)
-    let sprint_contract = context
-        .system_prompt
-        .find("## Current Sprint Plan\n")
-        .map(|pos| {
-            let start = pos + "## Current Sprint Plan\n".len();
-            // 다음 ## 섹션 전까지 또는 끝까지
-            let end = context.system_prompt[start..]
-                .find("\n\n## ")
-                .map(|e| start + e)
-                .unwrap_or(context.system_prompt.len());
-            context.system_prompt[start..end].trim().to_string()
-        })
-        .unwrap_or_default();
-
-    // 평가 요청 (스프린트 계약 포함)
-    let contract_section = if sprint_contract.is_empty() {
-        String::from("\n\n(No sprint plan was provided)")
-    } else {
-        format!("\n\n## Sprint Plan (Completion Criteria)\n{}", sprint_contract)
-    };
-
     let eval_message = format!(
-        "## User Question\n{}\n\n## Assistant Response\n{}{}\n\nEvaluate the response quality against ALL criteria including contract compliance.",
-        user_question, last_output_text, contract_section
+        "## User Question\n{}\n\n## Assistant Response\n{}\n\nEvaluate the response quality against ALL criteria.",
+        user_question, last_output_text
     );
 
     let request = ChatRequest {
