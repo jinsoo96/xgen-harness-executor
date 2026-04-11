@@ -10,7 +10,6 @@ license = "MIT"
 [lib]
 name = "xgen_harness_executor"
 path = "src/lib.rs"
-# rlib: Rust 라이브러리 (python feature로 빌드 시 maturin이 cdylib 자동 설정)
 crate-type = ["rlib"]
 
 [[bin]]
@@ -33,7 +32,6 @@ default = ["core", "stdio"]
 core = []
 stdio = ["core"]
 server = ["core", "dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:jsonwebtoken"]
-python = ["core", "dep:pyo3"]
 
 # ── Core dependencies (항상 포함) ─────────────────────────────
 [dependencies]
@@ -84,10 +82,8 @@ tower-http = { version = "0.5", features = ["trace", "cors", "request-id"], opti
 hyper = { version = "1", features = ["full"], optional = true }
 jsonwebtoken = { version = "9", optional = true }
 
-# Python 바인딩
-pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
 [profile.release]
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = "thin"
 opt-level = "z"
