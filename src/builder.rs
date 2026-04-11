@@ -284,6 +284,7 @@ impl HarnessBuilder {
         );
 
         let result = machine.run(input).await?;
+        drop(machine);  // tx를 drop하여 event_handle이 종료되도록
         event_handle.await.ok();
 
         // 최종 텍스트 추출
