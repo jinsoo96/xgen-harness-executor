@@ -45,10 +45,6 @@ pub mod api;
 #[cfg(feature = "stdio")]
 pub mod stdio;
 
-// ── Python 바인딩 (feature = "python" 일 때만) ───────────────
-#[cfg(feature = "python")]
-pub mod python;
-
 /// 자주 쓰는 타입 한 번에 임포트
 pub mod prelude {
     pub use crate::events::SseEvent;
