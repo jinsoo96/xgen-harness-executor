@@ -117,6 +117,25 @@ def _register_defaults() -> None:
     register_strategy("s10_decide", "decide", "threshold", ThresholdDecide)
     register_strategy("s10_decide", "decide", "always_pass", AlwaysPassDecide)
 
+    # s03 — cache
+    from ..stages.strategies.cache import AnthropicCacheStrategy, NoCacheStrategy
+    register_strategy("s03_system_prompt", "cache", "anthropic_cache", AnthropicCacheStrategy)
+    register_strategy("s03_system_prompt", "cache", "no_cache", NoCacheStrategy)
+
+    # s07 — token tracker, thinking processor, response parser
+    from ..stages.strategies.token_tracker import DefaultTokenTracker, ModelPricingCalculator
+    register_strategy("s07_llm", "token_tracker", "default", DefaultTokenTracker)
+    register_strategy("s07_llm", "cost_calculator", "model_pricing", ModelPricingCalculator)
+
+    from ..stages.strategies.thinking import DefaultThinkingProcessor, NoThinkingProcessor
+    register_strategy("s07_llm", "thinking", "default", DefaultThinkingProcessor)
+    register_strategy("s07_llm", "thinking", "disabled", NoThinkingProcessor)
+
+    from ..stages.strategies.parser import AnthropicResponseParser, OpenAIResponseParser, DefaultCompletionDetector
+    register_strategy("s07_llm", "parser", "anthropic", AnthropicResponseParser)
+    register_strategy("s07_llm", "parser", "openai", OpenAIResponseParser)
+    register_strategy("s07_llm", "completion_detector", "default", DefaultCompletionDetector)
+
     # 공통 — scorer (와일드카드)
     register_strategy("*", "scorer", "weighted", WeightedScorer)
 
