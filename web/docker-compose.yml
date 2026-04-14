@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: web/backend/Dockerfile
+    ports:
+      - "8088:8088"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - MCP_STATION_URL=${MCP_STATION_URL:-http://xgen-mcp-station:8000}
+      - XGEN_CORE_URL=${XGEN_CORE_URL:-http://xgen-core:8000}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
