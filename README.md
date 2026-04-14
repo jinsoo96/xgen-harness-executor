@@ -64,24 +64,53 @@ Level 2 — Strategy (갈아끼기)
   "Validate 스테이지에서 llm_judge 대신 rule_based로 검증한다"
 ```
 
-### 등록된 Strategy (17개)
+### 등록된 Strategy (26개)
 
-| Stage | Strategy | 설명 |
-|-------|----------|------|
-| s04 Tool Index | `progressive_3level` | 3단계 점진적 디스커버리 (기본) |
-| | `eager_load` | 모든 도구 스키마 즉시 로드 |
-| s06 Context | `token_budget` | 토큰 예산 기반 3단계 압축 |
-| | `sliding_window` | 슬라이딩 윈도우 (최근 N개) |
-| s07 LLM | `exponential_backoff` | 429/529 지수 백오프 재시도 |
-| | `no_retry` | 재시도 없음 |
-| s08 Execute | `sequential` | 순차 도구 실행 |
-| | `parallel` | 병렬 도구 실행 |
-| | `composite` / `mcp` / `builtin` | 도구 라우팅 |
-| s09 Validate | `llm_judge` | 독립 LLM 4가지 기준 평가 |
-| | `rule_based` | 규칙 기반 (길이/키워드) |
-| | `none` | 검증 비활성화 |
-| s10 Decide | `threshold` | 도구 호출 + 점수 기반 판단 |
-| | `always_pass` | 항상 완료 (루프 없음) |
+geny-harness의 Guard/Cache/Token/Think/Parse 패턴을 차용하여 확장.
+
+| Stage | Slot | Strategy | 설명 |
+|-------|------|----------|------|
+| s03 System Prompt | cache | `anthropic_cache` | Anthropic prompt caching 마커 적용 |
+| | | `no_cache` | 캐싱 비활성화 |
+| s04 Tool Index | discovery | `progressive_3level` | 3단계 점진적 디스커버리 (기본) |
+| | | `eager_load` | 모든 도구 스키마 즉시 로드 |
+| s06 Context | compactor | `token_budget` | 토큰 예산 기반 3단계 압축 |
+| | | `sliding_window` | 슬라이딩 윈도우 (최근 N개) |
+| s07 LLM | retry | `exponential_backoff` | 429/529 지수 백오프 재시도 |
+| | | `no_retry` | 재시도 없음 |
+| | token_tracker | `default` | API 응답에서 토큰 사용량 추적 |
+| | cost_calculator | `model_pricing` | 12개 모델 가격 테이블 기반 비용 계산 |
+| | thinking | `default` | extended thinking block 처리 + 이벤트 |
+| | | `disabled` | thinking 비활성화 |
+| | parser | `anthropic` | Anthropic 응답 파싱 (content blocks) |
+| | | `openai` | OpenAI 응답 파싱 (choices/tool_calls) |
+| | completion_detector | `default` | end_turn/stop 완료 신호 감지 |
+| s08 Execute | executor | `sequential` | 순차 도구 실행 |
+| | | `parallel` | 병렬 도구 실행 |
+| | router | `composite` / `mcp` / `builtin` | 도구 라우팅 |
+| s09 Validate | evaluation | `llm_judge` | 독립 LLM 4가지 기준 평가 |
+| | | `rule_based` | 규칙 기반 (길이/키워드) |
+| | | `none` | 검증 비활성화 |
+| s10 Decide | decide | `threshold` | Guard 체인 + 점수 기반 판단 |
+| | | `always_pass` | 항상 완료 (루프 없음) |
+| 공통 | scorer | `weighted` | 가중평균 점수 계산 |
+
+### Guard 체인 (geny s04_guard 차용)
+
+s10 Decide에서 하드코딩 가드레일 대신 Guard 체인을 사용:
+
+```python
+chain = GuardChain()
+chain.add(IterationGuard())    # 반복 횟수 초과
+chain.add(CostBudgetGuard())   # 비용 예산 초과
+chain.add(TokenBudgetGuard())  # 토큰 예산 초과
+chain.add(ContentGuard())      # 콘텐츠 필터링 (확장용)
+
+results = chain.check_all(state)
+# → [GuardResult(passed=True/False, guard_name, reason, severity)]
+```
+
+Guard는 Strategy ABC를 구현하므로 커스텀 Guard를 만들어서 체인에 추가 가능.
 
 ## Stage I/O 계약
 
@@ -153,7 +182,7 @@ xgen_harness/
 │   ├── state.py             # PipelineState
 │   ├── config.py            # HarnessConfig
 │   ├── artifact.py          # Artifact Store
-│   ├── strategy_resolver.py # Strategy Resolver (17개)
+│   ├── strategy_resolver.py # Strategy Resolver (26개)
 │   ├── presets.py           # 5개 Preset
 │   ├── registry.py          # ArtifactRegistry
 │   ├── builder.py           # PipelineBuilder
@@ -162,7 +191,12 @@ xgen_harness/
 ├── stages/                  # 12개 스테이지 구현체
 │   ├── s01_input.py ~ s12_complete.py
 │   ├── interfaces.py        # Strategy ABC 7종
-│   └── strategies/          # Strategy 구현체 (14개)
+│   └── strategies/          # Strategy 구현체 (26개)
+│       ├── guard.py         # GuardChain + 4 Guards (geny s04)
+│       ├── cache.py         # Prompt Caching (geny s05)
+│       ├── token_tracker.py # Token Tracker + Cost Calculator (geny s07)
+│       ├── thinking.py      # Thinking Processor (geny s08)
+│       ├── parser.py        # Response Parser (geny s09)
 │
 ├── providers/               # LLM 프로바이더
 │   ├── anthropic.py         # Anthropic (httpx SSE)
