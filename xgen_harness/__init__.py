@@ -16,6 +16,7 @@ Usage:
 from .core.pipeline import Pipeline
 from .core.state import PipelineState, TokenUsage
 from .core.config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
+from .core.presets import PRESETS, Preset, get_preset, apply_preset, list_presets
 from .core.stage import Stage, StageDescription, StrategyInfo
 from .core.registry import ArtifactRegistry
 from .events.emitter import EventEmitter
@@ -53,6 +54,11 @@ __all__ = [
     "HarnessConfig",
     "ALL_STAGES",
     "REQUIRED_STAGES",
+    "PRESETS",
+    "Preset",
+    "get_preset",
+    "apply_preset",
+    "list_presets",
     "Stage",
     "StageDescription",
     "StrategyInfo",
