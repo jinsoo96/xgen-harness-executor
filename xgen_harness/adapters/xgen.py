@@ -47,9 +47,12 @@ class XgenAdapter:
     Args:
         db_manager: xgen-workflow DatabaseClient (Optional)
         services: 직접 ServiceProvider 주입 (Optional, db_manager보다 우선)
+        llm_factory: xgen LLM 생성 함수 (Optional). (provider, model, api_key, **kwargs) → LangChain BaseChatModel.
+                     지정하면 하네스 내장 프로바이더 대신 xgen의 LLM을 사용.
     """
 
-    def __init__(self, db_manager=None, services: Optional[ServiceProvider] = None):
+    def __init__(self, db_manager=None, services: Optional[ServiceProvider] = None, llm_factory=None):
+        self._llm_factory = llm_factory
         if services:
             self._services = services
         elif db_manager:
@@ -156,6 +159,19 @@ class XgenAdapter:
             workflow_data=workflow_data,
         )
         state.metadata["services"] = self._services
+
+        # ━━━━ 7.5. xgen LLM Factory — xgen 프로바이더 직접 사용 ━━━━
+        if self._llm_factory:
+            try:
+                xgen_llm = self._llm_factory(
+                    provider=provider, model=model, api_key=api_key,
+                    temperature=float(temperature), max_tokens=config.max_tokens,
+                )
+                from ..providers import wrap_langchain
+                state.provider = wrap_langchain(xgen_llm, provider)
+                logger.info("[Adapter] xgen LLM factory 사용: %s/%s", provider, model)
+            except Exception as e:
+                logger.warning("[Adapter] xgen LLM factory 실패, 내장 프로바이더 폴백: %s", e)
 
         # ━━━━ 8. API 키 환경변수 설정 (프로바이더가 읽을 수 있도록) ━━━━
         env_key = get_api_key_env(provider)
