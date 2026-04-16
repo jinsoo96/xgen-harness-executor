@@ -26,6 +26,11 @@ class SaveStage(Stage):
         return 11
 
     async def execute(self, state: PipelineState) -> dict:
+        # save_enabled가 False이면 저장 건너뛰기
+        if not self.get_param("save_enabled", state, True):
+            logger.info("[Save] save_enabled=False, skipping")
+            return {"saved": False, "reason": "save_enabled=False"}
+
         # DB 저장은 xgen-workflow의 execution_io와 호환
         # 여기서는 실행 결과를 metadata에 정리
         table_name = self.get_param("table_name", state, "harness_execution_log")

@@ -42,12 +42,21 @@ class ToolIndexStage(Stage):
         if selected_mcp_sessions:
             await self._discover_selected_mcp_tools(selected_mcp_sessions, state)
 
-        # 2. Strategy 디스패치로 인덱스 생성 (progressive_3level / eager_load / none)
+        # 2. builtin_tools 필터링 — 선택된 빌트인만 추가
+        selected_builtins: list[str] = self.get_param("builtin_tools", state, ["discover_tools"])
+
+        # 3. Strategy 디스패치로 인덱스 생성 (progressive_3level / eager_load / none)
         strategy = self.resolve_strategy("discovery", state, "progressive_3level")
         if not strategy:
             from .strategies.discovery import ProgressiveDiscovery
             strategy = ProgressiveDiscovery()
         tool_index, augmented_defs = await strategy.discover(state.tool_definitions, state)
+
+        # discover_tools 빌트인은 selected_builtins에 포함된 경우만 유지
+        if "discover_tools" not in selected_builtins:
+            augmented_defs = [td for td in augmented_defs if td.get("name") != "discover_tools"]
+            tool_index = {k: v for k, v in tool_index.items() if k != "discover_tools"}
+            logger.info("[Tool Index] discover_tools excluded (not in builtin_tools)")
 
         state.tool_definitions = augmented_defs
         state.tool_index = tool_index

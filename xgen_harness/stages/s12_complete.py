@@ -30,6 +30,18 @@ class CompleteStage(Stage):
         # 최종 출력 확정
         state.final_output = state.last_assistant_text or ""
 
+        # output_format 적용
+        fmt = self.get_param("output_format", state, "text")
+        if fmt == "json" and state.final_output:
+            import json as _json
+            state.final_output = _json.dumps({
+                "content": state.final_output,
+                "model": state.provider.model_name if state.provider else "",
+                "tokens": state.token_usage.total,
+            }, ensure_ascii=False, indent=2)
+        elif fmt == "markdown" and state.final_output:
+            state.final_output = f"## Response\n\n{state.final_output}\n\n---\n*Model: {state.provider.model_name if state.provider else 'unknown'} | Tokens: {state.token_usage.total}*"
+
         # 메트릭스 이벤트 발행
         metrics = {
             "duration_ms": state.elapsed_ms,

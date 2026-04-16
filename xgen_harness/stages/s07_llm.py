@@ -27,7 +27,7 @@ RETRY_DELAYS = {
     "overload": [1, 2, 4],
     "server": [2, 4, 8],
 }
-MAX_RETRIES = 3
+DEFAULT_MAX_RETRIES = 3
 
 
 class LLMStage(Stage):
@@ -95,26 +95,27 @@ class LLMStage(Stage):
     async def _call_with_retry(self, state: PipelineState) -> tuple[str, list[dict], TokenUsage]:
         """재시도 로직 포함 LLM 호출"""
         config = state.config
+        max_retries = int(self.get_param("max_retries", state, DEFAULT_MAX_RETRIES))
         last_error: Optional[Exception] = None
 
-        for attempt in range(MAX_RETRIES + 1):
+        for attempt in range(max_retries + 1):
             try:
                 return await self._single_call(state)
             except RateLimitError as e:
                 last_error = e
                 delay = RETRY_DELAYS["rate_limit"][min(attempt, 2)]
-                logger.warning("[LLM] Rate limited, retry %d/%d after %ds", attempt + 1, MAX_RETRIES, delay)
+                logger.warning("[LLM] Rate limited, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                 await asyncio.sleep(delay)
             except OverloadError as e:
                 last_error = e
                 delay = RETRY_DELAYS["overload"][min(attempt, 2)]
-                logger.warning("[LLM] Overloaded, retry %d/%d after %ds", attempt + 1, MAX_RETRIES, delay)
+                logger.warning("[LLM] Overloaded, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                 await asyncio.sleep(delay)
             except ProviderError as e:
-                if e.recoverable and attempt < MAX_RETRIES:
+                if e.recoverable and attempt < max_retries:
                     last_error = e
                     delay = RETRY_DELAYS["server"][min(attempt, 2)]
-                    logger.warning("[LLM] Provider error, retry %d/%d after %ds", attempt + 1, MAX_RETRIES, delay)
+                    logger.warning("[LLM] Provider error, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                     await asyncio.sleep(delay)
                 else:
                     raise

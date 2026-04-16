@@ -63,7 +63,7 @@ class ContextStage(Stage):
         db_connections: list[str] = self.get_param("db_connections", state, [])
         if db_connections:
             # TODO: DB 스키마/데이터를 가져와서 컨텍스트에 추가
-            logger.info("[Context] DB connections selected: %s (not yet implemented)", db_connections)
+            logger.info("[Context] db_connections: %d selected (not yet implemented)", len(db_connections))
             results["db_results"] = len(db_connections)
 
         # ── 3. 토큰 예산 관리 ──
