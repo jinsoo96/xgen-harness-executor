@@ -45,7 +45,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
         ],
         "behavior": [
-            "API 키 해석: 환경변수 → xgen-core config → 폴백",
+            "API 키 해석: 환경변수 → Config 서비스 → 폴백",
             "MCP 도구 자동 수집 (워크플로우 MCP 노드에서)",
             "멀티모달 입력 지원 (텍스트 + 이미지 + 파일)",
         ],
@@ -76,7 +76,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "DB에서 최근 N개 실행 결과 조회",
             "harness_execution_log → execution_io → chat_session 폴백",
             "각 결과 2K자로 제한",
-            "문서 소스: xgen-documents 임베딩 검색 (선택 시)",
+            "문서 소스: Documents 서비스 임베딩 검색 (선택 시)",
         ],
     },
     "s03_system_prompt": {
@@ -144,8 +144,8 @@ STAGE_CONFIGS: dict[str, dict] = {
             "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",
             "Level 2: discover_tools로 상세 스키마 조회",
             "Level 3: 실제 도구 실행 (s08_execute)",
-            "RAG: xgen-documents API로 벡터 검색 → 시스템 프롬프트에 주입",
-            "MCP: xgen-mcp-station에서 도구 자동 디스커버리",
+            "RAG: Documents API로 벡터 검색 → 시스템 프롬프트에 주입",
+            "MCP: MCP 서비스에서 도구 자동 디스커버리",
         ],
     },
     "s05_plan": {
@@ -259,7 +259,7 @@ STAGE_CONFIGS: dict[str, dict] = {
         "behavior": [
             "순차 실행 (에러 허용)",
             "50K 문자 예산 초과 시 결과 축약",
-            "MCP → xgen-mcp-station HTTP 호출",
+            "MCP → MCP 서비스 HTTP 호출",
             "discover_tools 빌트인 (Progressive Disclosure L2)",
         ],
     },
