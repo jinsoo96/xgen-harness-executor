@@ -126,9 +126,9 @@ class LangChainAdapter(LLMProvider):
                                     tool_input=block.get("input", {}),
                                 )
 
-                # 도구 호출 (OpenAI 스타일)
+                # 도구 호출 (OpenAI 스타일) — Anthropic content blocks에서 이미 처리된 경우 스킵
                 tool_calls = getattr(chunk, "tool_calls", None)
-                if tool_calls:
+                if tool_calls and not isinstance(content, list):
                     for tc in tool_calls:
                         yield ProviderEvent(
                             type=ProviderEventType.TOOL_USE,
