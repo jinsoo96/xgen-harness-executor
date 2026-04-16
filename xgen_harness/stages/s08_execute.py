@@ -137,11 +137,16 @@ class ExecuteStage(Stage):
             result = await tool_instance.execute(tool_input)
             return result.content
 
-        # MCP 도구 — mcp_tools 매핑에서 검색
-        mcp_mapping = state.metadata.get("mcp_tool_mapping", {})
-        if tool_name in mcp_mapping:
+        # MCP 도구 — ServiceProvider.mcp 우선, 레거시 MCPClient 폴백
+        mcp_sessions = state.metadata.get("mcp_tool_sessions", state.metadata.get("mcp_tool_mapping", {}))
+        if tool_name in mcp_sessions:
+            session_id = mcp_sessions[tool_name]
+            # ServiceProvider 경로 (어댑터/bridge에서 주입)
+            services = state.metadata.get("services")
+            if services and services.mcp:
+                return await services.mcp.call_tool(session_id, tool_name, tool_input)
+            # 레거시 폴백 (ServiceProvider 없을 때)
             from ..tools.mcp_client import MCPClient
-            session_id = mcp_mapping[tool_name]
             client = MCPClient()
             return await client.call_tool(session_id, tool_name, tool_input)
 
