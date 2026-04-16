@@ -89,12 +89,27 @@ def list_providers() -> list[str]:
 
 
 def _register_defaults() -> None:
+    """빌트인 프로바이더 등록.
+
+    - anthropic: Anthropic Messages API (httpx SSE)
+    - openai: OpenAI Chat Completions API (httpx SSE)
+    - google: Gemini → OpenAI 호환 엔드포인트
+    - bedrock: AWS Bedrock → OpenAI 호환 (프록시 또는 직접)
+    - vllm: vLLM → OpenAI 호환 엔드포인트
+
+    새 프로바이더 추가: register_provider("name", ProviderClass)
+    """
     if _REGISTRY:
         return
     from .anthropic import AnthropicProvider
     from .openai import OpenAIProvider
+
     _REGISTRY["anthropic"] = AnthropicProvider
     _REGISTRY["openai"] = OpenAIProvider
+    # OpenAI 호환 프로바이더 — 동일 클래스, base_url만 다름
+    _REGISTRY["google"] = OpenAIProvider
+    _REGISTRY["bedrock"] = OpenAIProvider
+    _REGISTRY["vllm"] = OpenAIProvider
 
 
 __all__ = [
