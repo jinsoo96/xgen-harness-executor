@@ -43,8 +43,9 @@ from .core.strategy_resolver import StrategyResolver
 from .core.session import HarnessSession, SessionManager
 from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult
 from .orchestrator.multi_agent import MultiAgentExecutor
+from .core.services import ServiceProvider, NullServiceProvider
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # Core
@@ -90,4 +91,7 @@ __all__ = [
     "DAGEdge",
     "DAGResult",
     "MultiAgentExecutor",
+    # Services (pluggable)
+    "ServiceProvider",
+    "NullServiceProvider",
 ]
