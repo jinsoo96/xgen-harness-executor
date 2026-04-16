@@ -76,6 +76,14 @@ class InputStage(Stage):
         elif mcp_sessions:
             await self._discover_mcp_tools_legacy(mcp_sessions, state)
 
+        # 7. 입력 복잡도 분류 (with_classification 전략 선택 시)
+        strategy_name = self.get_param("strategy", state, "default")
+        input_complexity = None
+        if strategy_name == "with_classification":
+            input_complexity = self._classify_input(state.user_input)
+            state.metadata["input_complexity"] = input_complexity
+            logger.info("[Input] complexity=%s", input_complexity)
+
         tools_count = len(state.tool_definitions)
         result = {
             "provider": provider_name,
@@ -86,6 +94,8 @@ class InputStage(Stage):
             "mcp_sessions": len(mcp_sessions),
             "tools_count": tools_count,
         }
+        if input_complexity:
+            result["input_complexity"] = input_complexity
 
         logger.info(
             "[Input] provider=%s, model=%s, temp=%.1f, input=%d chars, files=%d, tools=%d",
@@ -93,6 +103,71 @@ class InputStage(Stage):
             len(state.user_input), len(state.attached_files), tools_count,
         )
         return result
+
+    def _classify_input(self, text: str) -> str:
+        """입력 복잡도 분류: simple / moderate / complex.
+
+        휴리스틱 기반 (LLM 호출 없이):
+        - 문장 수, 토큰 수, 질문 구조, 접속사/조건 키워드 등으로 판별
+        - s05_plan에서 이 결과를 참조해 planning depth를 결정할 수 있음
+        """
+        if not text:
+            return "simple"
+
+        text_lower = text.lower()
+        length = len(text)
+        sentences = [s.strip() for s in text.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+        sentence_count = len(sentences)
+
+        # 복잡도 점수 계산
+        score = 0
+
+        # 길이 기반
+        if length > 500:
+            score += 2
+        elif length > 150:
+            score += 1
+
+        # 문장 수 기반
+        if sentence_count > 5:
+            score += 2
+        elif sentence_count > 2:
+            score += 1
+
+        # 멀티스텝 키워드 (언어 비의존적)
+        multi_step_markers = [
+            "then", "after that", "next", "finally", "first", "second", "third",
+            "step 1", "step 2", "1.", "2.", "3.",
+            "and also", "in addition", "moreover", "furthermore",
+            "그 다음", "먼저", "그리고", "또한", "마지막으로",
+        ]
+        marker_count = sum(1 for m in multi_step_markers if m in text_lower)
+        if marker_count >= 3:
+            score += 2
+        elif marker_count >= 1:
+            score += 1
+
+        # 조건문 키워드
+        conditional_markers = [
+            "if ", "unless", "when ", "otherwise", "depending",
+            "만약", "경우", "아니면", "조건",
+        ]
+        if any(m in text_lower for m in conditional_markers):
+            score += 1
+
+        # 질문 다수
+        question_count = text.count("?")
+        if question_count > 2:
+            score += 2
+        elif question_count > 0:
+            score += 1
+
+        # 점수 → 복잡도 매핑
+        if score >= 5:
+            return "complex"
+        elif score >= 2:
+            return "moderate"
+        return "simple"
 
     async def _resolve_api_key(self, provider: str, state: PipelineState) -> Optional[str]:
         """API 키 해석: ExecutionContext → ServiceProvider → 환경변수 → 파일 폴백"""

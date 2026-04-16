@@ -1,7 +1,7 @@
 """ToolRouter 구현체들
 
 xgen-workflow 이식 시:
-- MCPToolRouter: xgen-mcp-station HTTP 호출
+- MCPToolRouter: MCP 서비스 HTTP 호출
 - BuiltinToolRouter: discover_tools 등 내장 도구
 - CompositeToolRouter: 여러 라우터를 체이닝 (우선순위 순서로 탐색)
 
@@ -48,7 +48,7 @@ class BuiltinToolRouter(ToolRouter):
 
 
 class MCPToolRouter(ToolRouter):
-    """MCP 도구 라우터 — xgen-mcp-station HTTP 호출.
+    """MCP 도구 라우터 — MCP 서비스 HTTP 호출.
 
     xgen-workflow 이식 후에도 동일 인터페이스.
     MCP_STATION_URL만 환경변수로 바꾸면 됨.
@@ -64,7 +64,7 @@ class MCPToolRouter(ToolRouter):
 
     @property
     def description(self) -> str:
-        return "MCP 도구 (xgen-mcp-station 경유)"
+        return "MCP 도구 (MCP 서비스 경유)"
 
     async def route(self, tool_name: str, tool_input: dict) -> ToolResult:
         session_id = self._mapping.get(tool_name)

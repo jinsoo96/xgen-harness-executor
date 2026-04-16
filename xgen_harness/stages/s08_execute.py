@@ -47,54 +47,12 @@ class ExecuteStage(Stage):
         result_budget = self.get_param("result_budget", state, RESULT_BUDGET_DEFAULT)
 
         tool_calls = state.pending_tool_calls
-        results: list[dict[str, Any]] = []
-        total_chars = 0
+        strategy_name = self.get_param("strategy", state, "default")
 
-        for tc in tool_calls:
-            tool_use_id = tc.get("tool_use_id", "")
-            tool_name = tc.get("tool_name", "")
-            tool_input = tc.get("tool_input", {})
-
-            try:
-                result_text = await self._execute_tool(tool_name, tool_input, state)
-
-                # 결과 축약 (예산 초과 시)
-                if total_chars + len(result_text) > result_budget:
-                    remaining = max(0, result_budget - total_chars)
-                    result_text = result_text[:remaining] + f"\n... (축약됨, 원본 {len(result_text)}자)"
-
-                total_chars += len(result_text)
-
-                state.add_tool_result(tool_use_id, result_text, is_error=False)
-                results.append({"tool_name": tool_name, "success": True, "chars": len(result_text)})
-
-                if state.event_emitter:
-                    await state.event_emitter.emit(ToolResultEvent(
-                        tool_use_id=tool_use_id,
-                        tool_name=tool_name,
-                        result=result_text[:500],  # 이벤트에는 500자까지만
-                        is_error=False,
-                    ))
-
-            except asyncio.TimeoutError:
-                error_msg = f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
-                state.add_tool_result(tool_use_id, error_msg, is_error=True)
-                results.append({"tool_name": tool_name, "success": False, "error": "timeout"})
-                logger.warning("[Execute] %s", error_msg)
-
-            except Exception as e:
-                error_msg = f"Tool '{tool_name}' failed: {str(e)}"
-                state.add_tool_result(tool_use_id, error_msg, is_error=True)
-                results.append({"tool_name": tool_name, "success": False, "error": str(e)})
-                logger.error("[Execute] %s\n%s", error_msg, traceback.format_exc())
-
-                if state.event_emitter:
-                    await state.event_emitter.emit(ToolResultEvent(
-                        tool_use_id=tool_use_id,
-                        tool_name=tool_name,
-                        result=error_msg,
-                        is_error=True,
-                    ))
+        if strategy_name == "parallel_read":
+            results, total_chars = await self._execute_parallel_read(tool_calls, state, result_budget)
+        else:
+            results, total_chars = await self._execute_sequential(tool_calls, state, result_budget)
 
         # 도구 결과를 messages에 flush
         state.flush_tool_results()
@@ -103,21 +61,168 @@ class ExecuteStage(Stage):
         executed_count = sum(1 for r in results if r["success"])
         error_count = sum(1 for r in results if not r["success"])
 
-        logger.info("[Execute] %d tools executed, %d errors", executed_count, error_count)
+        logger.info("[Execute] %d tools executed, %d errors (strategy=%s)",
+                     executed_count, error_count, strategy_name)
         return {
             "tools_executed": len(results),
             "success_count": executed_count,
             "error_count": error_count,
             "total_chars": total_chars,
+            "strategy": strategy_name,
         }
 
-    async def _execute_tool(self, tool_name: str, tool_input: dict, state: PipelineState) -> str:
-        """도구 실행 — 현재는 도구 레지스트리에서 찾아서 실행"""
-        # TODO: MCP 도구, 노드 브릿지 도구 등 통합
-        # 현재는 state.tool_definitions에서 이름으로 매칭
-        # 실제 실행은 MCP client나 builtin 도구로 위임
+    async def _execute_sequential(
+        self, tool_calls: list, state: PipelineState, result_budget: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """순차 실행 -- 기본 전략"""
+        results: list[dict[str, Any]] = []
+        total_chars = 0
 
-        # placeholder: 도구 이름 기반 라우팅
+        for tc in tool_calls:
+            r, chars = await self._execute_single(
+                tc.get("tool_use_id", ""), tc.get("tool_name", ""),
+                tc.get("tool_input", {}), state, result_budget, total_chars,
+            )
+            results.append(r)
+            total_chars += chars
+
+        return results, total_chars
+
+    async def _execute_parallel_read(
+        self, tool_calls: list, state: PipelineState, result_budget: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """parallel_read 전략: 읽기 전용 도구는 병렬, 쓰기 도구는 순차.
+
+        is_read_only 판별 순서:
+        1. tool_registry에 등록된 Tool 인스턴스의 is_read_only 속성
+        2. tool_definitions의 metadata.is_read_only 필드
+        3. 이름 기반 휴리스틱 (write 키워드 미포함이면 read_only)
+        """
+        write_keywords = {"create", "update", "delete", "write", "send", "post", "put", "remove", "insert", "drop"}
+        tool_registry = state.metadata.get("tool_registry", {})
+
+        read_calls = []
+        write_calls = []
+
+        for tc in tool_calls:
+            tool_name = tc.get("tool_name", "")
+            is_read_only = None
+
+            # 1. Tool 인스턴스에서 확인
+            tool_instance = tool_registry.get(tool_name)
+            if tool_instance and hasattr(tool_instance, "is_read_only"):
+                is_read_only = tool_instance.is_read_only
+
+            # 2. tool_definitions metadata에서 확인
+            if is_read_only is None:
+                for td in state.tool_definitions:
+                    if td.get("name") == tool_name:
+                        meta = td.get("metadata", {})
+                        if "is_read_only" in meta:
+                            is_read_only = meta["is_read_only"]
+                        break
+
+            # 3. 이름 기반 휴리스틱 폴백
+            if is_read_only is None:
+                name_lower = tool_name.lower()
+                is_read_only = not any(kw in name_lower for kw in write_keywords)
+
+            if is_read_only:
+                read_calls.append(tc)
+            else:
+                write_calls.append(tc)
+
+        results: list[dict[str, Any]] = []
+        total_chars = 0
+
+        # 읽기 도구 -> asyncio.gather 병렬 실행
+        if read_calls:
+            async def _run_read(tc):
+                return await self._execute_single(
+                    tc.get("tool_use_id", ""), tc.get("tool_name", ""),
+                    tc.get("tool_input", {}), state, result_budget, 0,
+                )
+
+            parallel_results = await asyncio.gather(
+                *[_run_read(tc) for tc in read_calls],
+                return_exceptions=True,
+            )
+            for pr in parallel_results:
+                if isinstance(pr, Exception):
+                    results.append({"tool_name": "unknown", "success": False, "error": str(pr)})
+                else:
+                    r, chars = pr
+                    results.append(r)
+                    total_chars += chars
+
+            logger.info("[Execute] parallel_read: %d read tools executed in parallel", len(read_calls))
+
+        # 쓰기 도구 -> 순차 실행 (순서 보존)
+        for tc in write_calls:
+            r, chars = await self._execute_single(
+                tc.get("tool_use_id", ""), tc.get("tool_name", ""),
+                tc.get("tool_input", {}), state, result_budget, total_chars,
+            )
+            results.append(r)
+            total_chars += chars
+
+        return results, total_chars
+
+    async def _execute_single(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict,
+        state: PipelineState,
+        result_budget: int,
+        current_chars: int,
+    ) -> tuple[dict[str, Any], int]:
+        """단일 도구 실행 + 결과 축약 + 이벤트 발행. (result_info, chars) 반환."""
+        try:
+            result_text = await self._execute_tool(tool_name, tool_input, state)
+
+            # 결과 축약 (예산 초과 시)
+            chars = len(result_text)
+            if current_chars + chars > result_budget:
+                remaining = max(0, result_budget - current_chars)
+                result_text = result_text[:remaining] + f"\n... (축약됨, 원본 {chars}자)"
+                chars = len(result_text)
+
+            state.add_tool_result(tool_use_id, result_text, is_error=False)
+
+            if state.event_emitter:
+                await state.event_emitter.emit(ToolResultEvent(
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    result=result_text[:500],
+                    is_error=False,
+                ))
+
+            return {"tool_name": tool_name, "success": True, "chars": chars}, chars
+
+        except asyncio.TimeoutError:
+            error_msg = f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
+            state.add_tool_result(tool_use_id, error_msg, is_error=True)
+            logger.warning("[Execute] %s", error_msg)
+            return {"tool_name": tool_name, "success": False, "error": "timeout"}, 0
+
+        except Exception as e:
+            error_msg = f"Tool '{tool_name}' failed: {str(e)}"
+            state.add_tool_result(tool_use_id, error_msg, is_error=True)
+            logger.error("[Execute] %s\n%s", error_msg, traceback.format_exc())
+
+            if state.event_emitter:
+                await state.event_emitter.emit(ToolResultEvent(
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    result=error_msg,
+                    is_error=True,
+                ))
+
+            return {"tool_name": tool_name, "success": False, "error": str(e)}, 0
+
+    async def _execute_tool(self, tool_name: str, tool_input: dict, state: PipelineState) -> str:
+        """도구 실행 — ResourceRegistry / ToolSource / tool_registry(MCP 등) 순 디스패치"""
         return await asyncio.wait_for(
             self._dispatch_tool(tool_name, tool_input, state),
             timeout=self._tool_timeout,

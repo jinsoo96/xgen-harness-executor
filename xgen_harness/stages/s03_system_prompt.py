@@ -10,7 +10,7 @@ S03 System Prompt — 시스템 프롬프트 조립
 6. Custom Sections (사용자 정의)
 
 s04_tool_index가 metadata에 저장한 rag_collections가 있으면
-xgen-documents API를 호출해 RAG 컨텍스트를 가져온다.
+Documents API를 호출해 RAG 컨텍스트를 가져온다.
 """
 
 import logging
@@ -165,7 +165,7 @@ class SystemPromptStage(Stage):
         collections: list[str],
         top_k: int = 4,
     ) -> str:
-        """xgen-documents API로 벡터 검색하여 RAG 컨텍스트 텍스트 반환"""
+        """Documents API로 벡터 검색하여 RAG 컨텍스트 텍스트 반환"""
         import httpx
 
         docs_url = get_service_url('documents')

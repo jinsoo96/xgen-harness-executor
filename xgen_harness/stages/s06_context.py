@@ -88,9 +88,19 @@ class ContextStage(Stage):
         estimated_tokens = total_chars // CHARS_PER_TOKEN
         budget_used = estimated_tokens / available_tokens if available_tokens > 0 else 1.0
 
-        # 압축 필요 시
+        # 압축 전략 디스패치 — token_budget(기본) 또는 sliding_window
+        strategy_name = self.get_param("strategy", state, "token_budget")
         compaction_threshold = self.get_param("compaction_threshold", state, 80) / 100.0
-        if budget_used > compaction_threshold and len(state.messages) > 4:
+
+        if strategy_name == "sliding_window":
+            # 슬라이딩 윈도우: 최근 N개 메시지만 유지 (심플하지만 채팅에 효과적)
+            window_size = int(self.get_param("window_size", state, 20))
+            if len(state.messages) > window_size:
+                state.messages = state.messages[-window_size:]
+                results["compacted"] = True
+                logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
+        elif budget_used > compaction_threshold and len(state.messages) > 4:
+            # token_budget(기본): first + last 3
             state.messages = [state.messages[0]] + state.messages[-3:]
             results["compacted"] = True
             logger.info("[Context] Compacted: kept first + last 3 messages")
