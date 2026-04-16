@@ -148,7 +148,7 @@ class LLMStage(Stage):
             thinking = {"type": "enabled", "budget_tokens": thinking_budget}
 
         # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약
-        provider_name = getattr(provider, "provider_name", "anthropic")
+        provider_name = getattr(provider, "provider_name", "") or (state.config.provider if state.config else "")
         context_limit = int(self.get_param(
             "context_limit", state,
             PROVIDER_CONTEXT_LIMITS.get(provider_name, 500_000),
@@ -254,29 +254,27 @@ class LLMStage(Stage):
         return front + [truncation_notice] + back
 
     def _estimate_cost(self, usage: TokenUsage, model: str) -> float:
-        """토큰 사용량으로 비용 추정 (USD)"""
-        # Claude Sonnet 4 기준
-        if "sonnet" in model.lower():
-            input_cost = usage.input_tokens * 3.0 / 1_000_000
-            output_cost = usage.output_tokens * 15.0 / 1_000_000
-        elif "opus" in model.lower():
-            input_cost = usage.input_tokens * 15.0 / 1_000_000
-            output_cost = usage.output_tokens * 75.0 / 1_000_000
-        elif "haiku" in model.lower():
-            input_cost = usage.input_tokens * 0.80 / 1_000_000
-            output_cost = usage.output_tokens * 4.0 / 1_000_000
-        elif "gpt-4o" in model.lower():
-            input_cost = usage.input_tokens * 2.50 / 1_000_000
-            output_cost = usage.output_tokens * 10.0 / 1_000_000
-        elif "gpt-4o-mini" in model.lower():
-            input_cost = usage.input_tokens * 0.15 / 1_000_000
-            output_cost = usage.output_tokens * 0.60 / 1_000_000
-        else:
-            input_cost = usage.input_tokens * 3.0 / 1_000_000
-            output_cost = usage.output_tokens * 15.0 / 1_000_000
+        """토큰 사용량으로 비용 추정 (USD) — PRICING 단일 진실 소스 사용"""
+        from .strategies.token_tracker import PRICING
+
+        # 모델명으로 정확히 매칭, 없으면 부분 매칭
+        pricing = PRICING.get(model)
+        if not pricing:
+            model_lower = model.lower()
+            for key, val in PRICING.items():
+                if key.lower() in model_lower or model_lower in key.lower():
+                    pricing = val
+                    break
+        if not pricing:
+            pricing = {"input": 3.0, "output": 15.0}  # 기본값
+
+        input_cost = usage.input_tokens * pricing["input"] / 1_000_000
+        output_cost = usage.output_tokens * pricing["output"] / 1_000_000
 
         # 캐시 할인
-        cache_savings = usage.cache_read_tokens * 2.7 / 1_000_000  # 90% 할인 추정
+        cache_write_rate = pricing.get("cache_write", pricing["input"] * 1.25)
+        cache_read_rate = pricing.get("cache_read", pricing["input"] * 0.1)
+        cache_savings = usage.cache_read_tokens * (pricing["input"] - cache_read_rate) / 1_000_000
         return input_cost + output_cost - cache_savings
 
     def list_strategies(self) -> list[StrategyInfo]:
