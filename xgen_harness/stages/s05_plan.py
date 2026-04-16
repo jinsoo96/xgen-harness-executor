@@ -28,14 +28,25 @@ class PlanStage(Stage):
         return state.loop_iteration > 1
 
     async def execute(self, state: PipelineState) -> dict:
-        mode = self.get_param("planning_mode", state, "cot")
+        mode = self.get_param("planning_mode", state, "auto")
+
+        # "auto" 모드: input_complexity에 따라 planning depth 결정
+        if mode == "auto":
+            complexity = state.metadata.get("input_complexity", "moderate")
+            if complexity == "simple":
+                mode = "none"
+            elif complexity == "complex":
+                mode = "react"
+            else:
+                mode = "cot"
+            logger.info("[Plan] auto mode resolved to '%s' (complexity=%s)", mode, complexity)
 
         # mode == "none": 계획 단계 비활성화
         if mode == "none":
             logger.info("[Plan] planning_mode=none, bypassed")
             return {"planning_enabled": False, "planning_mode": "none"}
 
-        # mode == "react": ReAct-style prompt
+        # mode == "react": ReAct-style prompt (복잡한 멀티스텝 태스크)
         if mode == "react":
             planning_instruction = (
                 "\n\n<planning_instruction>\n"
@@ -47,7 +58,7 @@ class PlanStage(Stage):
                 "</planning_instruction>"
             )
         else:
-            # 기본 CoT
+            # 기본 CoT (moderate 복잡도)
             planning_instruction = (
                 "\n\n<planning_instruction>\n"
                 "Before answering, think step by step about what information you need "

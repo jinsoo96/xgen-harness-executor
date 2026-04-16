@@ -30,8 +30,12 @@ class CompleteStage(Stage):
         # 최종 출력 확정
         state.final_output = state.last_assistant_text or ""
 
-        # output_format 적용
-        fmt = self.get_param("output_format", state, "text")
+        # output_format 적용 -- strategy 이름도 지원 (format_json → json)
+        strategy_name = self.get_param("strategy", state, "default")
+        if strategy_name == "format_json":
+            fmt = "json"
+        else:
+            fmt = self.get_param("output_format", state, "text")
         if fmt == "json" and state.final_output:
             import json as _json
             state.final_output = _json.dumps({

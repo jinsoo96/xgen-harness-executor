@@ -47,9 +47,16 @@ class DecideStage(Stage):
             state.loop_decision = LOOP_COMPLETE
             return {"decision": LOOP_COMPLETE, "reason": "always_pass strategy"}
 
-        # ── 1. Guard 체인 실행 (하드코딩 제거) ──
-        from .strategies.guard import create_default_guard_chain
-        guard_chain = create_default_guard_chain()
+        # ── 1. Guard 체인 실행 (설정 가능) ──
+        from .strategies.guard import create_guard_chain
+        enabled_guards: list[str] | None = self.get_param("guards", state, None)
+        cost_budget_usd: float = self.get_param("cost_budget_usd", state, 0.0)
+        token_budget: int = self.get_param("token_budget", state, 0)
+        guard_chain = create_guard_chain(
+            guards=enabled_guards,
+            cost_budget_usd=cost_budget_usd,
+            token_budget=token_budget,
+        )
         guard_results = guard_chain.check_all(state)
 
         blocked = [r for r in guard_results if not r.passed and r.severity == "block"]

@@ -78,15 +78,25 @@ class GuardChain(Strategy):
 class TokenBudgetGuard(Guard):
     """토큰 예산 초과 체크"""
 
+    def __init__(self, token_budget: int = 0):
+        self._token_budget = token_budget
+
     @property
     def name(self) -> str:
         return "token_budget"
 
     def check(self, state: Any) -> GuardResult:
-        if not hasattr(state, 'token_usage') or not hasattr(state, 'config'):
+        if not hasattr(state, 'token_usage'):
             return GuardResult(passed=True, guard_name=self.name)
 
-        max_tokens = getattr(state.config, 'context_window', 200_000)
+        # 우선순위: 생성자 인자 > config.context_window > 기본값
+        if self._token_budget > 0:
+            max_tokens = self._token_budget
+        elif hasattr(state, 'config') and state.config:
+            max_tokens = getattr(state.config, 'context_window', 1_000_000)
+        else:
+            max_tokens = 1_000_000
+
         used = state.token_usage.total if hasattr(state.token_usage, 'total') else 0
 
         if used > max_tokens * 0.95:
@@ -109,15 +119,25 @@ class TokenBudgetGuard(Guard):
 class CostBudgetGuard(Guard):
     """비용 예산 초과 체크"""
 
+    def __init__(self, cost_budget_usd: float = 0.0):
+        self._cost_budget_usd = cost_budget_usd
+
     @property
     def name(self) -> str:
         return "cost_budget"
 
     def check(self, state: Any) -> GuardResult:
-        if not hasattr(state, 'cost_usd') or not hasattr(state, 'config'):
+        if not hasattr(state, 'cost_usd'):
             return GuardResult(passed=True, guard_name=self.name)
 
-        budget = getattr(state.config, 'cost_budget_usd', 10.0)
+        # 우선순위: 생성자 인자 > config.cost_budget_usd > 기본값
+        if self._cost_budget_usd > 0:
+            budget = self._cost_budget_usd
+        elif hasattr(state, 'config') and state.config:
+            budget = getattr(state.config, 'cost_budget_usd', 10.0)
+        else:
+            budget = 10.0
+
         cost = state.cost_usd
 
         if cost >= budget:
@@ -159,7 +179,7 @@ class ContentGuard(Guard):
 
     @property
     def name(self) -> str:
-        return "content_filter"
+        return "content"
 
     def check(self, state: Any) -> GuardResult:
         # 확장 포인트 — 입력/출력 콘텐츠 검사
@@ -167,10 +187,48 @@ class ContentGuard(Guard):
         return GuardResult(passed=True, guard_name=self.name)
 
 
-def create_default_guard_chain() -> GuardChain:
-    """기본 가드 체인 생성"""
+# 사용 가능한 가드 이름 → 클래스 매핑
+ALL_GUARD_NAMES: list[str] = ["iteration", "cost_budget", "token_budget", "content"]
+
+_GUARD_REGISTRY: dict[str, type[Guard]] = {
+    "iteration": IterationGuard,
+    "cost_budget": CostBudgetGuard,
+    "token_budget": TokenBudgetGuard,
+    "content": ContentGuard,
+}
+
+
+def create_guard_chain(
+    guards: list[str] | None = None,
+    cost_budget_usd: float = 0.0,
+    token_budget: int = 0,
+) -> GuardChain:
+    """설정 가능한 가드 체인 생성.
+
+    Args:
+        guards: 활성화할 가드 이름 목록. None이면 모든 가드 활성화.
+                사용 가능: "iteration", "cost_budget", "token_budget", "content"
+        cost_budget_usd: CostBudgetGuard 임계값 (0이면 config/기본값 사용)
+        token_budget: TokenBudgetGuard 임계값 (0이면 config/기본값 사용)
+    """
+    enabled = guards if guards is not None else ALL_GUARD_NAMES
+
     chain = GuardChain()
-    chain.add(IterationGuard())
-    chain.add(CostBudgetGuard())
-    chain.add(TokenBudgetGuard())
+    for name in enabled:
+        if name not in _GUARD_REGISTRY:
+            logger.warning("[Guard] Unknown guard name '%s', skipping", name)
+            continue
+
+        if name == "cost_budget":
+            chain.add(CostBudgetGuard(cost_budget_usd=cost_budget_usd))
+        elif name == "token_budget":
+            chain.add(TokenBudgetGuard(token_budget=token_budget))
+        else:
+            chain.add(_GUARD_REGISTRY[name]())
+
     return chain
+
+
+def create_default_guard_chain() -> GuardChain:
+    """기본 가드 체인 생성 (하위 호환)"""
+    return create_guard_chain()
