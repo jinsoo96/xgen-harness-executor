@@ -9,3 +9,5 @@ __pycache__/
 /tmp/
 node_modules/
 dist/
+*.egg-info/
+build/
