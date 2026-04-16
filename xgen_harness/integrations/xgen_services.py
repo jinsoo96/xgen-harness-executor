@@ -295,16 +295,16 @@ class XgenServiceProvider(ServiceProvider):
         database = XgenDatabaseService(db_manager) if db_manager else None
 
         # Config (xgen-core)
-        _core_url = core_url or get_service_url("xgen-core")
-        config_svc = XgenConfigService(_core_url)
+        _core_url = core_url or get_service_url("config")
+        config_svc = XgenConfigService(_core_url) if _core_url else None
 
         # MCP
-        _mcp_url = mcp_url or get_service_url("xgen-mcp-station")
-        mcp_svc = XgenMCPService(_mcp_url)
+        _mcp_url = mcp_url or get_service_url("mcp")
+        mcp_svc = XgenMCPService(_mcp_url) if _mcp_url else None
 
         # Documents
-        _docs_url = documents_url or get_service_url("xgen-documents")
-        docs_svc = XgenDocumentService(_docs_url)
+        _docs_url = documents_url or get_service_url("documents")
+        docs_svc = XgenDocumentService(_docs_url) if _docs_url else None
 
         provider = cls(
             database=database,

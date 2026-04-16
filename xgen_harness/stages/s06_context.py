@@ -110,12 +110,16 @@ class ContextStage(Stage):
         import httpx
 
         parts = []
+        docs_url = get_service_url('documents')
+        if not docs_url:
+            logger.info("documents service not registered, skipping RAG")
+            return []
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(15)) as client:
                 for col_name in collections:
                     try:
                         resp = await client.post(
-                            f"{get_service_url('xgen-documents')}/api/retrieval/documents/search",
+                            f"{docs_url}/api/retrieval/documents/search",
                             json={
                                 "collection_name": col_name,
                                 "query_text": query,

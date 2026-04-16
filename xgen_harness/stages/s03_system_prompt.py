@@ -155,7 +155,11 @@ class SystemPromptStage(Stage):
         """xgen-documents API로 벡터 검색하여 RAG 컨텍스트 텍스트 반환"""
         import httpx
 
-        url = f"{get_service_url('xgen-documents')}/api/retrieval/documents/search"
+        docs_url = get_service_url('documents')
+        if not docs_url:
+            logger.info("documents service not registered, skipping RAG")
+            return ""
+        url = f"{docs_url}/api/retrieval/documents/search"
         payload = {
             "query": query,
             "collection_names": collections,

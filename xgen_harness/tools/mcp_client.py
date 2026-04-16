@@ -26,8 +26,10 @@ class MCPClient:
 
     def __init__(self, base_url: str = "", timeout: float = 60.0):
         if not base_url:
-            base_url = get_service_url("xgen-mcp-station")
-        self._base_url = base_url.rstrip("/")
+            base_url = get_service_url("mcp") or ""
+        if not base_url:
+            logger.warning("MCP service not registered, MCP tools will be unavailable")
+        self._base_url = base_url.rstrip("/") if base_url else ""
         self._timeout = httpx.Timeout(timeout, connect=10.0)
 
     async def list_tools(self, session_id: str) -> list[dict]:
