@@ -32,6 +32,7 @@ from ..events.emitter import EventEmitter
 from ..events.types import DoneEvent, ErrorEvent
 from ..integrations.xgen_streaming import convert_to_xgen_event
 from ..providers import get_api_key_env
+from .resource_registry import ResourceRegistry
 
 import asyncio
 
@@ -179,14 +180,19 @@ class XgenAdapter:
         os.environ[env_key] = api_key
 
         try:
-            # ━━━━ 9. MCP 도구 디스커버리 ━━━━
-            if mcp_sessions and self._services.mcp:
-                await self._discover_mcp_tools(mcp_sessions, state)
+            # ━━━━ 9. ResourceRegistry — xgen 자산 통합 로드 ━━━━
+            registry = ResourceRegistry(self._services)
+            await registry.load_all(workflow_data, hc)
+
+            # 도구를 state에 바인딩
+            state.tool_definitions = registry.get_tool_definitions()
+            state.metadata["tool_registry"] = registry.get_tool_executors()
+            state.metadata["resource_registry"] = registry
 
             # ━━━━ 10. 파이프라인 실행 ━━━━
             logger.info(
-                "[Adapter] 실행: provider=%s, model=%s, mcp=%d, tools=%d",
-                provider, model, len(mcp_sessions), len(state.tool_definitions),
+                "[Adapter] 실행: provider=%s, model=%s, tools=%d, rag=%d",
+                provider, model, len(state.tool_definitions), len(registry.get_rag_collections()),
             )
 
             full_response = []
