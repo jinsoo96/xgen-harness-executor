@@ -14,11 +14,11 @@ xgen-documents API를 호출해 RAG 컨텍스트를 가져온다.
 """
 
 import logging
-import os
 from typing import Optional
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
+from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.stage.system_prompt")
 
@@ -32,10 +32,6 @@ SECTION_PRIORITIES = {
     "custom": 6,
     "footer": 7,
 }
-
-DOCUMENTS_SERVICE_BASE_URL = os.environ.get(
-    "DOCUMENTS_SERVICE_BASE_URL", "http://xgen-documents:8000"
-)
 
 
 class SystemPromptStage(Stage):
@@ -159,7 +155,7 @@ class SystemPromptStage(Stage):
         """xgen-documents API로 벡터 검색하여 RAG 컨텍스트 텍스트 반환"""
         import httpx
 
-        url = f"{DOCUMENTS_SERVICE_BASE_URL}/api/retrieval/documents/search"
+        url = f"{get_service_url('xgen-documents')}/api/retrieval/documents/search"
         payload = {
             "query": query,
             "collection_names": collections,

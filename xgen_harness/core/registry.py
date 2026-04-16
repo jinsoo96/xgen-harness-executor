@@ -3,9 +3,14 @@ ArtifactRegistry — 스테이지 ↔ 구현체 매핑
 
 artifact 시스템: stage_id → { artifact_name → StageClass }
 프리셋에 따라 파이프라인 스테이지 목록을 빌드.
+
+플러그인 확장:
+  - entry_points(group="xgen_harness.stages") 로 외부 패키지에서 스테이지 자동 등록
+  - register_stage() 공개 API 로 런타임 직접 등록
 """
 
 import logging
+import sys
 from typing import Optional, Type
 
 from .config import HarnessConfig, ALL_STAGES
@@ -188,3 +193,51 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
         registry.register("s11_save", "default", SaveStage)
     except ImportError:
         pass
+
+    # 플러그인 자동 탐색
+    _discover_plugin_stages(registry)
+
+
+def _discover_plugin_stages(registry: ArtifactRegistry) -> None:
+    """Discover stages from installed packages via entry_points."""
+    try:
+        if sys.version_info >= (3, 10):
+            from importlib.metadata import entry_points
+            eps = entry_points(group="xgen_harness.stages")
+        else:
+            from importlib.metadata import entry_points
+            eps = entry_points().get("xgen_harness.stages", [])
+
+        for ep in eps:
+            try:
+                stage_class = ep.load()
+                registry.register(ep.name, "default", stage_class)
+                logger.info("Plugin stage registered: %s", ep.name)
+            except Exception as e:
+                logger.warning("Failed to load plugin stage %s: %s", ep.name, e)
+    except Exception:
+        pass  # No plugins installed
+
+
+# ── 싱글턴 레지스트리 (기본 인스턴스) ──────────────────────────────
+_DEFAULT_REGISTRY: Optional[ArtifactRegistry] = None
+
+
+def _get_default_registry() -> ArtifactRegistry:
+    """기본 레지스트리 싱글턴 반환 (lazy init)."""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = ArtifactRegistry.default()
+    return _DEFAULT_REGISTRY
+
+
+def register_stage(stage_id: str, artifact_name: str, stage_class: Type[Stage]) -> None:
+    """외부 코드에서 스테이지를 직접 등록하는 공개 API.
+
+    Usage::
+
+        from xgen_harness.core.registry import register_stage
+        register_stage("s99_custom", "default", MyCustomStage)
+    """
+    _get_default_registry().register(stage_id, artifact_name, stage_class)
+    logger.info("Stage registered via public API: %s/%s", stage_id, artifact_name)

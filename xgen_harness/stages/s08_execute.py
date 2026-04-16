@@ -124,7 +124,7 @@ class ExecuteStage(Stage):
         )
 
     async def _dispatch_tool(self, tool_name: str, tool_input: dict, state: PipelineState) -> str:
-        """도구 디스패처 — ResourceRegistry 우선, 레거시 폴백"""
+        """도구 디스패처 — ResourceRegistry → 플러그인 ToolSource → 레거시 폴백"""
 
         # 빌트인: discover_tools (progressive disclosure Level 2)
         if tool_name == "discover_tools":
@@ -136,6 +136,15 @@ class ExecuteStage(Stage):
             executors = registry.get_tool_executors()
             if tool_name in executors:
                 return await registry.execute_tool(tool_name, tool_input)
+
+        # 플러그인 ToolSource 경로 (register_tool_source로 등록된 소스)
+        from ..tools import get_tool_sources
+        for source in get_tool_sources():
+            if source.has_tool(tool_name):
+                result = await source.call_tool(tool_name, tool_input)
+                if isinstance(result, dict):
+                    return result.get("content", str(result))
+                return str(result)
 
         # 레거시 폴백: state.metadata에 직접 등록된 Tool 인스턴스
         tool_registry = state.metadata.get("tool_registry", {})

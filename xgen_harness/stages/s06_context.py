@@ -11,17 +11,14 @@ S06 Context — 컨텍스트 수집 + 윈도우 관리
 """
 
 import logging
-import os
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
+from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.stage.context")
 
 CHARS_PER_TOKEN = 3  # 평균 추정
-
-# xgen-documents 검색 API URL
-DOCS_URL = os.environ.get("DOCUMENTS_SERVICE_BASE_URL", "http://xgen-documents:8000")
 
 
 class ContextStage(Stage):
@@ -118,7 +115,7 @@ class ContextStage(Stage):
                 for col_name in collections:
                     try:
                         resp = await client.post(
-                            f"{DOCS_URL}/api/retrieval/documents/search",
+                            f"{get_service_url('xgen-documents')}/api/retrieval/documents/search",
                             json={
                                 "collection_name": col_name,
                                 "query_text": query,
