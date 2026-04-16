@@ -69,7 +69,7 @@ try:
         """사용 가능한 MCP 세션 목록 (UI multi_select 옵션 제공)"""
         import httpx as _httpx
         from ..core.service_registry import get_service_url
-        mcp_url = get_service_url("xgen-mcp-station")
+        mcp_url = get_service_url("mcp")
         try:
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
                 resp = await client.get(f"{mcp_url}/api/mcp/sessions")

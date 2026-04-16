@@ -29,6 +29,7 @@ from ..core.execution_context import set_execution_context, get_api_key as ctx_g
 from ..core.pipeline import Pipeline
 from ..core.state import PipelineState
 from ..core.services import ServiceProvider, NullServiceProvider
+from ..core.service_registry import register_service, register_env_mapping
 from ..events.emitter import EventEmitter
 from ..events.types import DoneEvent, ErrorEvent
 from ..integrations.xgen_streaming import convert_to_xgen_event
@@ -54,6 +55,8 @@ class XgenAdapter:
     """
 
     def __init__(self, db_manager=None, services: Optional[ServiceProvider] = None, llm_factory=None):
+        # xgen 환경 서비스 엔드포인트 등록 — 하네스 라이브러리에 xgen 인프라를 끼워넣는 곳
+        self._register_xgen_services()
         self._llm_factory = llm_factory
         if services:
             self._services = services
@@ -71,6 +74,27 @@ class XgenAdapter:
                 self._services = XgenServiceProvider.create()
             except Exception:
                 self._services = NullServiceProvider()
+
+    @staticmethod
+    def _register_xgen_services():
+        """xgen 환경의 서비스 엔드포인트를 하네스 ServiceRegistry에 등록.
+
+        하네스 라이브러리는 인프라를 모른다. 이 메서드가 xgen 인프라를 끼워넣는 유일한 지점.
+        다른 실행기(예: AWS, GCP)는 자기 환경에 맞는 등록을 하면 된다.
+        """
+        # 환경변수 매핑 등록 — 실행 환경에서 URL을 주입할 수 있게
+        register_env_mapping("config", "XGEN_CORE_URL")
+        register_env_mapping("documents", "XGEN_DOCUMENTS_URL", "DOCUMENTS_SERVICE_BASE_URL")
+        register_env_mapping("mcp", "MCP_STATION_URL", "MCP_STATION_RAW_URL")
+
+        # Docker Compose 기본값 등록 (환경변수가 없을 때 폴백)
+        import os
+        if not os.environ.get("XGEN_CORE_URL"):
+            register_service("config", "http://xgen-core:8000")
+        if not os.environ.get("XGEN_DOCUMENTS_URL") and not os.environ.get("DOCUMENTS_SERVICE_BASE_URL"):
+            register_service("documents", "http://xgen-documents:8000")
+        if not os.environ.get("MCP_STATION_URL") and not os.environ.get("MCP_STATION_RAW_URL"):
+            register_service("mcp", "http://xgen-mcp-station:8000")
 
     async def execute(
         self,
