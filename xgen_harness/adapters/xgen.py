@@ -169,12 +169,23 @@ class XgenAdapter:
             stages_list = list(hc_stages.keys())
 
         # ━━━━ 6. HarnessConfig 생성 ━━━━
-        config = HarnessConfig(
-            provider=provider,
-            model=model,
-            temperature=float(temperature),
-            system_prompt=system_prompt,
-        )
+        config_kwargs: Dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "temperature": float(temperature),
+            "system_prompt": system_prompt,
+        }
+        # stage_params, disabled_stages, active_strategies 등 전달
+        if hc.get("stage_params"):
+            config_kwargs["stage_params"] = hc["stage_params"]
+        if hc.get("disabled_stages"):
+            config_kwargs["disabled_stages"] = hc["disabled_stages"]
+        if hc.get("preset"):
+            config_kwargs["preset"] = hc["preset"]
+        if hc.get("max_iterations"):
+            config_kwargs["max_iterations"] = hc["max_iterations"]
+
+        config = HarnessConfig(**config_kwargs)
 
         # ━━━━ 7. Pipeline + State 생성 ━━━━
         emitter = EventEmitter()
