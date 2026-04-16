@@ -44,6 +44,7 @@ from .core.session import HarnessSession, SessionManager
 from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult
 from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
+from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 
 __version__ = "0.2.0"
 
@@ -94,4 +95,9 @@ __all__ = [
     # Services (pluggable)
     "ServiceProvider",
     "NullServiceProvider",
+    # Gallery Tools
+    "ToolPackageSpec",
+    "GalleryTool",
+    "load_tool_package",
+    "discover_gallery_tools",
 ]
