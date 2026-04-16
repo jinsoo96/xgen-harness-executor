@@ -1,5 +1,13 @@
 # xgen-harness-executor
 
+[![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
+[![License](https://img.shields.io/pypi/l/xgen-harness)](https://pypi.org/project/xgen-harness/)
+
+```bash
+pip install xgen-harness
+```
+
 **하네스 실행기** — 12단계 파이프라인 기반 에이전트 실행 엔진
 
 ## 하네스 엔지니어링이란

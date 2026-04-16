@@ -7,6 +7,7 @@ license = {text = "MIT"}
 authors = [
     {name = "김진수", email = "wlstn010203@plateer.com"},
 ]
+readme = "README.md"
 keywords = ["agent", "pipeline", "harness", "llm", "xgen"]
 classifiers = [
     "Development Status :: 3 - Alpha",
