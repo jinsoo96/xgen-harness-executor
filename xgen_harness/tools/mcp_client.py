@@ -11,22 +11,22 @@ Endpoints:
 
 import json
 import logging
-import os
 from typing import Any, Optional
 
 import httpx
 
 from .base import Tool, ToolResult
+from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.tools.mcp")
-
-MCP_STATION_URL = os.environ.get("MCP_STATION_URL", "http://xgen-mcp-station:8000")
 
 
 class MCPClient:
     """xgen-mcp-station HTTP 클라이언트"""
 
-    def __init__(self, base_url: str = MCP_STATION_URL, timeout: float = 60.0):
+    def __init__(self, base_url: str = "", timeout: float = 60.0):
+        if not base_url:
+            base_url = get_service_url("xgen-mcp-station")
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout, connect=10.0)
 

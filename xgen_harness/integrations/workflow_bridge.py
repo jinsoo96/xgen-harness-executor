@@ -8,10 +8,10 @@ ServiceProvider를 통해 xgen 서비스(DB/Config/MCP/Documents)에 접근.
 import asyncio
 import json
 import logging
-import os
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from ..core.config import HarnessConfig
+from ..core.execution_context import set_execution_context
 from ..core.pipeline import Pipeline
 from ..core.state import PipelineState
 from ..core.services import ServiceProvider, NullServiceProvider
@@ -78,11 +78,8 @@ async def execute_via_python_pipeline(
         yield {"type": "error", "data": {"message": "API 키를 찾을 수 없습니다."}}
         return
 
-    # 2. API 키를 환경변수에 설정 (프로바이더가 읽을 수 있도록)
-    from ..providers import get_api_key_env
-    env_key = get_api_key_env(provider)
-    prev_value = os.environ.get(env_key, "")
-    os.environ[env_key] = resolved_api_key
+    # 2. API 키를 실행 컨텍스트에 설정 (contextvars — 동시 실행 격리)
+    set_execution_context(api_key=resolved_api_key, provider=provider, model=model)
 
     try:
         # 3. HarnessConfig 생성
@@ -167,11 +164,7 @@ async def execute_via_python_pipeline(
         await task
 
     finally:
-        # 환경변수 복원
-        if prev_value:
-            os.environ[env_key] = prev_value
-        elif env_key in os.environ:
-            del os.environ[env_key]
+        pass  # contextvars는 자동 격리 — 복원 불필요
 
 
 # 스테이지 이름 정규화

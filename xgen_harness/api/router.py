@@ -68,7 +68,8 @@ try:
     async def list_mcp_sessions():
         """사용 가능한 MCP 세션 목록 (UI multi_select 옵션 제공)"""
         import httpx as _httpx
-        mcp_url = os.environ.get("MCP_STATION_URL", "http://xgen-mcp-station:8000")
+        from ..core.service_registry import get_service_url
+        mcp_url = get_service_url("xgen-mcp-station")
         try:
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
                 resp = await client.get(f"{mcp_url}/api/mcp/sessions")
@@ -94,7 +95,8 @@ try:
     async def list_rag_collections():
         """사용 가능한 RAG 문서 컬렉션 (UI multi_select 옵션 제공)"""
         import httpx as _httpx
-        docs_url = os.environ.get("DOCUMENTS_SERVICE_BASE_URL", "http://xgen-documents:8000")
+        from ..core.service_registry import get_service_url as _get_url
+        docs_url = _get_url("xgen-documents")
         try:
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
                 resp = await client.get(

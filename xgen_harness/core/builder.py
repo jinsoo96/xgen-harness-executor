@@ -14,10 +14,10 @@ PipelineBuilder — Fluent API로 파이프라인 구성
         .build())
 """
 
-import os
 from typing import Optional
 
 from .config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
+from .execution_context import set_execution_context
 from .pipeline import Pipeline
 from .state import PipelineState
 from .registry import ArtifactRegistry
@@ -158,11 +158,13 @@ class PipelineBuilder:
 
     def build(self) -> Pipeline:
         """파이프라인 빌드"""
-        # API 키 환경변수 설정
+        # API 키를 실행 컨텍스트에 설정 (contextvars — 동시 실행 격리)
         if self._api_key:
-            key_map = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
-            env_key = key_map.get(self._provider, f"{self._provider.upper()}_API_KEY")
-            os.environ[env_key] = self._api_key
+            set_execution_context(
+                api_key=self._api_key,
+                provider=self._provider,
+                model=self._model,
+            )
 
         config = HarnessConfig(
             provider=self._provider,

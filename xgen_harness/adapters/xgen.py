@@ -25,6 +25,7 @@ import os
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from ..core.config import HarnessConfig
+from ..core.execution_context import set_execution_context, get_api_key as ctx_get_api_key
 from ..core.pipeline import Pipeline
 from ..core.state import PipelineState
 from ..core.services import ServiceProvider, NullServiceProvider
@@ -120,8 +121,8 @@ class XgenAdapter:
         temperature = hc.get("temperature") if hc.get("temperature") is not None else 0.7
         system_prompt = hc.get("system_prompt") or (agent_config or {}).get("system_prompt", "")
 
-        # ━━━━ 3. API 키 해석 — ServiceProvider 우선 ━━━━
-        api_key = os.environ.get(get_api_key_env(provider), "")
+        # ━━━━ 3. API 키 해석 — ExecutionContext → ServiceProvider → 환경변수 ━━━━
+        api_key = ctx_get_api_key() or os.environ.get(get_api_key_env(provider), "")
         if not api_key and self._services.config:
             try:
                 api_key = await self._services.config.get_api_key(provider) or ""
@@ -179,10 +180,8 @@ class XgenAdapter:
             except Exception as e:
                 logger.warning("[Adapter] xgen LLM factory 실패, 내장 프로바이더 폴백: %s", e)
 
-        # ━━━━ 8. API 키 환경변수 설정 (프로바이더가 읽을 수 있도록) ━━━━
-        env_key = get_api_key_env(provider)
-        prev_env = os.environ.get(env_key, "")
-        os.environ[env_key] = api_key
+        # ━━━━ 8. API 키를 실행 컨텍스트에 설정 (contextvars — 동시 실행 격리) ━━━━
+        set_execution_context(api_key=api_key, provider=provider, model=model)
 
         try:
             # ━━━━ 9. ResourceRegistry — xgen 자산 통합 로드 ━━━━
@@ -245,10 +244,7 @@ class XgenAdapter:
             logger.info("[Adapter] 완료: %d자 출력", sum(len(c) for c in full_response))
 
         finally:
-            if prev_env:
-                os.environ[env_key] = prev_env
-            elif env_key in os.environ:
-                del os.environ[env_key]
+            pass  # contextvars는 자동 격리 — 복원 불필요
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  내부 헬퍼 — 워크플로우 데이터 파싱

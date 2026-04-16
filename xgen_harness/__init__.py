@@ -18,7 +18,7 @@ from .core.state import PipelineState, TokenUsage
 from .core.config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
 from .core.presets import PRESETS, Preset, get_preset, apply_preset, list_presets
 from .core.stage import Stage, StageDescription, StrategyInfo
-from .core.registry import ArtifactRegistry
+from .core.registry import ArtifactRegistry, register_stage
 from .events.emitter import EventEmitter
 from .events.types import (
     HarnessEvent,
@@ -45,6 +45,7 @@ from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult
 from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
+from .tools import ToolSource, register_tool_source, get_tool_sources
 
 __version__ = "0.4.0"
 
@@ -65,6 +66,7 @@ __all__ = [
     "StageDescription",
     "StrategyInfo",
     "ArtifactRegistry",
+    "register_stage",
     # Events
     "EventEmitter",
     "HarnessEvent",
@@ -100,4 +102,9 @@ __all__ = [
     "GalleryTool",
     "load_tool_package",
     "discover_gallery_tools",
+    # Plugin API
+    "ToolSource",
+    "register_tool_source",
+    "get_tool_sources",
+    "register_stage",
 ]

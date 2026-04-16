@@ -28,6 +28,7 @@ class SaveStage(Stage):
     async def execute(self, state: PipelineState) -> dict:
         # DB 저장은 xgen-workflow의 execution_io와 호환
         # 여기서는 실행 결과를 metadata에 정리
+        table_name = self.get_param("table_name", state, "harness_execution_log")
         record = {
             "execution_id": state.execution_id,
             "workflow_id": state.workflow_id,
@@ -60,12 +61,13 @@ class SaveStage(Stage):
             record["metrics"]["validation_score"] = state.validation_score
 
         state.metadata["execution_record"] = record
+        state.metadata["execution_table_name"] = table_name
 
         # TODO: 실제 DB 저장 (db_manager가 state에 있으면)
-        # db_manager.insert_record("harness_execution_log", record)
+        # db_manager.insert_record(table_name, record)
 
-        logger.info("[Save] Execution record prepared: %s", state.execution_id)
-        return {"saved": True, "execution_id": state.execution_id}
+        logger.info("[Save] Execution record prepared: %s (table=%s)", state.execution_id, table_name)
+        return {"saved": True, "execution_id": state.execution_id, "table_name": table_name}
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [

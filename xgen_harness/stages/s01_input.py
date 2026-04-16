@@ -12,6 +12,7 @@ import logging
 import os
 from typing import Any, Optional
 
+from ..core.execution_context import get_api_key as ctx_get_api_key
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
 from ..errors import ConfigError, PipelineAbortError
@@ -94,8 +95,13 @@ class InputStage(Stage):
         return result
 
     async def _resolve_api_key(self, provider: str, state: PipelineState) -> Optional[str]:
-        """API 키 해석: ServiceProvider → 환경변수 → 파일 폴백"""
-        # 1. ServiceProvider (xgen 환경)
+        """API 키 해석: ExecutionContext → ServiceProvider → 환경변수 → 파일 폴백"""
+        # 1. ExecutionContext (contextvars — 동시 실행 안전)
+        key = ctx_get_api_key()
+        if key:
+            return key
+
+        # 2. ServiceProvider (xgen 환경)
         services = state.metadata.get("services")
         if services and services.config:
             try:
@@ -105,13 +111,13 @@ class InputStage(Stage):
             except Exception as e:
                 logger.debug("[Input] ServiceProvider API key lookup failed: %s", e)
 
-        # 2. 환경변수
+        # 3. 환경변수 (읽기 전용 — 기존 설정 호환)
         env_var = get_api_key_env(provider)
         key = os.environ.get(env_var, "")
         if key:
             return key
 
-        # 3. 파일 기반 폴백 (Docker 환경)
+        # 4. 파일 기반 폴백 (Docker 환경)
         filepath = f"/app/config/{env_var.lower()}.txt"
         if os.path.exists(filepath):
             with open(filepath) as f:

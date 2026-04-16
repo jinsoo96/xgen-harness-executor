@@ -31,6 +31,7 @@ from ..core.services import (
     MCPService,
     ServiceProvider,
 )
+from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.xgen_services")
 
@@ -294,21 +295,15 @@ class XgenServiceProvider(ServiceProvider):
         database = XgenDatabaseService(db_manager) if db_manager else None
 
         # Config (xgen-core)
-        _core_url = core_url or os.environ.get("XGEN_CORE_URL", "http://xgen-core:8000")
+        _core_url = core_url or get_service_url("xgen-core")
         config_svc = XgenConfigService(_core_url)
 
-        # MCP (MCP_STATION_URL → MCP_STATION_RAW_URL → 기본값 순서)
-        _mcp_url = mcp_url or os.environ.get(
-            "MCP_STATION_URL",
-            os.environ.get("MCP_STATION_RAW_URL", "http://xgen-mcp-station:8000"),
-        )
+        # MCP
+        _mcp_url = mcp_url or get_service_url("xgen-mcp-station")
         mcp_svc = XgenMCPService(_mcp_url)
 
         # Documents
-        _docs_url = documents_url or os.environ.get(
-            "XGEN_DOCUMENTS_URL",
-            os.environ.get("DOCUMENTS_SERVICE_BASE_URL", "http://xgen-documents:8000"),
-        )
+        _docs_url = documents_url or get_service_url("xgen-documents")
         docs_svc = XgenDocumentService(_docs_url)
 
         provider = cls(
