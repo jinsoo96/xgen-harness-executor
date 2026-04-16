@@ -1,11 +1,105 @@
+"""
+LLM Providers — 프로바이더 레지스트리 + 팩토리
+
+새 프로바이더 추가:
+    from xgen_harness.providers import register_provider
+    register_provider("bedrock", BedrockProvider)
+
+사용:
+    from xgen_harness.providers import create_provider
+    provider = create_provider("anthropic", api_key, model)
+"""
+
+import logging
+import os
+from typing import Optional, Type
+
 from .base import LLMProvider, ProviderEvent, ProviderEventType
-from .anthropic import AnthropicProvider
-from .openai import OpenAIProvider
+
+logger = logging.getLogger("harness.providers")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  프로바이더 레지스트리
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_REGISTRY: dict[str, Type[LLMProvider]] = {}
+
+# API 키 환경변수 매핑 — 단일 진실 소스
+PROVIDER_API_KEY_MAP: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "bedrock": "AWS_ACCESS_KEY_ID",
+    "vllm": "VLLM_API_KEY",
+}
+
+# 프로바이더별 기본 모델
+PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-20250514",
+    "openai": "gpt-4o-mini",
+    "google": "gemini-2.0-flash",
+}
+
+
+def register_provider(name: str, cls: Type[LLMProvider]) -> None:
+    """프로바이더 등록. 기존 이름이면 덮어씀."""
+    _REGISTRY[name.lower()] = cls
+    logger.debug("Provider registered: %s → %s", name, cls.__name__)
+
+
+def create_provider(
+    name: str,
+    api_key: str,
+    model: str,
+    base_url: Optional[str] = None,
+) -> LLMProvider:
+    """프로바이더 인스턴스 생성. 레지스트리에서 조회."""
+    key = name.lower()
+
+    if key not in _REGISTRY:
+        _register_defaults()
+
+    cls = _REGISTRY.get(key)
+    if cls is None:
+        logger.warning("Unknown provider '%s', falling back to OpenAI-compatible", name)
+        cls = _REGISTRY.get("openai")
+        if cls is None:
+            raise ValueError(f"Provider '{name}' not registered and no OpenAI fallback")
+
+    if base_url is None:
+        base_url = os.environ.get(f"{name.upper()}_API_BASE_URL")
+
+    return cls(api_key, model, base_url)
+
+
+def get_api_key_env(provider: str) -> str:
+    """프로바이더의 API 키 환경변수명 반환."""
+    return PROVIDER_API_KEY_MAP.get(provider.lower(), f"{provider.upper()}_API_KEY")
+
+
+def get_default_model(provider: str) -> str:
+    """프로바이더의 기본 모델명 반환."""
+    return PROVIDER_DEFAULT_MODEL.get(provider.lower(), "")
+
+
+def list_providers() -> list[str]:
+    """등록된 프로바이더 이름 목록."""
+    _register_defaults()
+    return list(_REGISTRY.keys())
+
+
+def _register_defaults() -> None:
+    if _REGISTRY:
+        return
+    from .anthropic import AnthropicProvider
+    from .openai import OpenAIProvider
+    _REGISTRY["anthropic"] = AnthropicProvider
+    _REGISTRY["openai"] = OpenAIProvider
+
 
 __all__ = [
-    "LLMProvider",
-    "ProviderEvent",
-    "ProviderEventType",
-    "AnthropicProvider",
-    "OpenAIProvider",
+    "LLMProvider", "ProviderEvent", "ProviderEventType",
+    "register_provider", "create_provider",
+    "get_api_key_env", "get_default_model", "list_providers",
+    "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL",
 ]
