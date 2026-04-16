@@ -302,32 +302,4 @@ class XgenAdapter:
 
         return sessions
 
-    async def _discover_mcp_tools(self, session_ids: list[str], state: PipelineState) -> None:
-        """ServiceProvider.mcp를 통한 도구 디스커버리."""
-        mcp = self._services.mcp
-        if not mcp:
-            return
-
-        tool_sessions = {}
-        for sid in session_ids:
-            try:
-                tools = await mcp.list_tools(sid)
-                for tool in tools:
-                    name = tool.get("name", "")
-                    if not name:
-                        continue
-                    state.tool_definitions.append({
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "description": tool.get("description", ""),
-                            "input_schema": tool.get("inputSchema", tool.get("input_schema", {})),
-                        },
-                    })
-                    tool_sessions[name] = sid
-                logger.info("[Adapter] MCP %s: %d tools", sid, len(tools))
-            except Exception as e:
-                logger.warning("[Adapter] MCP %s failed: %s", sid, e)
-
-        if tool_sessions:
-            state.metadata["mcp_tool_sessions"] = tool_sessions
+    # MCP 디스커버리는 ResourceRegistry.load_all()이 담당

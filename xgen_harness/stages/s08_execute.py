@@ -77,7 +77,7 @@ class ExecuteStage(Stage):
                     ))
 
             except asyncio.TimeoutError:
-                error_msg = f"Tool '{tool_name}' timed out after {tool_timeout}s"
+                error_msg = f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
                 state.add_tool_result(tool_use_id, error_msg, is_error=True)
                 results.append({"tool_name": tool_name, "success": False, "error": "timeout"})
                 logger.warning("[Execute] %s", error_msg)

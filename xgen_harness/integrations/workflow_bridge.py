@@ -79,12 +79,8 @@ async def execute_via_python_pipeline(
         return
 
     # 2. API 키를 환경변수에 설정 (프로바이더가 읽을 수 있도록)
-    _KEY_MAP = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "google": "GEMINI_API_KEY",
-    }
-    env_key = _KEY_MAP.get(provider, f"{provider.upper()}_API_KEY")
+    from ..providers import get_api_key_env
+    env_key = get_api_key_env(provider)
     prev_value = os.environ.get(env_key, "")
     os.environ[env_key] = resolved_api_key
 
