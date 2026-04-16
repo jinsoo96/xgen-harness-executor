@@ -28,19 +28,38 @@ class PlanStage(Stage):
         return state.loop_iteration > 1
 
     async def execute(self, state: PipelineState) -> dict:
-        # 계획 지시를 시스템 프롬프트에 추가
-        planning_instruction = (
-            "\n\n<planning_instruction>\n"
-            "Before answering, think step by step about what information you need "
-            "and which tools to use. Create a brief plan, then execute it.\n"
-            "</planning_instruction>"
-        )
+        mode = self.get_param("planning_mode", state, "cot")
+
+        # mode == "none": 계획 단계 비활성화
+        if mode == "none":
+            logger.info("[Plan] planning_mode=none, bypassed")
+            return {"planning_enabled": False, "planning_mode": "none"}
+
+        # mode == "react": ReAct-style prompt
+        if mode == "react":
+            planning_instruction = (
+                "\n\n<planning_instruction>\n"
+                "Use the ReAct (Reason + Act) framework:\n"
+                "1. Thought: Analyze the current situation and decide the next action.\n"
+                "2. Action: Execute a tool or generate a response.\n"
+                "3. Observation: Review the result and decide if more steps are needed.\n"
+                "Repeat until the task is complete.\n"
+                "</planning_instruction>"
+            )
+        else:
+            # 기본 CoT
+            planning_instruction = (
+                "\n\n<planning_instruction>\n"
+                "Before answering, think step by step about what information you need "
+                "and which tools to use. Create a brief plan, then execute it.\n"
+                "</planning_instruction>"
+            )
 
         if planning_instruction not in state.system_prompt:
             state.system_prompt += planning_instruction
 
-        logger.info("[Plan] Planning instruction added to system prompt")
-        return {"planning_enabled": True}
+        logger.info("[Plan] Planning instruction added (mode=%s)", mode)
+        return {"planning_enabled": True, "planning_mode": mode}
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [

@@ -18,19 +18,23 @@ from ..providers.base import ProviderEventType
 
 logger = logging.getLogger("harness.stage.validate")
 
-EVALUATION_PROMPT = """You are an AI response evaluator. Evaluate the assistant's response based on these criteria:
+ALL_CRITERIA = {
+    "relevance": {"description": "Does the response address the user's question?", "weight": 0.3},
+    "completeness": {"description": "Is the response thorough and complete?", "weight": 0.3},
+    "accuracy": {"description": "Is the information accurate and well-supported?", "weight": 0.2},
+    "clarity": {"description": "Is the response clear and well-organized?", "weight": 0.2},
+}
 
-1. **Relevance** (0-1, weight 0.3): Does the response address the user's question?
-2. **Completeness** (0-1, weight 0.3): Is the response thorough and complete?
-3. **Accuracy** (0-1, weight 0.2): Is the information accurate and well-supported?
-4. **Clarity** (0-1, weight 0.2): Is the response clear and well-organized?
+EVALUATION_PROMPT_TEMPLATE = """You are an AI response evaluator. Evaluate the assistant's response based on these criteria:
+
+{criteria_block}
 
 User's question: {user_input}
 
 Assistant's response: {assistant_response}
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{{"relevance": 0.0, "completeness": 0.0, "accuracy": 0.0, "clarity": 0.0, "overall": 0.0, "feedback": "brief feedback"}}"""
+{{{criteria_json_fields}, "overall": 0.0, "feedback": "brief feedback"}}"""
 
 
 class ValidateStage(Stage):
@@ -77,12 +81,36 @@ class ValidateStage(Stage):
         # ── 폴백: 기존 하드코딩 로직 (strategy resolve 실패 시) ──
         return await self._execute_llm_judge(state)
 
-    async def _execute_llm_judge(self, state: PipelineState) -> dict:
-        """기존 LLM Judge 로직 (폴백용)"""
-        eval_prompt = EVALUATION_PROMPT.format(
+    def _build_evaluation_prompt(self, state: PipelineState) -> tuple[str, list[str]]:
+        """선택된 criteria로 평가 프롬프트 생성"""
+        criteria = self.get_param("criteria", state, ["relevance", "completeness", "accuracy", "clarity"])
+        if isinstance(criteria, str):
+            criteria = [c.strip() for c in criteria.split(",")]
+
+        # 유효한 criteria만 필터링
+        selected = {k: v for k, v in ALL_CRITERIA.items() if k in criteria}
+        if not selected:
+            selected = ALL_CRITERIA  # 폴백: 전체 사용
+
+        # 가중치 재정규화
+        total_weight = sum(c["weight"] for c in selected.values())
+        criteria_block = "\n".join(
+            f"{i+1}. **{name.capitalize()}** (0-1, weight {info['weight']/total_weight:.2f}): {info['description']}"
+            for i, (name, info) in enumerate(selected.items())
+        )
+        criteria_json_fields = ", ".join(f'"{name}": 0.0' for name in selected)
+
+        prompt = EVALUATION_PROMPT_TEMPLATE.format(
+            criteria_block=criteria_block,
             user_input=state.user_input[:500],
             assistant_response=state.last_assistant_text[:2000],
+            criteria_json_fields=criteria_json_fields,
         )
+        return prompt, list(selected.keys())
+
+    async def _execute_llm_judge(self, state: PipelineState) -> dict:
+        """기존 LLM Judge 로직 (폴백용)"""
+        eval_prompt, selected_criteria = self._build_evaluation_prompt(state)
 
         eval_text = ""
         try:
@@ -102,7 +130,7 @@ class ValidateStage(Stage):
             logger.warning("[Validate] Evaluation LLM call failed: %s", e)
             return {"bypassed": True, "reason": f"evaluation failed: {e}"}
 
-        score, feedback, verdict = self._parse_evaluation(eval_text, state)
+        score, feedback, verdict = self._parse_evaluation(eval_text, state, selected_criteria)
 
         state.validation_score = score
         state.validation_feedback = feedback
@@ -117,9 +145,11 @@ class ValidateStage(Stage):
         logger.info("[Validate] score=%.2f, verdict=%s, feedback=%s", score, verdict, feedback[:100])
         return {"overall": score, "verdict": verdict, "feedback": feedback}
 
-    def _parse_evaluation(self, eval_text: str, state: PipelineState) -> tuple[float, str, str]:
+    def _parse_evaluation(self, eval_text: str, state: PipelineState, selected_criteria: list[str] | None = None) -> tuple[float, str, str]:
         """평가 결과 파싱"""
         threshold = self.get_param("threshold", state, state.config.validation_threshold if state.config else 0.7)
+        if selected_criteria is None:
+            selected_criteria = list(ALL_CRITERIA.keys())
 
         try:
             # JSON 추출 (마크다운 코드블록 내부일 수 있음)
@@ -133,13 +163,16 @@ class ValidateStage(Stage):
             overall = float(data.get("overall", 0.0))
             feedback = data.get("feedback", "")
 
-            # overall이 없으면 가중평균 계산
+            # overall이 없으면 선택된 criteria로 가중평균 계산
             if overall == 0.0:
-                r = float(data.get("relevance", 0.5))
-                c = float(data.get("completeness", 0.5))
-                a = float(data.get("accuracy", 0.5))
-                cl = float(data.get("clarity", 0.5))
-                overall = r * 0.3 + c * 0.3 + a * 0.2 + cl * 0.2
+                selected = {k: v for k, v in ALL_CRITERIA.items() if k in selected_criteria}
+                if not selected:
+                    selected = ALL_CRITERIA
+                total_weight = sum(c["weight"] for c in selected.values())
+                overall = sum(
+                    float(data.get(name, 0.5)) * (info["weight"] / total_weight)
+                    for name, info in selected.items()
+                )
 
             verdict = "pass" if overall >= threshold else "retry"
             return overall, feedback, verdict

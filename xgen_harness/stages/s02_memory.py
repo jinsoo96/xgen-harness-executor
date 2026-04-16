@@ -29,10 +29,12 @@ class MemoryStage(Stage):
 
     async def execute(self, state: PipelineState) -> dict:
         injected = 0
+        max_history = int(self.get_param("max_history", state, 10))
 
-        # 1. 대화 이력이 있으면 messages에 추가
+        # 1. 대화 이력이 있으면 messages에 추가 (max_history로 제한)
         if state.conversation_history:
-            for msg in state.conversation_history:
+            history = state.conversation_history[-max_history:]
+            for msg in history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
                 if content:
@@ -43,7 +45,7 @@ class MemoryStage(Stage):
         # (s03_system_prompt에서 처리 — 여기서는 state에 이미 있으므로 패스)
         prev_count = len(state.previous_results)
 
-        logger.info("[Memory] injected=%d messages, previous_results=%d", injected, prev_count)
+        logger.info("[Memory] injected=%d messages (max_history=%d), previous_results=%d", injected, max_history, prev_count)
         return {
             "injected": injected,
             "previous_results": prev_count,

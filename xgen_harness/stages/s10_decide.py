@@ -72,17 +72,18 @@ class DecideStage(Stage):
 
         # ── 3. 검증 점수 미달 → retry ──
         config = state.config
+        max_retries = int(self.get_param("max_retries", state, 3))
         if state.validation_score is not None:
             threshold = config.validation_threshold if config else 0.7
             if state.validation_score < threshold:
-                if state.retry_count < (config.max_retries if config else 3):
+                if state.retry_count < max_retries:
                     state.loop_decision = LOOP_RETRY
                     reason = f"검증 점수 미달 ({state.validation_score:.2f} < {threshold})"
                     logger.info("[Decide] %s → retry", reason)
                     return {"decision": LOOP_RETRY, "reason": reason}
                 else:
                     state.loop_decision = LOOP_COMPLETE
-                    reason = f"재시도 한도 도달 (점수 {state.validation_score:.2f})"
+                    reason = f"재시도 한도 도달 ({state.retry_count}/{max_retries}, 점수 {state.validation_score:.2f})"
                     return {"decision": LOOP_COMPLETE, "reason": reason}
 
         # ── 4. 텍스트 응답 있음 → complete ──
