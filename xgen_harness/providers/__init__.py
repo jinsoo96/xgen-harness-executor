@@ -112,9 +112,24 @@ def _register_defaults() -> None:
     _REGISTRY["vllm"] = OpenAIProvider
 
 
+def wrap_langchain(llm, provider_name: str = "") -> LLMProvider:
+    """LangChain BaseChatModel을 하네스 LLMProvider로 래핑.
+
+    xgen에서 이미 만든 LLM 인스턴스를 하네스에 그대로 끼울 때 사용.
+
+    Usage:
+        from langchain_anthropic import ChatAnthropic
+        llm = ChatAnthropic(model="claude-sonnet-4-20250514", ...)
+        provider = wrap_langchain(llm)
+        state.provider = provider
+    """
+    from .langchain_adapter import LangChainAdapter
+    return LangChainAdapter(llm, provider_name)
+
+
 __all__ = [
     "LLMProvider", "ProviderEvent", "ProviderEventType",
-    "register_provider", "create_provider",
+    "register_provider", "create_provider", "wrap_langchain",
     "get_api_key_env", "get_default_model", "list_providers",
     "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL",
 ]
