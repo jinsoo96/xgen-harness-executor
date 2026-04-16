@@ -29,6 +29,15 @@ RETRY_DELAYS = {
 }
 DEFAULT_MAX_RETRIES = 3
 
+# 프로바이더별 컨텍스트 한도 (문자 수 기준, ~4 chars/token 추정)
+PROVIDER_CONTEXT_LIMITS = {
+    "anthropic": 500_000,
+    "openai": 500_000,
+    "google": 500_000,
+    "bedrock": 500_000,
+    "vllm": 50_000,
+}
+
 
 class LLMStage(Stage):
     """LLM API 호출 스테이지"""
@@ -138,6 +147,11 @@ class LLMStage(Stage):
         if thinking_enabled and provider.supports_thinking():
             thinking = {"type": "enabled", "budget_tokens": thinking_budget}
 
+        # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약
+        provider_name = getattr(provider, "provider_name", "anthropic")
+        context_limit = PROVIDER_CONTEXT_LIMITS.get(provider_name, 500_000)
+        state.messages = self._truncate_messages_if_needed(state.messages, context_limit)
+
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         usage = TokenUsage()
@@ -183,6 +197,58 @@ class LLMStage(Stage):
 
         result_text = "".join(text_parts)
         return result_text, tool_calls, usage
+
+    @staticmethod
+    def _truncate_messages_if_needed(messages: list[dict], char_limit: int) -> list[dict]:
+        """메시지 총 문자 수가 한도를 초과하면 중간 메시지를 축약한다.
+
+        전략: 앞 40% + 뒤 40% 유지, 중간 20% 제거 후 축약 안내 삽입.
+        첫 번째/마지막 메시지는 항상 보존한다.
+        """
+        import json
+
+        def _msg_chars(msg: dict) -> int:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                return len(content)
+            if isinstance(content, list):
+                return sum(
+                    len(block.get("text", "")) if isinstance(block, dict) else len(str(block))
+                    for block in content
+                )
+            return len(json.dumps(content, ensure_ascii=False))
+
+        total_chars = sum(_msg_chars(m) for m in messages)
+        if total_chars <= char_limit or len(messages) <= 2:
+            return messages
+
+        logger.warning(
+            "[LLM] Context size %d chars exceeds limit %d, truncating middle messages",
+            total_chars, char_limit,
+        )
+
+        n = len(messages)
+        keep_front = max(1, int(n * 0.4))
+        keep_back = max(1, int(n * 0.4))
+
+        # 겹치지 않도록 보정
+        if keep_front + keep_back >= n:
+            return messages
+
+        front = messages[:keep_front]
+        back = messages[-keep_back:]
+        removed_count = n - keep_front - keep_back
+
+        truncation_notice = {
+            "role": "user",
+            "content": (
+                f"[System: {removed_count} messages were truncated from the middle of the "
+                f"conversation to fit within the context window. "
+                f"Original total: {total_chars} chars, limit: {char_limit} chars.]"
+            ),
+        }
+
+        return front + [truncation_notice] + back
 
     def _estimate_cost(self, usage: TokenUsage, model: str) -> float:
         """토큰 사용량으로 비용 추정 (USD)"""
