@@ -64,7 +64,12 @@ class XgenAdapter:
                 logger.warning("[Adapter] XgenServiceProvider 생성 실패: %s", e)
                 self._services = NullServiceProvider()
         else:
-            self._services = NullServiceProvider()
+            # db_manager 없어도 xgen 환경이면 Config/MCP/Documents 서비스 사용 가능
+            try:
+                from ..integrations.xgen_services import XgenServiceProvider
+                self._services = XgenServiceProvider.create()
+            except Exception:
+                self._services = NullServiceProvider()
 
     async def execute(
         self,
