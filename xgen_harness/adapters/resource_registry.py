@@ -135,6 +135,8 @@ class ResourceRegistry:
                 return await self._call_mcp_tool(executor.session_id, tool_name, tool_input)
             elif isinstance(executor, _APIToolRef):
                 return await self._call_api_tool(executor.spec, tool_input)
+            elif isinstance(executor, _DBToolRef):
+                return await self._call_db_tool(executor, tool_input)
             elif callable(executor):
                 result = executor(tool_name, tool_input)
                 if hasattr(result, '__await__'):
@@ -328,6 +330,28 @@ class ResourceRegistry:
                 return text if resp.status_code == 200 else f"API error {resp.status_code}: {text[:500]}"
         except Exception as e:
             return f"API call failed: {e}"
+
+    async def _call_db_tool(self, ref: "_DBToolRef", tool_input: dict) -> str:
+        """DB 도구 실행 — ServiceProvider.database 경유."""
+        query = tool_input.get("query", "")
+        if not query:
+            return "Error: 'query' parameter is required"
+
+        db = self._services.database
+        if not db:
+            return "Error: Database service not available"
+
+        try:
+            results = await db.find_records(
+                table="__raw_query__",
+                conditions={"query": query, "connection_id": ref.connection_id, "db_type": ref.db_type},
+                limit=100,
+            )
+            if results:
+                return json.dumps(results, ensure_ascii=False, default=str)[:10000]
+            return "Query returned 0 rows"
+        except Exception as e:
+            return f"Database query error: {e}"
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  3. Gallery 도구 로더
