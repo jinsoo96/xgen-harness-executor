@@ -297,8 +297,11 @@ class XgenServiceProvider(ServiceProvider):
         _core_url = core_url or os.environ.get("XGEN_CORE_URL", "http://xgen-core:8000")
         config_svc = XgenConfigService(_core_url)
 
-        # MCP
-        _mcp_url = mcp_url or os.environ.get("MCP_STATION_URL", "http://xgen-mcp-station:8000")
+        # MCP (MCP_STATION_URL → MCP_STATION_RAW_URL → 기본값 순서)
+        _mcp_url = mcp_url or os.environ.get(
+            "MCP_STATION_URL",
+            os.environ.get("MCP_STATION_RAW_URL", "http://xgen-mcp-station:8000"),
+        )
         mcp_svc = XgenMCPService(_mcp_url)
 
         # Documents

@@ -84,15 +84,20 @@ class SystemPromptStage(Stage):
         rag_collections: list[str] = state.metadata.get("rag_collections", [])
         rag_top_k: int = state.metadata.get("rag_top_k", 4)
         if rag_collections and state.user_input:
-            services = state.metadata.get("services")
-            if services and services.documents:
-                rag_text = await self._fetch_rag_via_service(
-                    services.documents, state.user_input, rag_collections, rag_top_k,
-                )
+            # ResourceRegistry 우선 → ServiceProvider → httpx 직접 호출
+            registry = state.metadata.get("resource_registry")
+            if registry:
+                rag_text = await registry.search_rag(state.user_input, rag_collections, rag_top_k)
             else:
-                rag_text = await self._fetch_rag_context(
-                    query=state.user_input, collections=rag_collections, top_k=rag_top_k,
-                )
+                services = state.metadata.get("services")
+                if services and services.documents:
+                    rag_text = await self._fetch_rag_via_service(
+                        services.documents, state.user_input, rag_collections, rag_top_k,
+                    )
+                else:
+                    rag_text = await self._fetch_rag_context(
+                        query=state.user_input, collections=rag_collections, top_k=rag_top_k,
+                    )
             if rag_text:
                 state.rag_context = rag_text
 

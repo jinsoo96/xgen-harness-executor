@@ -124,64 +124,29 @@ class ExecuteStage(Stage):
         )
 
     async def _dispatch_tool(self, tool_name: str, tool_input: dict, state: PipelineState) -> str:
-        """도구 디스패처 — discover_tools 빌트인 + MCP + 노드 브릿지"""
+        """도구 디스패처 — ResourceRegistry 우선, 레거시 폴백"""
 
         # 빌트인: discover_tools (progressive disclosure Level 2)
         if tool_name == "discover_tools":
             return self._handle_discover_tools(tool_input, state)
 
-        # state.metadata에 등록된 Tool 인스턴스 검색
+        # ResourceRegistry 경로 (XgenAdapter가 주입)
+        registry = state.metadata.get("resource_registry")
+        if registry:
+            executors = registry.get_tool_executors()
+            if tool_name in executors:
+                return await registry.execute_tool(tool_name, tool_input)
+
+        # 레거시 폴백: state.metadata에 직접 등록된 Tool 인스턴스
         tool_registry = state.metadata.get("tool_registry", {})
         if tool_name in tool_registry:
             tool_instance = tool_registry[tool_name]
-            result = await tool_instance.execute(tool_input)
-            return result.content
-
-        # MCP 도구 — ServiceProvider.mcp 우선, 레거시 MCPClient 폴백
-        mcp_sessions = state.metadata.get("mcp_tool_sessions", state.metadata.get("mcp_tool_mapping", {}))
-        if tool_name in mcp_sessions:
-            session_id = mcp_sessions[tool_name]
-            # ServiceProvider 경로 (어댑터/bridge에서 주입)
-            services = state.metadata.get("services")
-            if services and services.mcp:
-                return await services.mcp.call_tool(session_id, tool_name, tool_input)
-            # 레거시 폴백 (ServiceProvider 없을 때)
-            from ..tools.mcp_client import MCPClient
-            client = MCPClient()
-            return await client.call_tool(session_id, tool_name, tool_input)
-
-        # 커스텀 API 도구 — stage_params.custom_tools에서 선택된 도구
-        custom_tools = state.metadata.get("custom_tool_specs", {})
-        if tool_name in custom_tools:
-            return await self._execute_custom_api_tool(custom_tools[tool_name], tool_input)
+            if hasattr(tool_instance, 'execute'):
+                result = await tool_instance.execute(tool_input)
+                return result.content if hasattr(result, 'content') else str(result)
 
         # 미등록 도구
         return f"Error: Tool '{tool_name}' is not registered. Use discover_tools to see available tools."
-
-    async def _execute_custom_api_tool(self, tool_spec: dict, tool_input: dict) -> str:
-        """xgen tools storage에서 등록된 커스텀 API 도구 실행"""
-        import httpx
-
-        api_url = tool_spec.get("api_url", "")
-        api_method = tool_spec.get("api_method", "POST").upper()
-        api_body = tool_spec.get("api_body", {})
-
-        # tool_input으로 body 오버라이드
-        body = {**api_body, **tool_input}
-
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
-                if api_method == "GET":
-                    resp = await client.get(api_url, params=body)
-                else:
-                    resp = await client.post(api_url, json=body)
-
-                if resp.status_code == 200:
-                    return resp.text[:10000]
-                else:
-                    return f"API error: {resp.status_code} {resp.text[:500]}"
-        except Exception as e:
-            return f"API call failed: {str(e)}"
 
     def _handle_discover_tools(self, tool_input: dict, state: PipelineState) -> str:
         """Progressive Disclosure Level 2: 특정 도구의 상세 스키마 반환"""

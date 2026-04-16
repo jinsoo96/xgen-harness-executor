@@ -46,7 +46,7 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Core
