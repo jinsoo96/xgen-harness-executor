@@ -88,13 +88,9 @@ class XgenConfigService:
     환경변수 → xgen-core → 폴백 순서로 API 키 해석.
     """
 
-    _PROVIDER_KEY_MAP = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "google": "GEMINI_API_KEY",
-        "bedrock": "AWS_ACCESS_KEY_ID",
-        "vllm": "VLLM_API_KEY",
-    }
+    # providers/__init__.py의 단일 진실 소스 참조
+    from ..providers import PROVIDER_API_KEY_MAP
+    _PROVIDER_KEY_MAP = PROVIDER_API_KEY_MAP
 
     def __init__(self, base_url: str, internal_key: str = ""):
         self._base_url = base_url.rstrip("/")
