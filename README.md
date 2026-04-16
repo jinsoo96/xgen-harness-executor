@@ -80,20 +80,20 @@ Phase C: 마무리 (1회)
 
 ### Stage별 기능
 
-| # | Stage | 하는 일 | 설정 가능 항목 |
-|---|-------|--------|---------------|
-| 1 | **입력** | Provider 생성, API 키 해석 | provider, model, temperature |
-| 2 | **기억** | 대화 이력 로드 | max_history (1~20) |
-| 3 | **시스템 프롬프트** | 섹션 기반 조립 + RAG + Citation | system_prompt, citation_enabled |
-| 4 | **도구 색인** | MCP/Gallery/RAG 도구 수집 | mcp_sessions, rag_collections, builtin_tools |
-| 5 | **계획** | CoT/ReAct/None 선택 | planning_mode (cot/react/none) |
-| 6 | **컨텍스트** | RAG 검색 + 토큰 예산 관리 | rag_collections, context_window, compaction_threshold |
-| 7 | **LLM 호출** | 스트리밍 + 재시도 + 비용 추적 | max_tokens, max_retries, context_limit, thinking_enabled |
-| 8 | **도구 실행** | MCP/ToolSource/Registry 디스패치 | timeout, result_budget |
-| 9 | **검증** | LLM Judge / Rule-based / None | criteria, threshold |
-| 10 | **판단** | Guard 체인 + 루프 판단 | max_iterations, max_retries |
-| 11 | **저장** | 실행 이력 DB 저장 | table_name, save_enabled |
-| 12 | **완료** | 메트릭스 + 포맷팅 | output_format (text/json/markdown) |
+| # | Stage | 하는 일 | 설정 가능 항목 | Strategy |
+|---|-------|--------|---------------|----------|
+| 1 | **입력** | Provider 생성, API 키 해석 | provider, model, temperature | default, **with_classification** |
+| 2 | **기억** | 대화 이력 로드 | max_history, memory_collection | default, **embedding_search** |
+| 3 | **시스템 프롬프트** | 섹션 기반 조립 + RAG + Citation | system_prompt, citation_enabled | section_priority, simple |
+| 4 | **도구 색인** | MCP/Gallery/RAG 도구 수집 | mcp_sessions, rag_collections, rag_tool_mode | progressive_3level, eager_load |
+| 5 | **계획** | 자동/CoT/ReAct/None | planning_mode (**auto**/cot/react/none) | auto (complexity 연동) |
+| 6 | **컨텍스트** | RAG 검색 + 토큰 관리 | rag_collections, context_window, window_size | token_budget, **sliding_window** |
+| 7 | **LLM 호출** | 스트리밍 + 재시도 + 비용 추적 | max_tokens, max_retries, context_limit | streaming, batch |
+| 8 | **도구 실행** | MCP/ToolSource/Registry 디스패치 | timeout, result_budget | default(순차), **parallel_read** |
+| 9 | **검증** | LLM Judge / Rule-based / None | **criteria** (선택), threshold | llm_judge, rule_based, none |
+| 10 | **판단** | Guard 체인 + 루프 판단 | max_iterations, **guards**, cost_budget_usd | threshold, always_pass |
+| 11 | **저장** | 실행 이력 DB 저장 | table_name, save_enabled | default, noop |
+| 12 | **완료** | 메트릭스 + 포맷팅 | output_format (text/json/markdown) | default, **format_json** |
 
 ---
 
@@ -572,6 +572,7 @@ xgen_harness/
 
 | 버전 | 주요 변경 |
 |------|----------|
+| 0.8.0 | Strategy 실구현 (with_classification/embedding_search/sliding_window/parallel_read), Guard 설정화, Progressive Disclosure |
 | 0.7.0 | RAG Tool Mode, 컨텍스트 크기 제한, Citation |
 | 0.6.0 | 9개 파라미터 실연동, Strategy 구현 |
 | 0.5.x | ServiceRegistry, ExecutionContext, Plugin System |
