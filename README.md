@@ -246,6 +246,274 @@ register_provider("my_llm", MyProvider)
 
 ---
 
+## Stage별 상세 — 설정, 연동, 확장
+
+### s01 입력 (Input)
+
+사용자 입력을 받아 LLM Provider를 생성하고, API 키를 해석한다.
+
+**설정:**
+```python
+stage_params = {
+    "s01_input": {
+        "provider": "openai",          # anthropic / openai / google / bedrock / vllm
+        "model": "gpt-4o-mini",        # 프로바이더별 모델
+        "temperature": 0.7,            # 0.0 ~ 2.0
+    }
+}
+```
+
+**연동 서비스:** `config` (API 키 조회)
+
+**API 키 해석 순서:**
+1. `ExecutionContext.get_api_key()` (contextvars)
+2. `ServiceProvider.config.get_api_key(provider)` (xgen-core persistent_configs)
+3. `os.environ.get("OPENAI_API_KEY")` (읽기 전용 폴백)
+
+**확장:** `register_provider("my_llm", MyProvider)` → 새 프로바이더 추가
+
+---
+
+### s02 기억 (Memory)
+
+이전 대화 이력을 로드하여 messages에 추가한다. `interaction_id`가 있을 때만 동작.
+
+**설정:**
+```python
+stage_params = {
+    "s02_memory": {
+        "max_history": 10,  # 최근 N개 대화만 로드 (1~20)
+    }
+}
+```
+
+**연동 서비스:** DB (ServiceProvider.database — 대화 이력 조회)
+
+**bypass 조건:** `interaction_id` 없거나 이전 이력이 없으면 건너뜀
+
+---
+
+### s03 시스템 프롬프트 (System Prompt)
+
+시스템 프롬프트를 섹션 기반으로 조립한다. Identity → Rules → Tools → RAG → History → Citation 순서.
+
+**설정:**
+```python
+stage_params = {
+    "s03_system_prompt": {
+        "system_prompt": "당신은 한국어 도우미입니다.",  # 직접 지정
+        "include_rules": True,         # 기본 행동 규칙 포함
+        "prompt_content": "...",       # 프롬프트 스토어에서 선택한 내용
+        "citation_enabled": False,     # [DOC_1] 인용 형식 활성화
+    }
+}
+```
+
+**연동 서비스:** `documents` (RAG 검색 → 프롬프트에 주입)
+
+**RAG 주입 방식:** `rag_collections`가 metadata에 있으면 ResourceRegistry → ServiceProvider → httpx 3단계 폴백으로 검색
+
+---
+
+### s04 도구 색인 (Tool Index)
+
+MCP 세션, Gallery 패키지, 빌트인 도구를 수집하여 LLM에 전달할 도구 목록을 생성한다.
+
+**설정:**
+```python
+stage_params = {
+    "s04_tool_index": {
+        "mcp_sessions": ["session-abc", "session-xyz"],  # MCP 세션 선택
+        "rag_collections": ["my_docs"],    # RAG 도구로 등록할 컬렉션
+        "rag_tool_mode": "both",           # presearch / tool / both
+        "builtin_tools": ["discover_tools"],  # 빌트인 도구 선택
+        "rag_top_k": 4,                    # RAG 검색 결과 수
+    }
+}
+```
+
+**연동 서비스:** `mcp` (MCP 세션 도구 디스커버리)
+
+**RAG 도구 모드:**
+- `presearch`: s06에서 사전 검색만 (기본)
+- `tool`: 에이전트가 `rag_search` 도구로 직접 호출
+- `both`: 사전 검색 + 도구 모두 활성화
+
+**확장:** `register_tool_source(my_source)` → 커스텀 도구 소스 추가
+
+---
+
+### s05 계획 (Plan)
+
+실행 계획을 수립한다. 첫 번째 루프에서만 실행.
+
+**설정:**
+```python
+stage_params = {
+    "s05_plan": {
+        "planning_mode": "cot",  # cot (Chain-of-Thought) / react (ReAct) / none
+    }
+}
+```
+
+**bypass 조건:** `planning_mode == "none"` 또는 루프 2회차 이상
+
+---
+
+### s06 컨텍스트 (Context)
+
+RAG 문서 검색 + 토큰 예산 관리. 검색 결과를 시스템 프롬프트에 주입하고, 토큰 초과 시 메시지를 압축한다.
+
+**설정:**
+```python
+stage_params = {
+    "s06_context": {
+        "rag_collections": ["assort_bb8b..."],  # 검색할 컬렉션
+        "rag_top_k": 4,                         # 컬렉션당 검색 결과 수
+        "context_window": 200000,                # 컨텍스트 윈도우 (토큰)
+        "compaction_threshold": 80,              # 압축 시작 (% 사용)
+    }
+}
+```
+
+**연동 서비스:** `documents` (벡터 검색 API)
+
+**압축 전략:** 예산 초과 시 첫 메시지 + 최근 3개만 유지
+
+---
+
+### s07 LLM 호출 (LLM)
+
+LLM API를 호출하고 SSE로 스트리밍한다. 재시도, 비용 추적, 컨텍스트 크기 제한 포함.
+
+**설정:**
+```python
+stage_params = {
+    "s07_llm": {
+        "max_tokens": 8192,            # 최대 출력 토큰 (256~32K)
+        "max_retries": 3,              # 재시도 횟수
+        "context_limit": 500000,       # 컨텍스트 크기 제한 (문자)
+        "thinking_enabled": False,     # Extended Thinking 활성화
+        "thinking_budget": 10000,      # Thinking 토큰 예산
+    }
+}
+```
+
+**컨텍스트 크기 제한:** Provider별 기본값 (anthropic/openai/google: 500K, vllm: 50K). `context_limit`으로 오버라이드 가능. 초과 시 중간 20% 자동 제거.
+
+**재시도:** RateLimitError(429) → 10/20/40초, OverloadError(529) → 1/2/4초
+
+**비용 추적:** `PRICING` 단일 진실 소스에서 모델별 가격 조회
+
+---
+
+### s08 도구 실행 (Execute)
+
+LLM이 반환한 `tool_use`를 실제로 실행한다. 도구가 없으면 건너뜀.
+
+**설정:**
+```python
+stage_params = {
+    "s08_execute": {
+        "timeout": 60,           # 도구 실행 타임아웃 (초)
+        "result_budget": 50000,  # 결과 최대 문자수
+    }
+}
+```
+
+**도구 디스패치 순서:**
+1. 빌트인 (`discover_tools`, `rag_search`)
+2. ResourceRegistry (XgenAdapter가 주입)
+3. `register_tool_source()`로 등록된 ToolSource
+4. state.metadata의 tool_registry (레거시 폴백)
+
+**bypass 조건:** `pending_tool_calls`가 비어있으면 건너뜀
+
+---
+
+### s09 검증 (Validate)
+
+LLM 응답 품질을 평가한다. 텍스트 응답이 없으면 건너뜀.
+
+**설정:**
+```python
+stage_params = {
+    "s09_validate": {
+        "criteria": ["relevance", "completeness", "accuracy", "clarity"],  # 평가 기준 선택
+        "threshold": 0.7,  # 통과 기준 점수 (0.0~1.0)
+    }
+}
+```
+
+**Strategy:**
+- `llm_judge` (기본): 별도 LLM 호출로 4가지 기준 평가, 선택된 기준만 가중평균
+- `rule_based`: 길이/에러/키워드 기반 (LLM 비용 절감)
+- `none`: 항상 통과
+
+---
+
+### s10 판단 (Decide)
+
+계속/종료를 판단한다. Guard 체인으로 예산 초과를 감지.
+
+**설정:**
+```python
+stage_params = {
+    "s10_decide": {
+        "max_iterations": 10,  # 최대 루프 횟수
+        "max_retries": 3,      # 검증 실패 시 재시도 횟수
+    }
+}
+```
+
+**판단 로직:**
+1. Guard 체인 차단 (반복/비용/토큰 예산 초과) → `complete`
+2. `pending_tool_calls` 있음 → `continue` (도구 실행 후 재시도)
+3. 검증 점수 미달 + 재시도 가능 → `retry`
+4. 텍스트 응답 있음 → `complete`
+
+---
+
+### s11 저장 (Save)
+
+실행 결과를 DB에 저장한다.
+
+**설정:**
+```python
+stage_params = {
+    "s11_save": {
+        "save_enabled": True,                    # 저장 활성화
+        "table_name": "harness_execution_log",   # 테이블명
+    }
+}
+```
+
+**연동 서비스:** DB (ServiceProvider.database)
+
+**bypass:** `save_enabled == False`이면 건너뜀
+
+---
+
+### s12 완료 (Complete)
+
+전체 메트릭스를 집계하고 출력을 포맷팅한다.
+
+**설정:**
+```python
+stage_params = {
+    "s12_complete": {
+        "output_format": "text",  # text / json / markdown
+    }
+}
+```
+
+**출력 포맷:**
+- `text`: 그대로 출력 (기본)
+- `json`: `{"content": "...", "model": "...", "tokens": {...}}` 구조화
+- `markdown`: 제목 + 본문 + 모델 정보 푸터
+
+---
+
 ## 디렉토리 구조
 
 ```
