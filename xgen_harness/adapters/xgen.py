@@ -135,6 +135,12 @@ class XgenAdapter:
 
         # ━━━━ 2. harness_config 해석 ━━━━
         hc = dict(workflow_data.get("harness_config") or {})
+        # top-level stage_params가 있으면 hc에 병합 (DB 저장 구조 호환)
+        top_sp = workflow_data.get("stage_params")
+        if top_sp and isinstance(top_sp, dict):
+            existing_sp = hc.get("stage_params", {})
+            existing_sp.update(top_sp)
+            hc["stage_params"] = existing_sp
         if runtime_harness_config:
             hc.update(runtime_harness_config)
 
