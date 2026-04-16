@@ -9,5 +9,6 @@ Adapters — 외부 시스템과 하네스를 연결하는 어댑터 계층
 """
 
 from .xgen import XgenAdapter
+from .resource_registry import ResourceRegistry, ResourceInfo
 
-__all__ = ["XgenAdapter"]
+__all__ = ["XgenAdapter", "ResourceRegistry", "ResourceInfo"]
