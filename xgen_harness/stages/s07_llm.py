@@ -149,7 +149,10 @@ class LLMStage(Stage):
 
         # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약
         provider_name = getattr(provider, "provider_name", "anthropic")
-        context_limit = PROVIDER_CONTEXT_LIMITS.get(provider_name, 500_000)
+        context_limit = int(self.get_param(
+            "context_limit", state,
+            PROVIDER_CONTEXT_LIMITS.get(provider_name, 500_000),
+        ))
         state.messages = self._truncate_messages_if_needed(state.messages, context_limit)
 
         text_parts: list[str] = []
