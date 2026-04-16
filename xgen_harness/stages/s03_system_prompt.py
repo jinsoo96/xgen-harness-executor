@@ -80,15 +80,19 @@ class SystemPromptStage(Stage):
             tool_section = self._build_tool_index_section(state.tool_index)
             sections.append((SECTION_PRIORITIES["tools"], "tools", tool_section))
 
-        # 4. RAG Context — s04_tool_index가 metadata에 저장한 컬렉션에서 검색
+        # 4. RAG Context — ServiceProvider.documents 우선, httpx 직접 호출 폴백
         rag_collections: list[str] = state.metadata.get("rag_collections", [])
         rag_top_k: int = state.metadata.get("rag_top_k", 4)
         if rag_collections and state.user_input:
-            rag_text = await self._fetch_rag_context(
-                query=state.user_input,
-                collections=rag_collections,
-                top_k=rag_top_k,
-            )
+            services = state.metadata.get("services")
+            if services and services.documents:
+                rag_text = await self._fetch_rag_via_service(
+                    services.documents, state.user_input, rag_collections, rag_top_k,
+                )
+            else:
+                rag_text = await self._fetch_rag_context(
+                    query=state.user_input, collections=rag_collections, top_k=rag_top_k,
+                )
             if rag_text:
                 state.rag_context = rag_text
 
@@ -118,6 +122,28 @@ class SystemPromptStage(Stage):
         }
         logger.info("[System Prompt] %d chars, sections=%s", len(assembled), result["sections"])
         return result
+
+    async def _fetch_rag_via_service(
+        self, doc_service, query: str, collections: list[str], top_k: int,
+    ) -> str:
+        """ServiceProvider.documents를 통한 RAG 검색"""
+        all_chunks = []
+        for collection in collections:
+            try:
+                results = await doc_service.search(query, collection, limit=top_k)
+                for i, doc in enumerate(results, 1):
+                    if isinstance(doc, dict):
+                        content = doc.get("content", doc.get("text", ""))
+                        source = doc.get("source", doc.get("metadata", {}).get("source", ""))
+                        if content:
+                            header = f"[{len(all_chunks) + 1}]"
+                            if source:
+                                header += f" ({source})"
+                            all_chunks.append(f"{header}\n{content}")
+            except Exception as e:
+                logger.warning("[System Prompt] RAG search via service failed: %s", e)
+
+        return "\n\n".join(all_chunks) if all_chunks else ""
 
     async def _fetch_rag_context(
         self,
