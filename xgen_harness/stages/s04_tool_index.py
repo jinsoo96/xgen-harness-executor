@@ -15,6 +15,7 @@ import logging
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
 from ..tools.builtin import DiscoverToolsTool
+from ..tools.rag_tool import RAGSearchTool
 
 logger = logging.getLogger("harness.stage.tool_index")
 
@@ -66,6 +67,23 @@ class ToolIndexStage(Stage):
             state.metadata["rag_collections"] = rag_collections
             state.metadata["rag_top_k"] = rag_top_k
             logger.info("[Tool Index] RAG collections: %s (top_k=%d)", rag_collections, rag_top_k)
+
+            # RAG tool mode: 에이전트가 직접 호출할 수 있는 rag_search 도구 등록
+            rag_tool_mode: str = self.get_param("rag_tool_mode", state, "both")
+            if rag_tool_mode in ("tool", "both"):
+                rag_tool = RAGSearchTool(
+                    collections=rag_collections,
+                    default_top_k=rag_top_k,
+                )
+                # 중복 방지
+                if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
+                    state.tool_definitions.append(rag_tool.to_api_format())
+                    tool_index.append(rag_tool.to_index_entry())
+                    # tool_registry에 인스턴스 등록 (s08_execute에서 실행용)
+                    if "tool_registry" not in state.metadata:
+                        state.metadata["tool_registry"] = {}
+                    state.metadata["tool_registry"]["rag_search"] = rag_tool
+                    logger.info("[Tool Index] rag_search tool registered (mode=%s)", rag_tool_mode)
 
         logger.info("[Tool Index] %d tools indexed, %d definitions bound",
                      len(tool_index), len(state.tool_definitions))

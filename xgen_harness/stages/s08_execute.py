@@ -130,6 +130,10 @@ class ExecuteStage(Stage):
         if tool_name == "discover_tools":
             return self._handle_discover_tools(tool_input, state)
 
+        # 빌트인: rag_search (에이전트가 직접 호출하는 RAG 검색)
+        if tool_name == "rag_search":
+            return await self._handle_rag_search(tool_input, state)
+
         # ResourceRegistry 경로 (XgenAdapter가 주입)
         registry = state.metadata.get("resource_registry")
         if registry:
@@ -156,6 +160,25 @@ class ExecuteStage(Stage):
 
         # 미등록 도구
         return f"Error: Tool '{tool_name}' is not registered. Use discover_tools to see available tools."
+
+    async def _handle_rag_search(self, tool_input: dict, state: PipelineState) -> str:
+        """RAG 검색 도구 실행 — tool_registry에서 RAGSearchTool 인스턴스를 꺼내 실행"""
+        tool_registry = state.metadata.get("tool_registry", {})
+        rag_tool = tool_registry.get("rag_search")
+        if rag_tool and hasattr(rag_tool, "execute"):
+            result = await rag_tool.execute(tool_input)
+            return result.content if hasattr(result, "content") else str(result)
+
+        # 폴백: RAGSearchTool이 registry에 없으면 직접 생성 시도
+        rag_collections = state.metadata.get("rag_collections", [])
+        if not rag_collections:
+            return "Error: No RAG collections configured. RAG search is not available."
+
+        from ..tools.rag_tool import RAGSearchTool
+        rag_top_k = state.metadata.get("rag_top_k", 4)
+        fallback_tool = RAGSearchTool(collections=rag_collections, default_top_k=rag_top_k)
+        result = await fallback_tool.execute(tool_input)
+        return result.content if hasattr(result, "content") else str(result)
 
     def _handle_discover_tools(self, tool_input: dict, state: PipelineState) -> str:
         """Progressive Disclosure Level 2: 특정 도구의 상세 스키마 반환"""

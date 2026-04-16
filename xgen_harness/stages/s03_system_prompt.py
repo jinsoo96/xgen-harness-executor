@@ -101,7 +101,20 @@ class SystemPromptStage(Stage):
             rag_section = f"<reference_documents>\n{state.rag_context}\n</reference_documents>"
             sections.append((SECTION_PRIORITIES["rag"], "rag", rag_section))
 
-        # 5. History Summary (이전 결과)
+        # 5. Citation — 문서 인용 형식 지시
+        citation_enabled: bool = self.get_param("citation_enabled", state, False)
+        if citation_enabled:
+            citation_instructions = (
+                "<citation_instructions>\n"
+                "When referencing information from provided documents, cite your sources "
+                "using [DOC_1], [DOC_2] format. Each citation should correspond to the "
+                "numbered document tags in the reference materials. Always include citations "
+                "when stating facts derived from the provided documents.\n"
+                "</citation_instructions>"
+            )
+            sections.append((SECTION_PRIORITIES["rules"] + 0.5, "citation", citation_instructions))
+
+        # 6. History Summary (이전 결과)
         if state.previous_results:
             history = "\n---\n".join(state.previous_results[-3:])  # 최근 3개
             sections.append((
