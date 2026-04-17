@@ -5,6 +5,19 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.12] — 2026-04-17
+
+### Changed — 통합 수준 예외 복구 강화
+- **`Pipeline._execute_stage`**: 이전엔 `HarnessError` 만 `on_error` 훅 경유. 일반 `Exception`(RuntimeError 등)은 바로 `PipelineAbortError` 로 래핑되어 외부 플러그인 Stage 가 자체 복구 기회 없었음. 이제 일반 예외도 `on_error` 호출 후 dict 반환 시 복구, None 반환 시 전파.
+- 효과: 외부 기여자가 만든 Stage 가 예상치 못한 예외를 던져도 `on_error` 로 gracefully 처리 가능 → 파이프라인 강건성 향상.
+
+### Tests
+- `test_exception_paths.py` 7건 (단위 수준)
+- `test_integration_runtime.py` 5건 (통합 수준)
+  - Cost Guard 실전 차단, Iteration Guard 실전 차단, Loop back-jump, Stage 예외 on_error 복구, 50개 동시성 스트레스
+
+---
+
 ## [0.8.11] — 2026-04-17
 
 ### Changed — 하드코딩 제거 (허브 정신 완성)
