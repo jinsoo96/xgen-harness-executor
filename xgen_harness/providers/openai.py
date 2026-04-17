@@ -183,7 +183,15 @@ class OpenAIProvider(LLMProvider):
 
 
 def _convert_messages(messages: list[dict], system: Optional[str] = None) -> list[dict]:
-    """Anthropic 메시지 포맷 → OpenAI 포맷"""
+    """Anthropic 메시지 포맷 → OpenAI 포맷.
+
+    핵심 차이:
+    - Anthropic assistant: content=[text, tool_use, ...]
+    - OpenAI   assistant: content=text, tool_calls=[{id, type:"function", function:{name, arguments}}]
+
+    - Anthropic user: content=[tool_result, ...]
+    - OpenAI    tool: {role:"tool", tool_call_id, content}
+    """
     oai_msgs = []
     if system:
         oai_msgs.append({"role": "system", "content": system})
@@ -194,21 +202,77 @@ def _convert_messages(messages: list[dict], system: Optional[str] = None) -> lis
 
         if isinstance(content, str):
             oai_msgs.append({"role": role, "content": content})
-        elif isinstance(content, list):
-            # tool_result 리스트 → OpenAI tool 메시지로 변환
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    oai_msgs.append({
-                        "role": "tool",
-                        "tool_call_id": block.get("tool_use_id", ""),
-                        "content": str(block.get("content", "")),
-                    })
-                elif isinstance(block, dict) and block.get("type") == "text":
-                    oai_msgs.append({"role": role, "content": block.get("text", "")})
-                else:
-                    oai_msgs.append({"role": role, "content": str(block)})
-        else:
+            continue
+
+        if not isinstance(content, list):
             oai_msgs.append({"role": role, "content": str(content)})
+            continue
+
+        if role == "assistant":
+            text_parts: list[str] = []
+            tool_calls: list[dict] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    text_parts.append(str(block))
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    t = block.get("text", "")
+                    if t:
+                        text_parts.append(t)
+                elif btype == "tool_use":
+                    args = block.get("input") or {}
+                    try:
+                        args_str = json.dumps(args, ensure_ascii=False)
+                    except Exception:
+                        args_str = "{}"
+                    tool_calls.append({
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": args_str,
+                        },
+                    })
+                elif btype == "thinking":
+                    # OpenAI는 thinking 블록 미지원 — 무시
+                    continue
+                else:
+                    text_parts.append(str(block))
+
+            assistant_msg: dict = {"role": "assistant"}
+            assistant_msg["content"] = "\n".join(text_parts) if text_parts else None
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+            oai_msgs.append(assistant_msg)
+            continue
+
+        # user (또는 기타) — tool_result 블록은 tool 역할로 분리
+        for block in content:
+            if not isinstance(block, dict):
+                oai_msgs.append({"role": role, "content": str(block)})
+                continue
+            btype = block.get("type")
+            if btype == "tool_result":
+                tc_content = block.get("content", "")
+                # content가 list of blocks인 경우 문자열로 평탄화
+                if isinstance(tc_content, list):
+                    flat = []
+                    for sub in tc_content:
+                        if isinstance(sub, dict):
+                            flat.append(sub.get("text", "") or str(sub))
+                        else:
+                            flat.append(str(sub))
+                    tc_content = "\n".join(flat)
+                oai_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": block.get("tool_use_id", ""),
+                    "content": str(tc_content),
+                })
+            elif btype == "text":
+                oai_msgs.append({"role": role, "content": block.get("text", "")})
+            else:
+                oai_msgs.append({"role": role, "content": str(block)})
 
     return oai_msgs
 
