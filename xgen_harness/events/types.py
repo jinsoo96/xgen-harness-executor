@@ -110,6 +110,17 @@ class DoneEvent(HarnessEvent):
     success: bool = True
 
 
+@dataclass
+class MissingParamEvent(HarnessEvent):
+    """필수 파라미터 누락 — 사용자/상위 시스템에 되물음 신호"""
+    capability: str = ""         # capability name
+    tool_name: str = ""
+    param_name: str = ""
+    param_type: str = ""
+    description: str = ""
+    source_hint: str = ""        # 어디서 찾으려 했는지 ("user_input" 등)
+
+
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
     """이벤트를 harness_router.py가 이해하는 (event_type, data) dict로 변환"""
     type_map = {
@@ -123,6 +134,7 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
         MetricsEvent: "metrics",
         ErrorEvent: "error",
         DoneEvent: "done",
+        MissingParamEvent: "missing_param",
     }
     event_type = type_map.get(type(event), "unknown")
 

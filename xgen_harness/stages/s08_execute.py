@@ -179,6 +179,10 @@ class ExecuteStage(Stage):
     ) -> tuple[dict[str, Any], int]:
         """단일 도구 실행 + 결과 축약 + 이벤트 발행. (result_info, chars) 반환."""
         try:
+            # Capability 기반 파라미터 자동 보강 — tool_name이 capability에 바인딩됐으면
+            # ParameterResolver로 누락된 필수 파라미터를 context에서 채움
+            tool_input = await self._enrich_with_capability(tool_name, tool_input, state)
+
             result_text = await self._execute_tool(tool_name, tool_input, state)
 
             # 결과 축약 (예산 초과 시)
@@ -220,6 +224,47 @@ class ExecuteStage(Stage):
                 ))
 
             return {"tool_name": tool_name, "success": False, "error": str(e)}, 0
+
+    async def _enrich_with_capability(
+        self, tool_name: str, tool_input: dict, state: PipelineState
+    ) -> dict:
+        """tool_name에 바인딩된 CapabilitySpec이 있으면 ParameterResolver로 args 보강.
+
+        - capability_bindings에서 역조회 (tool_name → capability_name)
+        - 못 찾으면 tool_input 그대로 반환
+        - 보강 과정에서 누락 필수 파라미터가 있으면 MissingParamEvent 이벤트 발행
+        """
+        try:
+            bindings = state.metadata.get("capability_bindings", {}) or {}
+            # 역인덱스: capability_name → tool_name
+            cap_name = next((c for c, t in bindings.items() if t == tool_name), None)
+            if cap_name is None:
+                return tool_input
+
+            from ..capabilities import ParameterResolver, get_default_registry
+
+            spec = get_default_registry().get(cap_name)
+            if spec is None or not spec.params:
+                return tool_input
+
+            resolver = ParameterResolver(spec, state)
+            result = await resolver.resolve(provided=tool_input or {})
+
+            if result.warnings:
+                logger.debug("[Execute] resolve warnings for %s: %s", tool_name, result.warnings)
+
+            if not result.ok:
+                missing_names = [p.name for p in result.missing]
+                logger.warning(
+                    "[Execute] %s — 필수 파라미터 누락: %s (context에서 못 찾음)",
+                    tool_name, missing_names,
+                )
+                # 누락 상태로도 실행은 시도 — 도구가 직접 에러 반환하게 함
+
+            return result.args or tool_input
+        except Exception as e:
+            logger.debug("[Execute] capability enrich skipped for %s: %s", tool_name, e)
+            return tool_input
 
     async def _execute_tool(self, tool_name: str, tool_input: dict, state: PipelineState) -> str:
         """도구 실행 — ResourceRegistry / ToolSource / tool_registry(MCP 등) 순 디스패치"""

@@ -30,6 +30,7 @@ from .events.types import (
     MetricsEvent,
     ErrorEvent,
     DoneEvent,
+    MissingParamEvent,
 )
 from .errors import (
     HarnessError,
@@ -46,8 +47,24 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 from .tools import ToolSource, register_tool_source, get_tool_sources
+from .capabilities import (
+    CapabilitySpec,
+    CapabilityMatch,
+    ParamSpec,
+    ProviderKind,
+    CapabilityRegistry,
+    get_default_registry,
+    set_default_registry,
+    CapabilityMatcher,
+    MatchStrategy,
+    materialize_capabilities,
+    merge_into_state,
+    MaterializationReport,
+    ParameterResolver,
+    ResolveResult,
+)
 
-__version__ = "0.4.0"
+__version__ = "0.8.0"
 
 __all__ = [
     # Core
@@ -78,6 +95,7 @@ __all__ = [
     "MetricsEvent",
     "ErrorEvent",
     "DoneEvent",
+    "MissingParamEvent",
     # Errors
     "HarnessError",
     "ConfigError",
@@ -107,4 +125,19 @@ __all__ = [
     "register_tool_source",
     "get_tool_sources",
     "register_stage",
+    # Capability System
+    "CapabilitySpec",
+    "CapabilityMatch",
+    "ParamSpec",
+    "ProviderKind",
+    "CapabilityRegistry",
+    "get_default_registry",
+    "set_default_registry",
+    "CapabilityMatcher",
+    "MatchStrategy",
+    "materialize_capabilities",
+    "merge_into_state",
+    "MaterializationReport",
+    "ParameterResolver",
+    "ResolveResult",
 ]
