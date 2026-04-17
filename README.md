@@ -64,21 +64,30 @@ pip install xgen-harness
 
 ---
 
-## 확장성 & 안정성 검증 (코드 감사 결과)
+## 확장성 & 안정성 검증 (v0.8.11 코드 감사 결과)
 
 | 확장 지점 | 방식 | 등급 |
 |----------|------|------|
-| **Stage 추가** | `register_stage()` + entry_points 자동 발견 | **A** |
-| **Strategy 교체** | `StrategyResolver` 전역 레지스트리 (40+ 구현체) | **A** |
-| **LLM 프로바이더** | `PROVIDER_REGISTRY` + `register_provider()` | **A** |
-| **Tool 소스** | `ToolSource` Protocol + Gallery entry_points | **A** |
-| **서비스 URL** | `ServiceRegistry` + 환경변수 폴백 | **A** |
-| **Capability** | 타입 무관 `CapabilityRegistry` (5개 인덱스) | **A** |
+| **Stage 추가** | `register_stage()` + entry_points 자동 발견 + Pipeline 전역 레지스트리 결합 | **A** |
+| **Strategy 교체** | `StrategyResolver` 전역 레지스트리 (40+ 구현체, 런타임 교체) | **A** |
+| **LLM 프로바이더** | `PROVIDER_REGISTRY` + `register_provider()` + `PROVIDER_DEFAULT_MODEL` 단일 진실 소스 | **A** |
+| **Tool 소스** | `ToolSource` Protocol + Gallery entry_points + `TOOL_GUIDE.md` | **A** |
+| **서비스 URL** | `ServiceRegistry` + 환경변수 폴백 + graceful skip | **A** |
+| **Capability** | 타입 무관 `CapabilityRegistry` (5개 인덱스, 3가지 바인딩 경로) | **A** |
+| **Config 직렬화** | `dataclasses.fields()` 자동 순회 — 새 필드 추가해도 코드 수정 불필요 | **A** |
+| **UI 옵션 자동 주입** | provider/model 드롭다운이 레지스트리에서 동적 해석 (v0.8.11) | **A** |
 | **에러 처리** | `ErrorCategory` + `recoverable` + on_error 훅 | **A** |
-| **전체 plug-and-play 성숙도** | | **85%** |
+| **전체 plug-and-play 성숙도** | | **95%** |
 
 모든 확장 지점이 **레지스트리 + 팩토리 + ABC/Protocol** 기반.
-`if provider == "..."` 같은 분기는 레거시 폴백 1곳만 남아있음 (`config.py` 기본 모델명).
+v0.8.10/0.8.11 에서 `if provider == "..."` 같은 분기 전부 제거 — 현재 라이브러리 본체에 하드코딩된 프로바이더/모델 목록 **0건**.
+
+### 허브 정신 일관성 체크 (자동)
+
+- `HarnessConfig.to_dict()` — `dataclasses.fields()` 순회로 22개 필드 자동 직렬화. 새 필드 추가 시 직렬화 코드 수정 불필요.
+- `_extract_agent_config_from_nodes()` — `list_providers()` 순회하며 per-provider 기본 모델을 레지스트리에서 해석.
+- `get_stage_config()` — UI 옵션(provider/model) 을 `list_providers()` + `get_default_model()` 에서 실시간 주입.
+- 외부 개발자가 `register_provider("my_llm", MyProvider)` 한 줄 추가만 해도 config / UI / stage / 직렬화 전부 자동 반영.
 
 ---
 
@@ -153,6 +162,29 @@ register_stage("s99_custom", "default", MyCustomStage)
 register_service("documents", "http://my-rag:8000")
 register_tool_source(my_tool_source)
 ```
+
+### 구성 저장/로드 (v0.8.9+)
+
+```python
+# 빌더로 조립한 하네스 구성을 JSON 으로 보관
+builder = (PipelineBuilder()
+    .with_provider("openai", model="gpt-4o-mini")
+    .with_rag("docs", top_k=5)
+    .with_artifact("s04_tool_index", "lotte")
+    .disable("s05_plan"))
+builder.save("./harness.json")
+
+# 다른 프로세스에서 로드
+loaded = PipelineBuilder.load("./harness.json")
+pipeline = loaded.with_api_key("sk-...").build()
+
+# HarnessConfig 도 동일한 API
+config = HarnessConfig(provider="openai", capabilities=["retrieval.web_search"])
+config.save("./config.json")
+config = HarnessConfig.load("./config.json")
+```
+
+직렬화는 `dataclasses.fields()` 자동 순회 방식이라 새 필드 추가해도 직렬화 코드 수정 불필요. `api_key` 등 민감/런타임 객체는 자동 제외.
 
 ---
 

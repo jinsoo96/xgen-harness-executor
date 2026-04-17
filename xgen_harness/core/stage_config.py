@@ -361,9 +361,55 @@ STAGE_CONFIGS: dict[str, dict] = {
 }
 
 
+def _inject_dynamic_options(cfg: dict) -> dict:
+    """fields 내 provider/model select 옵션을 레지스트리에서 동적으로 주입.
+
+    STAGE_CONFIGS 에 하드코딩된 options 리스트를 providers 레지스트리의 실제
+    등록된 값으로 교체. 새 provider/model 등록 시 UI 가 자동 반영됨.
+    """
+    if not cfg or not isinstance(cfg, dict):
+        return cfg
+    try:
+        from ..providers import list_providers, get_default_model
+    except Exception:
+        return cfg
+
+    fields = cfg.get("fields")
+    if not isinstance(fields, list):
+        return cfg
+
+    providers = list_providers()
+    # provider 기반 모델 목록 — 중복 제거 유지 순서
+    default_models: list[str] = []
+    seen = set()
+    for p in providers:
+        m = get_default_model(p)
+        if m and m not in seen:
+            default_models.append(m)
+            seen.add(m)
+
+    updated_fields = []
+    for f in fields:
+        if not isinstance(f, dict):
+            updated_fields.append(f)
+            continue
+        fid = f.get("id")
+        if fid == "provider" and providers:
+            f = {**f, "options": providers}
+        elif fid == "model" and default_models:
+            # 기존 options 와 합집합 (하드코딩 보존 + 신규 추가)
+            existing = f.get("options", [])
+            merged = list(dict.fromkeys([*default_models, *existing]))
+            f = {**f, "options": merged}
+        updated_fields.append(f)
+
+    return {**cfg, "fields": updated_fields}
+
+
 def get_stage_config(stage_id: str) -> dict:
-    """스테이지 설정 스키마 반환"""
-    return STAGE_CONFIGS.get(stage_id, {})
+    """스테이지 설정 스키마 반환 — provider/model 옵션은 레지스트리에서 동적 주입."""
+    cfg = STAGE_CONFIGS.get(stage_id, {})
+    return _inject_dynamic_options(cfg)
 
 
 def get_all_stage_configs() -> dict:

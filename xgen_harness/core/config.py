@@ -223,16 +223,29 @@ def _extract_agent_config_from_nodes(workflow_data: dict) -> dict[str, Any]:
         provider = _get("provider")
         model = _get("model")
         if not model:
-            if provider == "openai":
-                model = _get("openai_model") or "gpt-4o-mini"
-            elif provider == "anthropic":
-                model = _get("anthropic_model") or "claude-sonnet-4-20250514"
+            # 프로바이더별 default 모델 조회 — 레지스트리(providers/__init__.py)에서 해석.
+            # 새 프로바이더 추가 시 config.py 수정 불필요.
+            try:
+                from ..providers import get_default_model
+                per_provider_key = f"{provider}_model"
+                model = _get(per_provider_key) or get_default_model(provider)
+            except Exception:
+                model = ""
+
+        # 프로바이더별 폴백 모델 (하드코딩 제거) — 레지스트리 기반
+        try:
+            from ..providers import get_default_model, list_providers
+            per_provider_defaults = {
+                f"{p}_model": _get(f"{p}_model") or get_default_model(p)
+                for p in list_providers()
+            }
+        except Exception:
+            per_provider_defaults = {}
 
         return {
             "provider": provider,
             "model": model,
-            "openai_model": _get("openai_model") or "gpt-4o-mini",
-            "anthropic_model": _get("anthropic_model") or "claude-sonnet-4-20250514",
+            **per_provider_defaults,
             "system_prompt": _get("system_prompt"),
             "temperature": _get("temperature") or "0.7",
         }
