@@ -95,6 +95,100 @@ class HarnessConfig:
     def get_artifact_for_stage(self, stage_id: str) -> str:
         return self.artifacts.get(stage_id, "default")
 
+    # ───────────────────────────────────────────────
+    # 직렬화 — Builder 산출물을 파일로 저장/로드
+    # ───────────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        """HarnessConfig 를 JSON-직렬화 가능한 dict 로 변환.
+
+        set 타입(disabled_stages)은 정렬된 list 로 변환.
+        Optional 필드는 기본값이면 생략하지 않음 — roundtrip 일관성 보장.
+        """
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "temperature": float(self.temperature),
+            "max_tokens": int(self.max_tokens),
+            "openai_model": self.openai_model,
+            "anthropic_model": self.anthropic_model,
+            "max_iterations": int(self.max_iterations),
+            "max_tool_rounds": int(self.max_tool_rounds),
+            "max_retries": int(self.max_retries),
+            "validation_threshold": float(self.validation_threshold),
+            "system_prompt": self.system_prompt,
+            "disabled_stages": sorted(self.disabled_stages),
+            "artifacts": dict(self.artifacts),
+            "stage_params": dict(self.stage_params),
+            "active_strategies": dict(self.active_strategies),
+            "capabilities": list(self.capabilities),
+            "capability_params": dict(self.capability_params),
+            "cost_budget_usd": float(self.cost_budget_usd),
+            "context_window": int(self.context_window),
+            "thinking_enabled": bool(self.thinking_enabled),
+            "thinking_budget_tokens": int(self.thinking_budget_tokens),
+            "preset": self.preset,
+            "_schema_version": 1,
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        """JSON 문자열로 직렬화."""
+        import json
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
+
+    def save(self, path: str) -> None:
+        """JSON 파일로 저장."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_json())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "HarnessConfig":
+        """dict → HarnessConfig 역직렬화."""
+        disabled = data.get("disabled_stages", [])
+        if isinstance(disabled, list):
+            disabled = set(disabled) - REQUIRED_STAGES
+        elif isinstance(disabled, set):
+            disabled = disabled - REQUIRED_STAGES
+        else:
+            disabled = set()
+
+        return cls(
+            provider=data.get("provider", "anthropic"),
+            model=data.get("model", "claude-sonnet-4-20250514"),
+            temperature=float(data.get("temperature", 0.7)),
+            max_tokens=int(data.get("max_tokens", 8192)),
+            openai_model=data.get("openai_model", "gpt-4o-mini"),
+            anthropic_model=data.get("anthropic_model", "claude-sonnet-4-20250514"),
+            max_iterations=int(data.get("max_iterations", 10)),
+            max_tool_rounds=int(data.get("max_tool_rounds", 20)),
+            max_retries=int(data.get("max_retries", 3)),
+            validation_threshold=float(data.get("validation_threshold", 0.7)),
+            system_prompt=data.get("system_prompt", ""),
+            disabled_stages=disabled,
+            artifacts=dict(data.get("artifacts", {})),
+            stage_params=dict(data.get("stage_params", {})),
+            active_strategies=dict(data.get("active_strategies", {})),
+            capabilities=list(data.get("capabilities", [])),
+            capability_params=dict(data.get("capability_params", {})),
+            cost_budget_usd=float(data.get("cost_budget_usd", 10.0)),
+            context_window=int(data.get("context_window", 200_000)),
+            thinking_enabled=bool(data.get("thinking_enabled", False)),
+            thinking_budget_tokens=int(data.get("thinking_budget_tokens", 10000)),
+            preset=data.get("preset", ""),
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> "HarnessConfig":
+        """JSON 문자열 → HarnessConfig."""
+        import json
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def load(cls, path: str) -> "HarnessConfig":
+        """JSON 파일 → HarnessConfig."""
+        with open(path, "r", encoding="utf-8") as f:
+            return cls.from_json(f.read())
+
     @classmethod
     def from_workflow(cls, harness_config: dict[str, Any], workflow_data: dict[str, Any]) -> "HarnessConfig":
         """workflow_data에서 설정 생성"""
