@@ -5,6 +5,20 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9] — 2026-04-17
+
+### Added — 직렬화 (Save/Load)
+- **`HarnessConfig.to_dict() / to_json() / save(path)`** + **`from_dict() / from_json() / load(path)`** — Builder 로 만든 설정을 JSON 으로 저장하고 다시 로드해 Pipeline 실행까지 가능.
+- **`PipelineBuilder.to_dict() / to_json() / save(path)`** + **`from_dict() / from_json() / load(path)`** — Fluent Builder 의 최종 상태를 파일에 영속화.
+- `_schema_version: 1` 필드로 향후 스키마 버전 관리 대비.
+- `test_serialization.py` E2E: Builder → save → load → Pipeline 실행 + 커스텀 Stage 실제 호출 확인.
+
+### 노트
+- api_key, Tool ABC 인스턴스, EventEmitter 는 직렬화에서 제외 (보안/실행 시 재주입 필요).
+- REQUIRED_STAGES 는 from_dict 시 자동 제거 (비활성화 불가 스테이지).
+
+---
+
 ## [0.8.8] — 2026-04-17
 
 ### Fixed — 플러그인 확장성 실동작 결합
