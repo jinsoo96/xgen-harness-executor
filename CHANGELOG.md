@@ -5,6 +5,16 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.13] — 2026-04-17
+
+### Fixed
+- **Strategy 기본 등록 자동 트리거**: 이전엔 `StrategyResolver.default()` 를 호출해야만 기본 40+ Strategy 가 등록되고, 직접 `StrategyResolver()` 로 생성하면 빈 레지스트리 상태였음. `resolve()` 호출 시 `_ensure_defaults_registered()` 로 자동 1회 트리거 — 실전 파이프라인에서 Strategy 찾기 실패 위험 제거.
+
+### Docs
+- README 확장성 감사표: v0.8.12 기준 + 통합 예외 복구 A등급 추가, 성숙도 **97%**.
+
+---
+
 ## [0.8.12] — 2026-04-17
 
 ### Changed — 통합 수준 예외 복구 강화
