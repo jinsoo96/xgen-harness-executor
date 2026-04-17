@@ -186,10 +186,16 @@ class XgenAdapter:
             config_kwargs["stage_params"] = hc["stage_params"]
         if hc.get("disabled_stages"):
             config_kwargs["disabled_stages"] = hc["disabled_stages"]
+        if hc.get("active_strategies"):
+            config_kwargs["active_strategies"] = hc["active_strategies"]
         if hc.get("preset"):
             config_kwargs["preset"] = hc["preset"]
         if hc.get("max_iterations"):
             config_kwargs["max_iterations"] = hc["max_iterations"]
+        if hc.get("capabilities"):
+            config_kwargs["capabilities"] = list(hc["capabilities"])
+        if hc.get("capability_params"):
+            config_kwargs["capability_params"] = dict(hc["capability_params"])
 
         config = HarnessConfig(**config_kwargs)
 
