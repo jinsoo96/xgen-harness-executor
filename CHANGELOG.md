@@ -5,6 +5,20 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.11] — 2026-04-17
+
+### Changed — 하드코딩 제거 (허브 정신 완성)
+- **`_extract_agent_config_from_nodes`** (`core/config.py`): `if provider == "openai" / elif provider == "anthropic"` 분기 제거. `providers.get_default_model()` + `list_providers()` 로 레지스트리 기반 해석. 새 프로바이더 추가 시 config.py 수정 불필요.
+- **`get_stage_config`** (`core/stage_config.py`): s01_input 의 provider/model UI 드롭다운 options 하드코딩 제거. `_inject_dynamic_options()` 가 `list_providers()` + `get_default_model()` 호출해 런타임 주입. 새 프로바이더 등록하면 UI 에 자동 반영.
+- 효과: 라이브러리 본체에서 하드코딩된 프로바이더/모델 목록 **0 건**.
+
+### 문서
+- `README.md` 확장성 감사표 업데이트 (성숙도 85% → 95%)
+- 구성 저장/로드 섹션 추가
+- 허브 정신 일관성 체크리스트 추가
+
+---
+
 ## [0.8.10] — 2026-04-17
 
 ### Changed
