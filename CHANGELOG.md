@@ -5,6 +5,24 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] — 2026-04-17
+
+### Fixed — 플러그인 확장성 실동작 결합
+- **`register_stage()` 로 등록한 커스텀 Stage 가 Pipeline 에 반영되지 않던 버그**. `Pipeline.from_config()` 가 `ArtifactRegistry.default()` 를 매번 새로 만들어 전역 싱글톤에 등록된 플러그인을 보지 못했음. `_get_default_registry()` 싱글톤을 사용하도록 수정.
+- `register_stage("s04_tool_index", "lotte", LotteStage)` + `HarnessConfig.artifacts={"s04_tool_index": "lotte"}` 경로 실제 호출 확인 (E2E 테스트 추가).
+- `register_strategy()` + `StrategyResolver.resolve()` 경로는 기존에 정상 동작했던 것 회귀 테스트로 고정.
+
+### Added
+- `Pipeline.from_config(registry=...)` 선택 파라미터 — 테스트/격리용 registry 주입 가능.
+- `test_plugin_extensibility.py` — 외부 기여자 시나리오 (Lotte 예시) 3종 E2E 테스트.
+
+### 실측 검증
+- 커스텀 Stage 등록 → artifacts 선택 → Pipeline 실행 시 호출됨 ✅
+- 커스텀 Strategy 등록 → StrategyResolver.resolve → 인스턴스 반환 ✅
+- artifacts 미지정 시 default 유지 (회귀 0) ✅
+
+---
+
 ## [0.8.7] — 2026-04-17
 
 ### Fixed

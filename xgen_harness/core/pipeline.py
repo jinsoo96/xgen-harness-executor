@@ -51,11 +51,21 @@ class Pipeline:
         self._total_stage_count = len(stages)
 
     @classmethod
-    def from_config(cls, config: HarnessConfig, event_emitter: Optional[EventEmitter] = None) -> "Pipeline":
-        """설정으로부터 파이프라인 생성 (레지스트리 자동 사용)"""
-        from .registry import ArtifactRegistry
-        registry = ArtifactRegistry.default()
-        stages = registry.build_pipeline_stages(config)
+    def from_config(
+        cls,
+        config: HarnessConfig,
+        event_emitter: Optional[EventEmitter] = None,
+        registry: Optional["ArtifactRegistry"] = None,
+    ) -> "Pipeline":
+        """설정으로부터 파이프라인 생성.
+
+        registry 미지정 시 전역 싱글톤(`_get_default_registry()`)을 사용하여
+        `register_stage()` 나 entry_points 로 등록된 외부 플러그인 Stage 도
+        함께 반영됩니다. 테스트/격리가 필요하면 registry 를 명시 전달하세요.
+        """
+        from .registry import _get_default_registry
+        reg = registry or _get_default_registry()
+        stages = reg.build_pipeline_stages(config)
         return cls(config, stages, event_emitter)
 
     async def run(self, state: PipelineState) -> PipelineState:
