@@ -14,7 +14,7 @@ PipelineBuilder — Fluent API로 파이프라인 구성
         .build())
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from .config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
 from .execution_context import set_execution_context
@@ -222,3 +222,71 @@ class PipelineBuilder:
             "thinking": self._thinking_enabled,
             "max_iterations": self._max_iterations,
         }
+
+    # ───────────────────────────────────────────────
+    # 직렬화 — 빌더 상태를 저장/로드
+    # ───────────────────────────────────────────────
+    # api_key / Tool 인스턴스 / EventEmitter 는 제외 (민감정보 / 실행 시 재주입).
+    # tool_definitions 는 순수 데이터라 포함.
+
+    def to_dict(self) -> dict[str, Any]:
+        """빌더 상태를 JSON-직렬화 가능한 dict 로.
+
+        제외: api_key (보안), Tool ABC 인스턴스 (재직렬화 불가), EventEmitter (런타임 객체).
+        """
+        return {
+            "provider": self._provider,
+            "model": self._model,
+            "temperature": float(self._temperature),
+            "max_tokens": int(self._max_tokens),
+            "system_prompt": self._system_prompt,
+            "disabled_stages": sorted(self._disabled),
+            "artifacts": dict(self._artifacts),
+            "tool_definitions": list(self._tool_definitions),
+            "mcp_sessions": list(self._mcp_sessions),
+            "rag_collections": list(self._rag_collections),
+            "max_iterations": int(self._max_iterations),
+            "max_retries": int(self._max_retries),
+            "validation_threshold": float(self._validation_threshold),
+            "thinking_enabled": bool(self._thinking_enabled),
+            "thinking_budget": int(self._thinking_budget),
+            "_schema_version": 1,
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        import json
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
+
+    def save(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_json())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PipelineBuilder":
+        b = cls()
+        b._provider = data.get("provider", b._provider)
+        b._model = data.get("model", b._model)
+        b._temperature = float(data.get("temperature", b._temperature))
+        b._max_tokens = int(data.get("max_tokens", b._max_tokens))
+        b._system_prompt = data.get("system_prompt", b._system_prompt)
+        b._disabled = set(data.get("disabled_stages", []))
+        b._artifacts = dict(data.get("artifacts", {}))
+        b._tool_definitions = list(data.get("tool_definitions", []))
+        b._mcp_sessions = list(data.get("mcp_sessions", []))
+        b._rag_collections = list(data.get("rag_collections", []))
+        b._max_iterations = int(data.get("max_iterations", b._max_iterations))
+        b._max_retries = int(data.get("max_retries", b._max_retries))
+        b._validation_threshold = float(data.get("validation_threshold", b._validation_threshold))
+        b._thinking_enabled = bool(data.get("thinking_enabled", b._thinking_enabled))
+        b._thinking_budget = int(data.get("thinking_budget", b._thinking_budget))
+        return b
+
+    @classmethod
+    def from_json(cls, text: str) -> "PipelineBuilder":
+        import json
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def load(cls, path: str) -> "PipelineBuilder":
+        with open(path, "r", encoding="utf-8") as f:
+            return cls.from_json(f.read())

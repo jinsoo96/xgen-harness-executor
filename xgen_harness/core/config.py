@@ -5,7 +5,7 @@ HarnessConfig — 파이프라인 설정
 workflow_data.harness_config에서 로드.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Optional
 
 # 전체 12 스테이지 (기본 전부 활성)
@@ -94,6 +94,74 @@ class HarnessConfig:
 
     def get_artifact_for_stage(self, stage_id: str) -> str:
         return self.artifacts.get(stage_id, "default")
+
+    # ───────────────────────────────────────────────
+    # 직렬화 — Builder 산출물을 파일로 저장/로드
+    # ───────────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        """HarnessConfig 를 JSON-직렬화 가능한 dict 로 변환.
+
+        하드코딩된 필드 나열 없이 `dataclasses.fields(self)` 로 자동 발견.
+        새 필드 추가해도 자동 포함됨 (허브 정신 유지).
+
+        - set 은 정렬된 list 로 변환
+        - tuple 은 list
+        - 중첩 dict/list 는 그대로 (JSON-safe 가정)
+        """
+        data: dict[str, Any] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, set):
+                value = sorted(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            data[f.name] = value
+        data["_schema_version"] = 1
+        return data
+
+    def to_json(self, indent: int = 2) -> str:
+        """JSON 문자열로 직렬화."""
+        import json
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
+
+    def save(self, path: str) -> None:
+        """JSON 파일로 저장."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.to_json())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "HarnessConfig":
+        """dict → HarnessConfig 역직렬화 (자동 필드 매핑).
+
+        `dataclasses.fields(cls)` 를 순회해 선언된 필드만 통과. 알 수 없는
+        키는 무시(forward-compat). set 타입 필드는 list→set 변환.
+        """
+        declared = {f.name: f for f in fields(cls)}
+        kwargs: dict[str, Any] = {}
+        for name, f in declared.items():
+            if name not in data:
+                continue
+            value = data[name]
+            # set 필드는 list → set 복원 (JSON 에선 list 로 저장됨)
+            if f.default_factory is set:
+                value = set(value) if value is not None else set()
+                if name == "disabled_stages":
+                    value = value - REQUIRED_STAGES
+            kwargs[name] = value
+        return cls(**kwargs)
+
+    @classmethod
+    def from_json(cls, text: str) -> "HarnessConfig":
+        """JSON 문자열 → HarnessConfig."""
+        import json
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def load(cls, path: str) -> "HarnessConfig":
+        """JSON 파일 → HarnessConfig."""
+        with open(path, "r", encoding="utf-8") as f:
+            return cls.from_json(f.read())
 
     @classmethod
     def from_workflow(cls, harness_config: dict[str, Any], workflow_data: dict[str, Any]) -> "HarnessConfig":
