@@ -112,7 +112,8 @@ class XgenConfigService:
     """xgen-core Config API 래핑.
 
     POST /api/data/config/get-value로 설정 조회.
-    환경변수 → xgen-core → 폴백 순서로 API 키 해석.
+    Redis(xgen-core Config) → 환경변수 → 폴백 순서로 API 키 해석.
+    Redis 우선 순서: 관리자가 UI에서 런타임 변경한 값을 반영하기 위함.
     """
 
     # providers/__init__.py의 단일 진실 소스 참조
@@ -146,13 +147,13 @@ class XgenConfigService:
     async def get_api_key(self, provider: str) -> Optional[str]:
         key_name = self._PROVIDER_KEY_MAP.get(provider, f"{provider.upper()}_API_KEY")
 
-        # 1. 환경변수
-        key = os.environ.get(key_name, "")
+        # 1. Redis 기반 xgen-core config (관리자 UI 런타임 변경 반영)
+        key = await self.get_value(key_name)
         if key:
             return key
 
-        # 2. xgen-core config
-        key = await self.get_value(key_name)
+        # 2. 환경변수 (.env) 폴백
+        key = os.environ.get(key_name, "")
         if key:
             return key
 
