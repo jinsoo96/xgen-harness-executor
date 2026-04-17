@@ -5,6 +5,14 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.10] — 2026-04-17
+
+### Changed
+- `HarnessConfig.to_dict` / `from_dict` 를 `dataclasses.fields()` 자동 발견 방식으로 리팩토링. 이전 버전은 필드를 수동 나열해 HarnessConfig 에 새 필드 추가 시 직렬화 코드도 같이 수정해야 했던 하드코딩 문제. 이제 dataclass 에 필드만 추가하면 to_dict/from_dict 에 자동 반영됨 (허브 정신 일관성).
+- 현재 22개 dataclass 필드 전부 자동 감지 확인.
+
+---
+
 ## [0.8.9] — 2026-04-17
 
 ### Added — 직렬화 (Save/Load)
