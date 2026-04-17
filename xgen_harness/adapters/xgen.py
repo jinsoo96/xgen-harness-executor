@@ -182,8 +182,24 @@ class XgenAdapter:
             "system_prompt": system_prompt,
         }
         # stage_params, disabled_stages, active_strategies 등 전달
-        if hc.get("stage_params"):
-            config_kwargs["stage_params"] = hc["stage_params"]
+        stage_params = dict(hc.get("stage_params") or {})
+
+        # top-level rag_collections / mcp_sessions / rag_top_k 를 s04_tool_index.stage_params 로 자동 주입
+        # (UI에서 top-level로 넣어도 s04가 읽을 수 있도록 호환성 유지)
+        s04_params = dict(stage_params.get("s04_tool_index") or {})
+        if hc.get("rag_collections") and "rag_collections" not in s04_params:
+            s04_params["rag_collections"] = list(hc["rag_collections"])
+        if hc.get("mcp_sessions") and "mcp_sessions" not in s04_params:
+            s04_params["mcp_sessions"] = list(hc["mcp_sessions"])
+        if hc.get("rag_top_k") and "rag_top_k" not in s04_params:
+            s04_params["rag_top_k"] = hc["rag_top_k"]
+        if hc.get("rag_tool_mode") and "rag_tool_mode" not in s04_params:
+            s04_params["rag_tool_mode"] = hc["rag_tool_mode"]
+        if s04_params:
+            stage_params["s04_tool_index"] = s04_params
+
+        if stage_params:
+            config_kwargs["stage_params"] = stage_params
         if hc.get("disabled_stages"):
             config_kwargs["disabled_stages"] = hc["disabled_stages"]
         if hc.get("active_strategies"):
@@ -228,7 +244,14 @@ class XgenAdapter:
                 logger.warning("[Adapter] xgen LLM factory 실패, 내장 프로바이더 폴백: %s", e)
 
         # ━━━━ 8. API 키를 실행 컨텍스트에 설정 (contextvars — 동시 실행 격리) ━━━━
-        set_execution_context(api_key=api_key, provider=provider, model=model)
+        set_execution_context(
+            api_key=api_key,
+            provider=provider,
+            model=model,
+            user_id=str(user_id),
+            user_is_admin="true",       # xgen-workflow에서 호출될 땐 이미 인증된 요청
+            user_is_superuser="true",
+        )
 
         try:
             # ━━━━ 9. ResourceRegistry — xgen 자산 통합 로드 ━━━━

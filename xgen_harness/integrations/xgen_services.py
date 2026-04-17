@@ -77,6 +77,32 @@ class XgenDatabaseService:
             logger.error("[DB] upsert %s failed: %s", table, e)
             return False
 
+    async def execute_raw_query(
+        self, query: str, params: Optional[list] = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """raw SQL 실행 — DB 도구 노드용.
+
+        db_manager 가 execute_query / query / fetchall 계열을 갖는 경우 자동 사용.
+        """
+        candidates = ("execute_query", "query", "fetch_all", "fetchall")
+        for name in candidates:
+            fn = getattr(self._db, name, None)
+            if not callable(fn):
+                continue
+            try:
+                result = fn(query, params or [])
+                if hasattr(result, "__await__"):
+                    result = await result
+                if isinstance(result, list):
+                    return result[:limit]
+                if isinstance(result, dict):
+                    return [result]
+            except Exception as e:
+                logger.warning("[DB] execute_raw_query via %s failed: %s", name, e)
+                break
+        logger.warning("[DB] raw query 실행 경로를 찾지 못함 (db_manager=%s)", type(self._db).__name__)
+        return []
+
 
 # ──────────────────────────────────────────────
 # 2. XgenConfigService
@@ -224,6 +250,24 @@ class XgenDocumentService:
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout, connect=10.0)
 
+    @staticmethod
+    def _auth_headers(user_id: str = "") -> dict:
+        """ExecutionContext에서 인증 헤더 구성. user_id 명시 시 우선 사용."""
+        try:
+            from ..core.execution_context import get_extra
+            ctx_uid = get_extra("user_id", "") or ""
+            ctx_admin = str(get_extra("user_is_admin", "true"))
+            ctx_super = str(get_extra("user_is_superuser", "true"))
+        except Exception:
+            ctx_uid, ctx_admin, ctx_super = "", "true", "true"
+        uid = user_id or ctx_uid
+        return {
+            "x-user-id": str(uid),
+            "x-user-name": "harness",
+            "x-user-admin": ctx_admin,
+            "x-user-superuser": ctx_super,
+        }
+
     async def search(
         self,
         query: str,
@@ -240,12 +284,14 @@ class XgenDocumentService:
         if user_id:
             payload["user_id"] = user_id
 
+        headers = self._auth_headers(user_id)
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     return data.get("results", data.get("documents", []))
+                logger.warning("[Documents] search %s: %s", resp.status_code, resp.text[:200])
         except Exception as e:
             logger.warning("[Documents] search failed: %s", e)
         return []
@@ -253,12 +299,14 @@ class XgenDocumentService:
     async def list_collections(self, user_id: str = "") -> list[dict[str, Any]]:
         url = f"{self._base_url}/api/retrieval/collections"
         params = {"user_id": user_id} if user_id else {}
+        headers = self._auth_headers(user_id)
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     return data.get("collections", data if isinstance(data, list) else [])
+                logger.warning("[Documents] list_collections %s: %s", resp.status_code, resp.text[:200])
         except Exception as e:
             logger.warning("[Documents] list_collections failed: %s", e)
         return []

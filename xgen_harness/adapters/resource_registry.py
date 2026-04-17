@@ -441,7 +441,7 @@ class ResourceRegistry:
             return f"API call failed: {e}"
 
     async def _call_db_tool(self, ref: "_DBToolRef", tool_input: dict) -> str:
-        """DB 도구 실행 — ServiceProvider.database 경유."""
+        """DB 도구 실행 — ServiceProvider.database.execute_raw_query 경유."""
         query = tool_input.get("query", "")
         if not query:
             return "Error: 'query' parameter is required"
@@ -450,6 +450,17 @@ class ResourceRegistry:
         if not db:
             return "Error: Database service not available"
 
+        # execute_raw_query 있으면 사용 (표준 경로)
+        if hasattr(db, "execute_raw_query"):
+            try:
+                results = await db.execute_raw_query(query, params=[], limit=100)
+                if results:
+                    return json.dumps(results, ensure_ascii=False, default=str)[:10000]
+                return "Query returned 0 rows"
+            except Exception as e:
+                return f"Database query error: {e}"
+
+        # 레거시 폴백: find_records("__raw_query__") (구 버전 호환)
         try:
             results = await db.find_records(
                 table="__raw_query__",

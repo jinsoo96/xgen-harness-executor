@@ -119,10 +119,15 @@ class RAGSearchTool(Tool):
             "collection_names": [collection_name],
             "top_k": top_k,
         }
+        # xgen-documents 인증: ExecutionContext의 user_id를 헤더로 전달
+        from ..core.execution_context import get_extra
+        user_id = get_extra("user_id", "") or ""
         headers = {
             "Content-Type": "application/json",
-            "x-user-admin": "true",
-            "x-user-superuser": "true",
+            "x-user-id": str(user_id),
+            "x-user-name": "harness",
+            "x-user-admin": str(get_extra("user_is_admin", "true")),
+            "x-user-superuser": str(get_extra("user_is_superuser", "true")),
         }
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
