@@ -64,7 +64,7 @@ pip install xgen-harness
 
 ---
 
-## 확장성 & 안정성 검증 (v0.8.11 코드 감사 결과)
+## 확장성 & 안정성 검증 (v0.8.12 코드 감사 결과)
 
 | 확장 지점 | 방식 | 등급 |
 |----------|------|------|
@@ -76,8 +76,9 @@ pip install xgen-harness
 | **Capability** | 타입 무관 `CapabilityRegistry` (5개 인덱스, 3가지 바인딩 경로) | **A** |
 | **Config 직렬화** | `dataclasses.fields()` 자동 순회 — 새 필드 추가해도 코드 수정 불필요 | **A** |
 | **UI 옵션 자동 주입** | provider/model 드롭다운이 레지스트리에서 동적 해석 (v0.8.11) | **A** |
-| **에러 처리** | `ErrorCategory` + `recoverable` + on_error 훅 | **A** |
-| **전체 plug-and-play 성숙도** | | **95%** |
+| **에러 처리** | `ErrorCategory` + `recoverable` + on_error 훅 (일반 예외도 복구 경유, v0.8.12) | **A** |
+| **통합 예외 복구** | Guard 실전 차단 / Loop back-jump / Stage on_error 복구 / 동시성 50 격리 실측 | **A** |
+| **전체 plug-and-play 성숙도** | | **97%** |
 
 모든 확장 지점이 **레지스트리 + 팩토리 + ABC/Protocol** 기반.
 v0.8.10/0.8.11 에서 `if provider == "..."` 같은 분기 전부 제거 — 현재 라이브러리 본체에 하드코딩된 프로바이더/모델 목록 **0건**.

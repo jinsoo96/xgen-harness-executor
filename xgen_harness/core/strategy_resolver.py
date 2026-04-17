@@ -21,10 +21,24 @@ logger = logging.getLogger("harness.strategy_resolver")
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _REGISTRY: dict[tuple[str, str, str], Type[Strategy]] = {}
+_DEFAULTS_REGISTERED = False
 
 
 def register_strategy(stage_id: str, slot_name: str, impl_name: str, cls: Type[Strategy]) -> None:
     _REGISTRY[(stage_id, slot_name, impl_name)] = cls
+
+
+def _ensure_defaults_registered() -> None:
+    """기본 Strategy 가 한 번이라도 등록되지 않았으면 트리거."""
+    global _DEFAULTS_REGISTERED
+    if _DEFAULTS_REGISTERED:
+        return
+    _DEFAULTS_REGISTERED = True
+    try:
+        _register_defaults()
+    except Exception:
+        # 등록 실패해도 레지스트리 자체는 사용 가능해야 함
+        pass
 
 
 class StrategyResolver:
@@ -41,6 +55,7 @@ class StrategyResolver:
         config: Optional[dict[str, Any]] = None,
     ) -> Optional[Strategy]:
         """Strategy 인스턴스 반환. 캐시 사용."""
+        _ensure_defaults_registered()
         key = (stage_id, slot_name, impl_name)
 
         # 캐시 히트
