@@ -149,6 +149,115 @@ class ResourceRegistry:
         except Exception as e:
             return f"Error executing '{tool_name}': {e}"
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #  Capability 자동 발행 — 로드된 자산을 CapabilityRegistry에 등록
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def publish_capabilities(
+        self,
+        capability_registry=None,
+        *,
+        overwrite: bool = True,
+        namespace_by_type: bool = True,
+    ) -> int:
+        """로드된 모든 도구를 CapabilitySpec으로 변환 후 레지스트리에 등록.
+
+        - tool_defs + tool_infos를 바탕으로 ParamSpec 리스트 생성
+        - tool_factory는 이 ResourceRegistry를 재활용하는 Tool 래퍼 반환
+        - RAG 컬렉션도 `retrieval.rag_<name>` capability로 발행
+
+        Returns:
+            등록된 capability 개수
+        """
+        from ..capabilities import CapabilitySpec, ParamSpec, ProviderKind, get_default_registry
+
+        reg = capability_registry or get_default_registry()
+        count = 0
+
+        kind_map = {
+            "mcp_tool": ProviderKind.MCP_TOOL,
+            "api_tool": ProviderKind.API,
+            "db_tool": ProviderKind.DB,
+            "gallery_tool": ProviderKind.GALLERY,
+            "builtin_tool": ProviderKind.BUILTIN,
+            "rag_collection": ProviderKind.RAG,
+        }
+
+        info_by_name = {info.name: info for info in self._tool_infos}
+
+        for tool_def in self._tool_defs:
+            name = tool_def.get("name")
+            if not name:
+                continue
+            info = info_by_name.get(name)
+            resource_type = info.resource_type if info else "tool"
+            category = resource_type.replace("_tool", "").replace("_collection", "") or "tool"
+            cap_name = f"{category}.{name}" if namespace_by_type else name
+            description = tool_def.get("description") or (info.description if info else "")
+
+            params = _schema_to_param_specs(tool_def.get("input_schema", {}))
+            factory = _make_resource_tool_factory(self, name, description, tool_def.get("input_schema", {}))
+
+            tags = [category, name]
+            if info and info.source:
+                tags.append(info.source)
+
+            spec = CapabilitySpec(
+                name=cap_name,
+                category=category,
+                description=description,
+                tags=[t for t in tags if t],
+                aliases=[name],
+                params=params,
+                provider_kind=kind_map.get(resource_type, ProviderKind.CUSTOM),
+                provider_ref=(info.source if info else name),
+                tool_factory=factory,
+                tool_name=name,
+                is_read_only=False if resource_type in ("api_tool", "db_tool") else True,
+            )
+            reg.register(spec, overwrite=overwrite)
+            count += 1
+
+        # RAG 컬렉션별 capability — search_rag를 도구처럼 노출
+        for rag_info in self._rag_collections:
+            col_name = rag_info.name
+            cap_name = f"retrieval.rag_{col_name}"
+            tool_name = f"rag_search_{col_name}"
+
+            factory = _make_rag_capability_factory(self, col_name, tool_name, rag_info.description)
+            spec = CapabilitySpec(
+                name=cap_name,
+                category="retrieval",
+                description=rag_info.description or f"RAG 검색 — 컬렉션 '{col_name}'",
+                tags=["rag", "document", "retrieval", col_name],
+                aliases=[col_name, f"rag_{col_name}"],
+                params=[
+                    ParamSpec(
+                        name="query",
+                        type_hint="str",
+                        description="검색 질의",
+                        required=True,
+                        source_hint="user_input",
+                    ),
+                    ParamSpec(
+                        name="top_k",
+                        type_hint="int",
+                        description="결과 청크 개수",
+                        required=False,
+                        default=5,
+                    ),
+                ],
+                provider_kind=ProviderKind.RAG,
+                provider_ref=col_name,
+                tool_factory=factory,
+                tool_name=tool_name,
+            )
+            reg.register(spec, overwrite=overwrite)
+            count += 1
+
+        logger.info("[Resources] Published %d capabilities to registry", count)
+        return count
+
     async def search_rag(self, query: str, collections: list[str] = None, top_k: int = 5) -> str:
         """RAG 검색 — ServiceProvider.documents 경유."""
         if not self._services.documents:
@@ -451,3 +560,135 @@ class _APIToolRef:
 class _DBToolRef:
     connection_id: str
     db_type: str = "postgresql"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Capability helpers
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_JSON_TYPE_TO_HINT = {
+    "string": "str",
+    "integer": "int",
+    "number": "float",
+    "boolean": "bool",
+    "array": "list[str]",
+    "object": "dict",
+}
+
+
+def _schema_to_param_specs(schema: Any) -> list:
+    """JSON Schema → ParamSpec 리스트"""
+    from ..capabilities import ParamSpec
+
+    if not isinstance(schema, dict):
+        return []
+    props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    params = []
+    for pname, prop in props.items():
+        if not isinstance(prop, dict):
+            continue
+        t = prop.get("type", "string")
+        type_hint = _JSON_TYPE_TO_HINT.get(t, "str")
+        params.append(
+            ParamSpec(
+                name=pname,
+                type_hint=type_hint,
+                description=prop.get("description", ""),
+                required=pname in required,
+                default=prop.get("default"),
+                enum=prop.get("enum"),
+            )
+        )
+    return params
+
+
+def _make_resource_tool_factory(registry: "ResourceRegistry", tool_name: str, description: str, schema: dict):
+    """ResourceRegistry의 도구를 Tool 인터페이스로 감싸는 factory 생성"""
+
+    def factory(config: dict) -> Tool:
+        return _ResourceToolWrapper(tool_name, description, schema, registry)
+
+    return factory
+
+
+def _make_rag_capability_factory(registry: "ResourceRegistry", collection: str, tool_name: str, description: str):
+    """RAG 컬렉션을 도구처럼 실행하는 factory"""
+
+    def factory(config: dict) -> Tool:
+        default_top_k = int(config.get("top_k", 5))
+        return _RAGCollectionTool(
+            tool_name=tool_name,
+            collection=collection,
+            description=description,
+            registry=registry,
+            default_top_k=default_top_k,
+        )
+
+    return factory
+
+
+class _ResourceToolWrapper(Tool):
+    """ResourceRegistry.execute_tool 위에 얹힌 Tool 어댑터"""
+
+    def __init__(self, tool_name: str, description: str, schema: dict, registry: "ResourceRegistry"):
+        self._name = tool_name
+        self._desc = description
+        self._schema = schema
+        self._registry = registry
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._desc
+
+    @property
+    def input_schema(self) -> dict:
+        return self._schema or {"type": "object", "properties": {}}
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        content = await self._registry.execute_tool(self._name, input_data or {})
+        if isinstance(content, str) and content.startswith("Error"):
+            return ToolResult.error(content)
+        return ToolResult.success(content if isinstance(content, str) else str(content))
+
+
+class _RAGCollectionTool(Tool):
+    """RAG 컬렉션별 검색 도구"""
+
+    def __init__(self, tool_name: str, collection: str, description: str, registry: "ResourceRegistry", default_top_k: int = 5):
+        self._name = tool_name
+        self._collection = collection
+        self._desc = description or f"Search RAG collection '{collection}'"
+        self._registry = registry
+        self._default_top_k = default_top_k
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._desc
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "검색 질의"},
+                "top_k": {"type": "integer", "description": "결과 청크 수"},
+            },
+            "required": ["query"],
+        }
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        query = (input_data or {}).get("query", "").strip()
+        if not query:
+            return ToolResult.error("query is required")
+        top_k = int((input_data or {}).get("top_k") or self._default_top_k)
+        text = await self._registry.search_rag(query, collections=[self._collection], top_k=top_k)
+        return ToolResult.success(text or "(no results)")

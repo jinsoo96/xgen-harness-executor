@@ -234,6 +234,15 @@ class XgenAdapter:
             state.metadata["tool_registry"] = registry.get_tool_executors()
             state.metadata["resource_registry"] = registry
 
+            # 9.5. Capability 자동 발행 — 로드된 자산을 CapabilityRegistry에 등록
+            #      s04_tool_index / s05_plan의 capability 바인딩이 자동 동작하도록
+            try:
+                published = registry.publish_capabilities()
+                if published:
+                    logger.info("[Adapter] Capability 발행: %d개 (workflow → registry)", published)
+            except Exception as e:
+                logger.warning("[Adapter] Capability 발행 실패 — 기존 경로로 진행: %s", e)
+
             # ━━━━ 10. 파이프라인 실행 ━━━━
             logger.info(
                 "[Adapter] 실행: provider=%s, model=%s, tools=%d, rag=%d",

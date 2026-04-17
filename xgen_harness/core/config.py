@@ -63,6 +63,10 @@ class HarnessConfig:
     # --- Strategy 선택 (UI에서 클릭, stage_id → strategy impl_name) ---
     active_strategies: dict = field(default_factory=dict)  # stage_id → impl_name
 
+    # --- Capability 선언 (capability name 리스트, s04_tool_index가 자동 바인딩) ---
+    capabilities: list = field(default_factory=list)       # ["retrieval.web_search", ...]
+    capability_params: dict = field(default_factory=dict)  # capability_name → {param_id: value}
+
     # --- 기타 ---
     cost_budget_usd: float = 10.0
     context_window: int = 200_000
@@ -125,6 +129,8 @@ class HarnessConfig:
             active_strategies=harness_config.get("active_strategies", {}),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
+            capabilities=list(harness_config.get("capabilities", []) or []),
+            capability_params=dict(harness_config.get("capability_params", {}) or {}),
             preset=preset,
         )
 

@@ -37,6 +37,9 @@ class ToolIndexStage(Stage):
         rag_collections: list[str] = self.get_param("rag_collections", state, [])
         rag_top_k: int = self.get_param("rag_top_k", state, 4)
 
+        # 0.5. Capability 바인딩 — 선언된 capability를 Tool 인스턴스로 materialize
+        cap_result = self._bind_capabilities(state)
+
         # 1. 선택된 MCP 세션에서 도구 디스커버리
         #    stage_params에 mcp_sessions가 있으면 해당 세션만,
         #    없으면 s01_input에서 이미 수집한 tool_definitions 유지 (하위 호환)
@@ -92,6 +95,50 @@ class ToolIndexStage(Stage):
             "tools_bound": len(state.tool_definitions),
             "mcp_sessions_selected": len(selected_mcp_sessions),
             "rag_collections": len(rag_collections),
+            "capabilities_declared": cap_result.get("declared", 0),
+            "capabilities_resolved": cap_result.get("resolved", 0),
+            "capabilities_unknown": cap_result.get("unknown", 0),
+        }
+
+    def _bind_capabilities(self, state: PipelineState) -> dict:
+        """config.capabilities를 Tool 인스턴스로 materialize 후 state에 반영.
+
+        선언 없으면 no-op. 누락된 factory/unknown capability는 경고만 찍고 계속.
+        """
+        config = state.config
+        if config is None or not getattr(config, "capabilities", None):
+            return {"declared": 0, "resolved": 0, "unknown": 0}
+
+        from ..capabilities import materialize_capabilities, merge_into_state
+
+        declared_names = list(config.capabilities)
+        report = materialize_capabilities(
+            declared_names,
+            capability_params=getattr(config, "capability_params", None),
+        )
+        added = merge_into_state(report, state)
+
+        logger.info(
+            "[Tool Index] capabilities: declared=%d, resolved=%d, added=%d, unknown=%d, no_factory=%d",
+            len(declared_names),
+            len(report.resolved),
+            added,
+            len(report.unknown),
+            len(report.no_factory),
+        )
+
+        if report.unknown:
+            logger.warning("[Tool Index] unknown capabilities (missing in registry): %s", report.unknown)
+        if report.no_factory:
+            logger.warning(
+                "[Tool Index] capabilities without tool_factory (Adapter 주입 필요): %s",
+                report.no_factory,
+            )
+
+        return {
+            "declared": len(declared_names),
+            "resolved": len(report.resolved),
+            "unknown": len(report.unknown),
         }
 
     async def _discover_selected_mcp_tools(
@@ -121,11 +168,12 @@ class ToolIndexStage(Stage):
             logger.warning("[Tool Index] MCP discovery failed: %s", e)
 
     def should_bypass(self, state: PipelineState) -> bool:
-        # 도구가 없더라도 RAG 컬렉션이 있으면 실행 (metadata에 저장해야 하므로)
+        # 도구/RAG/MCP/capability 중 하나라도 있으면 실행
         has_tools = bool(state.tool_definitions)
         has_rag = bool(self.get_param("rag_collections", state, []))
         has_mcp = bool(self.get_param("mcp_sessions", state, []))
-        return not (has_tools or has_rag or has_mcp)
+        has_caps = bool(state.config and getattr(state.config, "capabilities", None))
+        return not (has_tools or has_rag or has_mcp or has_caps)
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [
