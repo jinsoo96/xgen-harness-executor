@@ -1,4 +1,8 @@
+<div align="center">
+
 # xgen-harness
+
+### C타입 허브처럼 기능을 꽂았다 뺐다 하는 에이전트 실행 엔진
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
@@ -8,26 +12,92 @@
 pip install xgen-harness
 ```
 
-12단계 파이프라인 기반 에이전트 실행 엔진.
-라이브러리 자체는 특정 인프라에 의존하지 않으며, 어댑터가 외부 서비스를 끼워넣는 구조.
+</div>
 
 ---
 
-## 핵심 개념
+## 한 줄 요약
+
+> 워크플로우를 **"짜는 것"이 아니라 "설정하는 것"** 으로 바꾼 에이전트 실행기.
+> 사용자는 **무엇을** 할지 선언, 하네스는 **어떻게** 를 자동 조립.
+
+---
+
+## 하네스 엔지니어링 — C타입 허브 3층 구조
 
 ```
-라이브러리 (xgen-harness)          어댑터 (실행기가 만듦)
-┌─────────────────────────┐    ┌───────────────────────────┐
-│ 12 Stage Pipeline       │    │ XgenAdapter               │
-│ Strategy × Stage        │    │  register_service(...)    │
-│ get_service_url(name)   │◄───│  set_execution_context()  │
-│ → None이면 skip         │    │  xgen 인프라 등록          │
-└─────────────────────────┘    └───────────────────────────┘
+                       ┌──────────────────────────────────┐
+   ┌──────────────────▶│       Resource (주변기기)         │
+   │                   │  🔌 MCP 도구 · RAG 컬렉션         │
+   │                   │  🔌 DB · API · Gallery · Capability │
+   │                   └──────────────────────────────────┘
+   │                                   ▲
+   │                                   │ 어댑터가 꽂음
+   │                                   │ register_service()
+   │      ┌────────────────────────────┴──────────────────┐
+   │      │          Strategy (포트별 어댑터)              │
+   │      │  ExponentialBackoff · AnthropicCache · ...    │
+   │      │  LLMJudge · RuleBased · Progressive3Level ... │
+   │      │  약 40+ 구현체, StrategyResolver로 런타임 교체  │
+   │      └───────────────────────────┬──────────────────┘
+   │                                  │
+   │        ┌─────────────────────────┴────────────────────┐
+   └────────┤              Stage (허브 본체 포트)            │
+            │  s01 Input  s02 Memory  s03 SystemPrompt     │
+            │  s04 ToolIndex  s05 Plan  s06 Context        │
+            │  s07 LLM  s08 Execute  s09 Validate          │
+            │  s10 Decide  s11 Save  s12 Complete          │
+            │  ──── 12개 고정 포트, 개별 on/off 체크박스 ────│
+            └──────────────────────────────────────────────┘
 ```
 
-- **라이브러리**는 서비스 URL, API 키, 프로바이더를 모른다
-- **어댑터**가 `register_service()`, `set_execution_context()`로 끼워넣는다
-- 미등록 서비스는 에러가 아니라 해당 기능을 건너뜀 (graceful skip)
+| 층 | 역할 | 비유 | 실제 API |
+|---|------|------|----------|
+| **Stage** | 12개 고정 포트 | C허브 본체 | `register_stage()` / `disabled_stages` |
+| **Strategy** | 포트별 어댑터 | USB 슬롯 어댑터 | `register_strategy()` / `active_strategies` |
+| **Resource** | 꽂는 주변기기 | USB 장치 | `register_service()` / `CapabilityRegistry` |
+
+**핵심 원칙**
+- **라이브러리 ≠ 인프라**: 라이브러리는 URL·API 키·프로바이더 이름을 모른다 → 어댑터가 주입
+- **Graceful skip**: 미등록 자원은 에러가 아니라 자동으로 건너뜀
+- **무침범**: 새 Stage/Strategy/Tool 추가할 때 기존 코드 1줄도 수정할 필요 없음
+
+---
+
+## 확장성 & 안정성 검증 (코드 감사 결과)
+
+| 확장 지점 | 방식 | 등급 |
+|----------|------|------|
+| **Stage 추가** | `register_stage()` + entry_points 자동 발견 | **A** |
+| **Strategy 교체** | `StrategyResolver` 전역 레지스트리 (40+ 구현체) | **A** |
+| **LLM 프로바이더** | `PROVIDER_REGISTRY` + `register_provider()` | **A** |
+| **Tool 소스** | `ToolSource` Protocol + Gallery entry_points | **A** |
+| **서비스 URL** | `ServiceRegistry` + 환경변수 폴백 | **A** |
+| **Capability** | 타입 무관 `CapabilityRegistry` (5개 인덱스) | **A** |
+| **에러 처리** | `ErrorCategory` + `recoverable` + on_error 훅 | **A** |
+| **전체 plug-and-play 성숙도** | | **85%** |
+
+모든 확장 지점이 **레지스트리 + 팩토리 + ABC/Protocol** 기반.
+`if provider == "..."` 같은 분기는 레거시 폴백 1곳만 남아있음 (`config.py` 기본 모델명).
+
+---
+
+## 3가지 바인딩 경로 (Capability 시스템)
+
+사용자가 도구를 붙이는 방법은 셋 다 지원됨:
+
+```
+① 선언 바인딩                        ② 발견 바인딩                  ③ 자동 발행
+   (capabilities 필드)                 (s05 natural intent)           (Adapter → Registry)
+   ↓                                   ↓                              ↓
+config.capabilities =                "뉴스 찾아서 요약해줘"          워크플로우 노드
+["retrieval.web_search"]                    ↓                        → MCP/API/DB/RAG
+   ↓                                   Matcher 매칭                   → publish_capabilities()
+s04_tool_index 바인딩                s04 바인딩                      → ①②가 사용 가능
+```
+
+실행 중 LLM이 빠뜨린 필수 파라미터는 `ParameterResolver`가
+`provided → context → llm_infer → default` 우선순위로 자동 채움.
 
 ---
 
@@ -39,12 +109,14 @@ pip install xgen-harness
 from xgen_harness import Pipeline, PipelineState, HarnessConfig, EventEmitter
 from xgen_harness.core.execution_context import set_execution_context
 
-# API 키 주입 (contextvars 기반, 동시성 안전)
 set_execution_context(api_key="sk-...", provider="openai", model="gpt-4o-mini")
 
-config = HarnessConfig(provider="openai", model="gpt-4o-mini", preset="minimal")
+config = HarnessConfig(
+    provider="openai", model="gpt-4o-mini",
+    capabilities=["retrieval.web_search"],   # 선언만 — 하네스가 조립
+)
 pipeline = Pipeline.from_config(config, EventEmitter())
-state = PipelineState(user_input="안녕하세요")
+state = PipelineState(user_input="오늘 한국 날씨 알려줘")
 
 await pipeline.run(state)
 print(state.final_output)
@@ -57,7 +129,29 @@ from xgen_harness.adapters.xgen import XgenAdapter
 
 adapter = XgenAdapter(db_manager=db_manager)
 async for event in adapter.execute(workflow_data, input_data, user_id=user_id):
-    yield event  # xgen SSE 포맷
+    yield event  # xgen SSE 포맷 (그대로 프론트에 전달 가능)
+```
+
+### 확장 예시 (코드 수정 없이 꽂기)
+
+```python
+from xgen_harness import (
+    register_provider, register_stage, register_tool_source, register_service,
+)
+from xgen_harness.core.strategy_resolver import register_strategy
+
+# 포트 어댑터 추가
+register_strategy("s09_validate", "evaluation", "strict", StrictJudge)
+
+# LLM 포트 추가
+register_provider("my_llm", MyLLMProvider)
+
+# 새 Stage 플러그
+register_stage("s99_custom", "default", MyCustomStage)
+
+# 주변기기 연결
+register_service("documents", "http://my-rag:8000")
+register_tool_source(my_tool_source)
 ```
 
 ---
@@ -97,41 +191,10 @@ Phase C: 마무리 (1회)
 
 ---
 
-## 확장 포인트 (코드 수정 없이)
-
-```python
-# LLM 프로바이더 추가
-from xgen_harness import register_provider
-register_provider("my_llm", MyLLMProvider)
-
-# Strategy 교체
-from xgen_harness.core.strategy_resolver import register_strategy
-register_strategy("s09_validate", "evaluation", "strict", StrictJudge)
-
-# Stage 플러그인 (entry_points 자동 발견도 지원)
-from xgen_harness import register_stage
-register_stage("s99_custom", "default", MyCustomStage)
-
-# Tool 소스 추가
-from xgen_harness import register_tool_source
-register_tool_source(my_tool_source)  # ToolSource Protocol 구현
-
-# 서비스 엔드포인트 등록 (어댑터에서 호출)
-from xgen_harness import register_service
-register_service("documents", "http://my-rag:8000")
-register_service("mcp", "http://my-tools:8000")
-
-# Preset 추가
-from xgen_harness.core.presets import PRESETS
-PRESETS["enterprise"] = {"disabled_stages": [...], "temperature": 0.2}
-```
-
----
-
 ## 서비스 연동 구조
 
 라이브러리는 범용 이름(`documents`, `mcp`, `config`)으로 서비스를 조회하고,
-어댑터가 실제 URL을 등록한다.
+어댑터가 실제 URL을 등록한다. 미등록 서비스는 graceful skip.
 
 ```python
 # 어댑터 측 (XgenAdapter._register_xgen_services)
@@ -140,10 +203,7 @@ register_service("documents", "http://xgen-documents:8000")
 register_service("mcp", "http://xgen-mcp-station:8000")
 
 # Stage 측 (라이브러리 내부)
-url = get_service_url("documents")  # 등록된 URL 반환, 미등록이면 None
-if not url:
-    logger.info("documents 미등록, RAG 건너뜀")
-    return
+url = get_service_url("documents")  # None이면 해당 기능 자동 skip
 ```
 
 | 서비스 이름 | 사용 Stage | 용도 |
