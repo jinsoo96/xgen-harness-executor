@@ -5,6 +5,14 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-04-17
+
+### Fixed
+- PyPI의 이전 0.8.0 번호가 빈 내용으로 등록되어 있어 Capability 모듈이 실제로 설치되지 않던 문제 해결.
+- 내용 변경 없음 — v0.8.0과 기능 동일, 버전만 재배포.
+
+---
+
 ## [0.8.0] — 2026-04-17
 
 ### Added — Capability System (선언형 도구 자동 조립)
