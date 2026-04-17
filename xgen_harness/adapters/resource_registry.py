@@ -498,31 +498,51 @@ class ResourceRegistry:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     async def _load_rag_collections(self, selected: list[str]) -> None:
+        """선택된 컬렉션은 항상 등록 — 서비스 호출 실패/인증 실패와 무관하게.
+
+        list_collections()가 성공하면 description 등을 enrich, 실패하거나 빈 응답이면
+        selected만으로 fallback 등록.
+        """
+        # 1. selected를 먼저 등록 (인증 실패 등으로 list 못 가져와도 검색은 가능해야 함)
+        loaded_names: set[str] = set()
+        for name in selected:
+            if not name or name in loaded_names:
+                continue
+            self._rag_collections.append(ResourceInfo(
+                resource_type="rag_collection", name=name,
+                description="", source="config",
+            ))
+            loaded_names.add(name)
+
+        # 2. documents 서비스에서 추가 metadata 가져오기 (옵션, 실패 허용)
         if not self._services.documents:
-            # 선택된 컬렉션만 기록 (실제 검색은 search_rag에서)
-            for name in selected:
-                self._rag_collections.append(ResourceInfo(
-                    resource_type="rag_collection", name=name,
-                    description="", source="config",
-                ))
             return
 
         try:
             all_collections = await self._services.documents.list_collections()
-            for col in all_collections:
-                name = col.get("name", "") if isinstance(col, dict) else str(col)
-                if not name:
-                    continue
-                desc = col.get("description", "") if isinstance(col, dict) else ""
+        except Exception as e:
+            logger.warning("[Resources] RAG collections list failed (fallback to selected only): %s", e)
+            return
+
+        if not all_collections:
+            return
+
+        # 가져온 목록 중 selected에 있는 것의 description enrich + 추가 컬렉션 등록
+        by_name = {info.name: info for info in self._rag_collections}
+        for col in all_collections:
+            name = col.get("name", "") if isinstance(col, dict) else str(col)
+            if not name:
+                continue
+            desc = col.get("description", "") if isinstance(col, dict) else ""
+            if name in by_name:
+                if desc and not by_name[name].description:
+                    by_name[name].description = desc
+                    by_name[name].source = "xgen-documents"
+            elif not selected:
+                # selected 가 비어있을 때만 전체 등록 (over-load 방지)
                 self._rag_collections.append(ResourceInfo(
                     resource_type="rag_collection", name=name,
                     description=desc, source="xgen-documents",
-                ))
-        except Exception as e:
-            logger.warning("[Resources] RAG collections load failed: %s", e)
-            for name in selected:
-                self._rag_collections.append(ResourceInfo(
-                    resource_type="rag_collection", name=name, source="config",
                 ))
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
