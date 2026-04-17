@@ -114,10 +114,12 @@ class RAGSearchTool(Tool):
             )
 
         url = f"{docs_url}/api/retrieval/documents/search"
+        # xgen-documents 스키마: collection_name (단수) + query_text + limit
         payload = {
-            "query": query,
-            "collection_names": [collection_name],
-            "top_k": top_k,
+            "query_text": query,
+            "collection_name": collection_name,
+            "limit": top_k,
+            "score_threshold": 0.0,
         }
         # xgen-documents 인증: ExecutionContext의 user_id를 헤더로 전달
         from ..core.execution_context import get_extra

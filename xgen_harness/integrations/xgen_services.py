@@ -275,22 +275,21 @@ class XgenDocumentService:
         limit: int = 5,
         user_id: str = "",
     ) -> list[dict[str, Any]]:
-        url = f"{self._base_url}/api/retrieval/search"
+        """xgen-documents: POST /api/retrieval/documents/search (collection_name + query_text)"""
+        url = f"{self._base_url}/api/retrieval/documents/search"
         payload = {
-            "query": query,
-            "collection_id": collection_id,
+            "query_text": query,
+            "collection_name": collection_id,
             "limit": limit,
+            "score_threshold": 0.0,
         }
-        if user_id:
-            payload["user_id"] = user_id
-
         headers = self._auth_headers(user_id)
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data.get("results", data.get("documents", []))
+                    return data.get("results", data.get("documents", data if isinstance(data, list) else []))
                 logger.warning("[Documents] search %s: %s", resp.status_code, resp.text[:200])
         except Exception as e:
             logger.warning("[Documents] search failed: %s", e)
