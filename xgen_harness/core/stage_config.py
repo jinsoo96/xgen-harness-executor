@@ -376,14 +376,25 @@ def _inject_dynamic_options(cfg: dict) -> dict:
         return cfg
 
     providers = list_providers()
-    # provider 기반 모델 목록 — 중복 제거 유지 순서
+    # provider 기반 모델 목록 — PROVIDER_MODELS 레지스트리에서 조회 (기본 + 추가 모델).
+    # 기존 get_default_model 은 provider 당 1개만 반환 → get_provider_models 로 교체.
+    try:
+        from ..providers import get_provider_models
+    except ImportError:
+        get_provider_models = None
+
     default_models: list[str] = []
     seen = set()
     for p in providers:
-        m = get_default_model(p)
-        if m and m not in seen:
-            default_models.append(m)
-            seen.add(m)
+        if get_provider_models is not None:
+            candidates = get_provider_models(p)
+        else:
+            m = get_default_model(p)
+            candidates = [m] if m else []
+        for m in candidates:
+            if m and m not in seen:
+                default_models.append(m)
+                seen.add(m)
 
     updated_fields = []
     for f in fields:
