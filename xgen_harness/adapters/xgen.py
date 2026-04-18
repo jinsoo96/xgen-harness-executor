@@ -151,13 +151,17 @@ class XgenAdapter:
         temperature = hc.get("temperature") if hc.get("temperature") is not None else 0.7
         system_prompt = hc.get("system_prompt") or (agent_config or {}).get("system_prompt", "")
 
-        # ━━━━ 3. API 키 해석 — ExecutionContext → ServiceProvider → 환경변수 ━━━━
-        api_key = ctx_get_api_key() or os.environ.get(get_api_key_env(provider), "")
+        # ━━━━ 3. API 키 해석 — ExecutionContext → ServiceProvider(Redis 우선) → 환경변수 ━━━━
+        # Redis 우선 조회 정책: 관리자가 UI에서 런타임 변경한 값(Redis)이 .env(부팅 고정값)보다 우선해야 한다.
+        # ExecutionContext는 per-request override 목적으로 항상 1순위.
+        api_key = ctx_get_api_key() or ""
         if not api_key and self._services.config:
             try:
                 api_key = await self._services.config.get_api_key(provider) or ""
             except Exception as e:
                 logger.warning("[Adapter] API 키 조회 실패: %s", e)
+        if not api_key:
+            api_key = os.environ.get(get_api_key_env(provider), "")
 
         if not api_key:
             yield {"type": "error", "detail": f"{provider} API 키가 설정되지 않았습니다."}
