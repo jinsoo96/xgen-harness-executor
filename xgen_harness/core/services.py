@@ -143,6 +143,33 @@ class DocumentService(Protocol):
         """사용 가능한 컬렉션 목록."""
         ...
 
+    async def embed_query(self, text: str, user_id: str = "") -> list[float]:
+        """쿼리 임베딩 벡터. 없으면 빈 리스트."""
+        ...
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 5,
+        user_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """문서 리랭크. 각 항목: {index, score, content}"""
+        ...
+
+    async def list_folders(self, user_id: str = "") -> list[dict[str, Any]]:
+        """폴더 목록."""
+        ...
+
+    async def ontology_query(
+        self,
+        collection_id: str,
+        query: str,
+        user_id: str = "",
+    ) -> dict[str, Any]:
+        """GraphRAG / Ontology 질의. {nodes, relations, ...}"""
+        ...
+
 
 # ──────────────────────────────────────────────
 # 5. ServiceProvider — 서비스 묶음
