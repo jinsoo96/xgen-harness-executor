@@ -60,8 +60,12 @@ class InputStage(Stage):
                 self.stage_id,
             )
 
+        # 3.5. base_url 해석 — Redis(xgen-core) → env 순서. providers/__init__.py:70
+        # 의 env only fallback 은 그대로 두되, 여기서 선제 주입해 Redis 우선 정책 준수.
+        base_url = await self._resolve_base_url(provider_name, state)
+
         # 4. 프로바이더 생성 — 레지스트리 기반 (if/elif 없음)
-        state.provider = create_provider(provider_name, api_key, model_name)
+        state.provider = create_provider(provider_name, api_key, model_name, base_url=base_url)
 
         # 5. 사용자 메시지 추가
         user_content = self._build_user_content(state)
@@ -168,6 +172,37 @@ class InputStage(Stage):
         elif score >= 2:
             return "moderate"
         return "simple"
+
+    async def _resolve_base_url(self, provider: str, state: PipelineState) -> Optional[str]:
+        """Provider base_url 해석: ServiceProvider(Redis 우선) → 환경변수 → None.
+
+        None 을 반환하면 providers/__init__.py 의 env fallback + provider 기본값이 적용.
+        Redis 에 ``{PROVIDER}_API_BASE_URL`` 가 있으면 부팅 고정 .env 보다 우선.
+        """
+        env_var = f"{provider.upper()}_API_BASE_URL"
+
+        # 1. ServiceProvider (Redis → xgen-core persistent_configs)
+        services = state.metadata.get("services")
+        if services and services.config:
+            try:
+                # v2 의 get_setting 우선. 구버전 구현체는 get_value 폴백.
+                get_setting = getattr(services.config, "get_setting", None)
+                if get_setting is not None:
+                    value = await get_setting(env_var)
+                else:
+                    value = await services.config.get_value(env_var, "")
+                if value:
+                    return value
+            except Exception as e:
+                logger.debug("[Input] base_url Redis 조회 실패 (%s): %s", env_var, e)
+
+        # 2. 환경변수
+        value = os.environ.get(env_var, "")
+        if value:
+            return value
+
+        # 3. None → providers 가 자체 기본값 사용
+        return None
 
     async def _resolve_api_key(self, provider: str, state: PipelineState) -> Optional[str]:
         """API 키 해석: ExecutionContext → ServiceProvider → 환경변수 → 파일 폴백"""
