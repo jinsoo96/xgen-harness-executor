@@ -108,6 +108,14 @@ class Pipeline:
                     else:
                         logger.info("[Pipeline] Retry %d/%d", state.retry_count, self.config.max_retries)
                         state.loop_decision = "continue"
+                        # verbose: 에이전틱 루프 재시도 이벤트
+                        from ..events.types import RetryEvent
+                        await state.emit_verbose(RetryEvent(
+                            stage_id="pipeline_loop",
+                            reason="loop retry by decide",
+                            attempt=state.retry_count,
+                            max_attempts=self.config.max_retries,
+                        ))
 
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))
@@ -194,6 +202,14 @@ class Pipeline:
             recovery = await stage.on_error(e, state)
             if recovery is not None:
                 logger.info("[Pipeline] Stage %s recovered from error", stage.stage_id)
+                # verbose: Stage on_error 복구 시 RetryEvent
+                from ..events.types import RetryEvent
+                await state.emit_verbose(RetryEvent(
+                    stage_id=stage.stage_id,
+                    reason=f"on_error recovered: {type(e).__name__}",
+                    attempt=1,
+                    max_attempts=1,
+                ))
                 await self.event_emitter.emit(StageExitEvent(
                     stage_id=stage.stage_id,
                     stage_name=stage.display_name_ko,

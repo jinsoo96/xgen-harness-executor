@@ -154,6 +154,15 @@ class PlanStage(Stage):
             len(report.no_factory),
         )
 
+        # verbose: 자연어 발견으로 바인딩된 capability 각각 발행 (source=discovery)
+        from ..events.types import CapabilityBindEvent
+        for m in suggested:
+            if m.spec.name in report.resolved:
+                await state.emit_verbose(CapabilityBindEvent(
+                    name=m.spec.name, source="discovery",
+                    score=m.score, stage_id=self.stage_id,
+                ))
+
         return {
             "capability_suggestions": len(names),
             "capability_bound": added,

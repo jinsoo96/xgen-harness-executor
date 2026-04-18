@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.22] — 2026-04-19
+
+### Added — Verbose 이벤트 실제 발행 경로 완성
+- **`PipelineState.emit_verbose(event)`** 헬퍼 (`core/state.py`): `verbose_events=True` + emitter 있을 때만 발행, 아니면 no-op. Stage/어댑터 한 줄 호출.
+- **`Pipeline._execute_stage`**: Stage `on_error` 복구 성공 시 `RetryEvent` 발행. 에이전틱 루프 retry 결정 시에도 `RetryEvent` 발행 (`pipeline_loop`).
+- **`s04_tool_index._bind_capabilities`**: 선언된 capability 각각 `CapabilityBindEvent(source="declaration")` 발행.
+- **`s05_plan._discover_and_bind_capabilities`**: 자연어 발견으로 바인딩된 capability 각각 `CapabilityBindEvent(source="discovery", score=<매칭점수>)` 발행.
+- **`adapters/xgen.py`**: `publish_capabilities` 후 `CapabilityBindEvent(source="auto_publish")` 요약 이벤트 발행.
+- **`s07_llm`**: `llm_request_start` / `llm_response_complete` `StageSubstepEvent` 발행 (스테이지 내부 블랙박스 해소 샘플).
+
+### Why
+- v0.8.21 까진 verbose 이벤트 타입 정의 + SSE 변환 + `ServiceLookupEvent` 발행만 연결. `CapabilityBindEvent`, `StageSubstepEvent`, `RetryEvent` 는 타입만 있고 실제 발행 없음 → verbose 모드가 반쪽. 이번 릴리스로 4종 모두 런타임 관찰 가능.
+
+### 호환성
+- `verbose_events=False` (기본) 면 emit_verbose 가 즉시 return → 기존 출력 0 변화.
+- Stage 추상 시그니처 / 외부 API / public 심볼 0 변화.
+
+---
+
 ## [0.8.21] — 2026-04-18
 
 ### Fixed — verbose 이벤트 SSE 변환 누락
