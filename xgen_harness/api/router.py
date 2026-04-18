@@ -36,7 +36,8 @@ try:
     class ExecuteRequest(BaseModel):
         text: str
         provider: str = "anthropic"
-        model: str = "claude-sonnet-4-20250514"
+        # model 미지정 시 provider 의 PROVIDER_DEFAULT_MODEL 조회 (빈 문자열이면 adapter/stage 에서 해석).
+        model: str = ""
         temperature: float = 0.7
         system_prompt: str = ""
         disabled_stages: list[str] = []

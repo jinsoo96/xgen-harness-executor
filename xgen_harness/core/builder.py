@@ -29,8 +29,9 @@ class PipelineBuilder:
     """Fluent builder로 파이프라인 구성"""
 
     def __init__(self):
+        from ..providers import PROVIDER_DEFAULT_MODEL
         self._provider = "anthropic"
-        self._model = "claude-sonnet-4-20250514"
+        self._model = PROVIDER_DEFAULT_MODEL.get(self._provider, "")
         self._api_key = ""
         self._temperature = 0.7
         self._max_tokens = 8192
