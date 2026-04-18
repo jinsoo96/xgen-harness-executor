@@ -121,6 +121,47 @@ class MissingParamEvent(HarnessEvent):
     source_hint: str = ""        # 어디서 찾으려 했는지 ("user_input" 등)
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Verbose 이벤트 — HarnessConfig.verbose_events=True 시 발행
+#  운영/디버깅 시 Redis vs env, capability 바인딩 경로, 스테이지 substep 가시화
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@dataclass
+class ServiceLookupEvent(HarnessEvent):
+    """설정/키 조회 경로 추적 — Redis 우선 정책이 실제 작동하는지 가시화"""
+    key: str = ""                          # "ANTHROPIC_API_KEY" 등
+    source: str = ""                       # "context" | "redis" | "env" | "fallback" | "missing"
+    hit: bool = False
+    provider: str = ""                     # 프로바이더 스코프 (있을 때)
+
+
+@dataclass
+class CapabilityBindEvent(HarnessEvent):
+    """capability 바인딩 — 선언/발견/자동발행 3경로 중 어느 것"""
+    name: str = ""
+    source: str = ""                       # "declaration" | "discovery" | "auto_publish"
+    score: Optional[float] = None
+    stage_id: str = ""
+
+
+@dataclass
+class StageSubstepEvent(HarnessEvent):
+    """스테이지 내부 단계 — 스테이지 블랙박스 해소"""
+    stage_id: str = ""
+    substep: str = ""                      # "rag_fetch_start" / "llm_request" / "tool_exec" 등
+    duration_ms: Optional[int] = None
+    meta: dict = field(default_factory=dict)
+
+
+@dataclass
+class RetryEvent(HarnessEvent):
+    """재시도/폴백 — 어떤 스테이지/이유/몇 번째 시도"""
+    stage_id: str = ""
+    reason: str = ""
+    attempt: int = 1
+    max_attempts: int = 1
+
+
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
     """이벤트를 harness_router.py가 이해하는 (event_type, data) dict로 변환"""
     type_map = {
@@ -135,6 +176,10 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
         ErrorEvent: "error",
         DoneEvent: "done",
         MissingParamEvent: "missing_param",
+        ServiceLookupEvent: "service_lookup",
+        CapabilityBindEvent: "capability_bind",
+        StageSubstepEvent: "stage_substep",
+        RetryEvent: "retry",
     }
     event_type = type_map.get(type(event), "unknown")
 

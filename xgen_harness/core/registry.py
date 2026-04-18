@@ -44,6 +44,13 @@ class ArtifactRegistry:
     def register(self, stage_id: str, artifact_name: str, stage_class: Type[Stage]) -> None:
         if stage_id not in self._registry:
             self._registry[stage_id] = {}
+        if artifact_name in self._registry[stage_id]:
+            prev = self._registry[stage_id][artifact_name]
+            if prev is not stage_class:
+                logger.warning(
+                    "Artifact 덮어쓰기: %s/%s (%s → %s)",
+                    stage_id, artifact_name, prev.__name__, stage_class.__name__,
+                )
         self._registry[stage_id][artifact_name] = stage_class
         logger.debug("Registered artifact: %s/%s", stage_id, artifact_name)
 
@@ -110,6 +117,9 @@ class ArtifactRegistry:
                 desc = default_cls().describe()
                 desc.active = stage_id in active_ids
                 stage_cfg = get_stage_config(stage_id)
+                current_artifact = (
+                    config.get_artifact_for_stage(stage_id) if config else "default"
+                )
                 descriptions.append({
                     "stage_id": desc.stage_id,
                     "display_name": desc.display_name,
@@ -119,6 +129,7 @@ class ArtifactRegistry:
                     "active": desc.active,
                     "required": stage_id in REQUIRED_STAGES,
                     "artifacts": list(artifacts.keys()),
+                    "current_artifact": current_artifact,
                     "strategies": [
                         {"name": s.name, "description": s.description, "is_default": s.is_default}
                         for s in desc.strategies

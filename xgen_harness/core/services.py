@@ -79,6 +79,16 @@ class ConfigService(Protocol):
         """
         ...
 
+    async def get_setting(
+        self, key: str, *, default: Optional[str] = None
+    ) -> Optional[str]:
+        """일반 설정 조회 — Redis(xgen-core) → .env → default 순서 강제.
+
+        정책: 관리자 UI 에서 런타임 변경한 Redis 값이 부팅 고정 .env 보다 우선.
+        구현체는 ServiceLookupEvent 를 발행해 어느 source 에서 히트했는지 가시화해야 함.
+        """
+        ...
+
 
 # ──────────────────────────────────────────────
 # 3. MCPService — MCP 도구 디스커버리/실행

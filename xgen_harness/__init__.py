@@ -18,6 +18,7 @@ from .core.state import PipelineState, TokenUsage
 from .core.config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
 from .core.presets import PRESETS, Preset, get_preset, apply_preset, list_presets
 from .core.stage import Stage, StageDescription, StrategyInfo
+from .core.stage_io import StageInput, StageOutput, STAGE_IO_SPECS, get_stage_io
 from .core.registry import ArtifactRegistry, register_stage
 from .events.emitter import EventEmitter
 from .events.types import (
@@ -31,6 +32,10 @@ from .events.types import (
     ErrorEvent,
     DoneEvent,
     MissingParamEvent,
+    ServiceLookupEvent,
+    CapabilityBindEvent,
+    StageSubstepEvent,
+    RetryEvent,
 )
 from .errors import (
     HarnessError,
@@ -82,6 +87,10 @@ __all__ = [
     "Stage",
     "StageDescription",
     "StrategyInfo",
+    "StageInput",
+    "StageOutput",
+    "STAGE_IO_SPECS",
+    "get_stage_io",
     "ArtifactRegistry",
     "register_stage",
     # Events
@@ -96,6 +105,10 @@ __all__ = [
     "ErrorEvent",
     "DoneEvent",
     "MissingParamEvent",
+    "ServiceLookupEvent",
+    "CapabilityBindEvent",
+    "StageSubstepEvent",
+    "RetryEvent",
     # Errors
     "HarnessError",
     "ConfigError",
