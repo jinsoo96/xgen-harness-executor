@@ -168,12 +168,13 @@ class ToolIndexStage(Stage):
             logger.warning("[Tool Index] MCP discovery failed: %s", e)
 
     def should_bypass(self, state: PipelineState) -> bool:
-        # 도구/RAG/MCP/capability 중 하나라도 있으면 실행
+        # 도구/RAG/MCP/capability/builtin 중 하나라도 있으면 실행
         has_tools = bool(state.tool_definitions)
         has_rag = bool(self.get_param("rag_collections", state, []))
         has_mcp = bool(self.get_param("mcp_sessions", state, []))
         has_caps = bool(state.config and getattr(state.config, "capabilities", None))
-        return not (has_tools or has_rag or has_mcp or has_caps)
+        has_builtins = bool(self.get_param("builtin_tools", state, []))
+        return not (has_tools or has_rag or has_mcp or has_caps or has_builtins)
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [

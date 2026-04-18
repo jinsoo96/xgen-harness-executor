@@ -5,6 +5,13 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.16] — 2026-04-18
+
+### Fixed — E2E 테스트 중 발견한 s04 bypass 누수
+- **`s04_tool_index.should_bypass`**: `builtin_tools` 체크 누락 수정. 사용자가 `stage_params.s04_tool_index.builtin_tools=["discover_tools"]` 를 명시해도 기존 로직에선 tools/RAG/MCP/capability 모두 없으면 bypass → builtin 도구가 LLM 에 노출되지 않아 tool_call 불가. 5개 플래그(tools/rag/mcp/caps/builtins) 중 하나라도 있으면 실행하도록 수정. 이로써 **Progressive Disclosure 의 Level 1 인덱스 + `discover_tools` 빌트인 만으로도 tool-loop 동작 가능**.
+
+---
+
 ## [0.8.15] — 2026-04-18
 
 ### Added — DB 추상화 레이어 + 자동 인식
