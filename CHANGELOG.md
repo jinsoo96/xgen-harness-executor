@@ -5,6 +5,30 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.26] — 2026-04-19
+
+### Added — xgen 노드 카테고리 전수 NodeAdapter 등록
+- **`integrations/xgen_node_adapters.py` 신규**: xgen-workflow 의 노드 카테고리(functionId 기준) 를 NodeAdapter 로 bulk 등록.
+  - `document_loaders` — vectordb/ontology/tool_selector 9종 → rag 계열 tool_def
+  - `file_system` — filesystem_storage/minio/table_data_mcp 5종 → file I/O tool
+  - `tools` — 20+ 노드 → generic tool (parameters → JSON Schema 자동 변환)
+  - `arithmetic` — math/calculator
+  - `ml` — ML 예측 도구
+  - 빌트인 2종(`api_loader`, `db_query`) + 위 5종 = 총 **7 카테고리**
+- **확장**: 새 카테고리 추가 = `_XGEN_CATEGORY_ADAPTERS` dict 한 줄 + builder 함수. 핵심 불변.
+- **외부 플러그인**: `entry_points(group="xgen_harness.node_adapters")` 에 자체 `NodeAdapter` 등록하면 자동 반영.
+- `XgenAdapter` import 시점에 `bootstrap_xgen_node_adapters()` 자동 호출 (멱등).
+
+### Why
+- v0.8.25 는 api_tool/db_tool 2 종만 어댑터 — 이게 "온톨로지 예시" 의도를 좁게 반영한 실수. 실제로는 xgen-workflow 의 document_loaders(ontology 포함), file_system, tools, arithmetic, ml 등 **tool-like 전 카테고리**가 하네스에서 자동 감지되어야 함. 본 릴리스로 전수 커버.
+
+### 원칙
+- `NodeAdapter` 레지스트리는 라이브러리 빌트인. xgen 특화는 `integrations/xgen_node_adapters.py` 에서 등록 (레이어 분리).
+- MCP 는 기존 mcp_sessions 경로로 이미 수집됨 (중복 등록 안 함).
+- agents/chat_models/model/memory/routers 는 Stage 자체의 내부 행동(s07 llm, s02 memory, s10 decide) 이라 tool 어댑터 대상 아님.
+
+---
+
 ## [0.8.25] — 2026-04-19
 
 ### Changed — NodeAdapter 레지스트리 패턴 (통로화)
