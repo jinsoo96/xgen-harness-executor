@@ -5,6 +5,13 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.19] — 2026-04-18
+
+### Fixed — verbose 이벤트 실제 발행 경로 연결
+- **`adapters/xgen.py`**: `HarnessConfig.verbose_events=True` 인 경우 pipeline 의 `EventEmitter` 를 `services.config` (XgenConfigService) 에 주입. 기존에는 타입만 정의되고 실제 발행은 None. 이제 `ServiceLookupEvent` 가 SSE 스트림에 실제로 나옴 — Redis vs env 조회 경로를 런타임에 추적 가능.
+
+---
+
 ## [0.8.18] — 2026-04-18
 
 ### Fixed — OpenAI provider base_url endpoint 자동 조립
