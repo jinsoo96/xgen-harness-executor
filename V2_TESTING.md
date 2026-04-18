@@ -39,15 +39,44 @@
 
 ---
 
-## v2 검수 결과 — 하드코딩 제거 작업 (커밋 기준)
+## v2 연속 배포 요약 (v0.8.17 → v0.8.23)
 
-| 커밋 | 영역 | 내용 |
-|---|---|---|
-| `5602626` | 라이브러리 | base_url Redis 우선 조회 누수 수정 (s01_input `_resolve_base_url`) |
-| `05ccd34` | 라이브러리 | model/temperature/max_tokens Redis polling 추가 (어댑터 `_resolve_adapter_setting`) |
-| 다음 | 라이브러리 | model 기본값 9곳 중복 → `PROVIDER_DEFAULT_MODEL` 단일 진실 소스 통일 |
-| 다음 | 라이브러리 | `stage_config.py` static options 배열 비움 (`_inject_dynamic_options` 자동 주입) |
-| 다음 | 이식 측 | `harness.py:_list_providers` 하드코딩 딕셔너리 → 라이브러리 `list_providers()` 호출로 교체 |
+| 버전 | 내용 |
+|---|---|
+| v0.8.17 | v2 정식 릴리스 (Stage 계약 + 4 verbose 타입 + PROVIDER_MODELS + Redis polling + model 하드코딩 9→2) |
+| v0.8.18 | OpenAI base_url endpoint 자동 조립 fix |
+| v0.8.19 | XgenConfigService emitter 주입 경로 |
+| v0.8.20 | emitter 주입 시점 앞당김 |
+| v0.8.21 | SSE 변환에 verbose 4종 추가 |
+| v0.8.22 | Pipeline/s04/s05/adapter/s07 에 verbose 실제 발행 |
+| v0.8.23 | `config_kwargs` 에 verbose_events 전달 fix |
+
+## 최종 검증 결과 (v0.8.23, 2026-04-19)
+
+### Redis 우선 조회 — 런타임 증명 ✅
+
+```
+OPENAI_TEMPERATURE_DEFAULT  source=redis  hit=True
+OPENAI_MAX_TOKENS_DEFAULT   source=redis  hit=True
+OPENAI_API_KEY              source=redis  hit=True  provider=openai
+OPENAI_API_BASE_URL         source=redis  hit=True
+```
+
+### Verbose 4종 발행 ✅
+- `service_lookup`: 4건 (Redis 경로 전부 추적)
+- `stage_substep`: 2건 (s07 llm_request_start + llm_response_complete)
+- `capability_bind`: 0건 (capabilities 미선언 시 정상)
+- `retry`: 0건 (재시도 미발생 시 정상)
+
+### 12 스테이지 E2E ✅
+- OpenAI gpt-4o-mini full 12 스테이지 통과
+- metrics 이벤트 duration_ms/total_tokens/cost_usd 정상
+
+---
+
+## 원복 (v2 별로면)
+
+`xgen-easy-dev/docker/rollback-v1.sh` 한 줄 실행. 30초~2분 소요. `ROLLBACK.md` 참조.
 
 ---
 
