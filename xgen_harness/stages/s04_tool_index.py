@@ -39,6 +39,13 @@ class ToolIndexStage(Stage):
 
         # 0.5. Capability 바인딩 — 선언된 capability를 Tool 인스턴스로 materialize
         cap_result = self._bind_capabilities(state)
+        # verbose: 선언된 capability 각각 발행
+        if cap_result.get("_events"):
+            from ..events.types import CapabilityBindEvent
+            for ev in cap_result["_events"]:
+                await state.emit_verbose(CapabilityBindEvent(
+                    name=ev["name"], source=ev["source"], stage_id=self.stage_id,
+                ))
 
         # 1. 선택된 MCP 세션에서 도구 디스커버리
         #    stage_params에 mcp_sessions가 있으면 해당 세션만,
@@ -135,10 +142,18 @@ class ToolIndexStage(Stage):
                 report.no_factory,
             )
 
+        # verbose: 선언 바인딩된 capability 각각 이벤트 발행 (비동기로는 못 해서 동기 큐 푸시)
+        # emit_verbose 는 async 이므로 여기서는 이벤트 준비만 하고 _bind_capabilities 는 sync.
+        # → async 로 바꾸거나, state.metadata 에 기록 후 다른 지점에서 flush.
+        # 가장 단순: async 호출 가능하도록 이 메서드 호출부를 await 으로 바꿈. 아래서 처리.
+
         return {
             "declared": len(declared_names),
             "resolved": len(report.resolved),
             "unknown": len(report.unknown),
+            "_events": [
+                {"name": n, "source": "declaration"} for n in report.resolved
+            ],
         }
 
     async def _discover_selected_mcp_tools(

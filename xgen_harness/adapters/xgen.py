@@ -320,6 +320,14 @@ class XgenAdapter:
                 published = registry.publish_capabilities()
                 if published:
                     logger.info("[Adapter] Capability 발행: %d개 (workflow → registry)", published)
+                    # verbose: 자동 발행 요약 이벤트 (선언/발견과 구분되는 source=auto_publish)
+                    from ..events.types import CapabilityBindEvent
+                    await state.emit_verbose(CapabilityBindEvent(
+                        name=f"<auto_publish>",
+                        source="auto_publish",
+                        score=float(published),
+                        stage_id="adapter",
+                    ))
             except Exception as e:
                 logger.warning("[Adapter] Capability 발행 실패 — 기존 경로로 진행: %s", e)
 

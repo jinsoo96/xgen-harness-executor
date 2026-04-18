@@ -130,6 +130,22 @@ class PipelineState:
             self.tool_results.clear()
             self.pending_tool_calls.clear()
 
+    async def emit_verbose(self, event: Any) -> None:
+        """HarnessConfig.verbose_events=True 시에만 이벤트 발행.
+
+        Stage/어댑터가 세밀한 관찰 이벤트(CapabilityBindEvent, StageSubstepEvent,
+        RetryEvent 등)를 뿌릴 때 이 한 줄만 호출. 플래그가 꺼져 있으면 no-op —
+        기본 경로에 성능/출력 영향 0.
+        """
+        if self.event_emitter is None:
+            return
+        if not (self.config and getattr(self.config, "verbose_events", False)):
+            return
+        try:
+            await self.event_emitter.emit(event)
+        except Exception:
+            pass  # 관찰 이벤트 실패는 실행 흐름에 영향 없음
+
     @property
     def elapsed_ms(self) -> int:
         return int((time.time() - self.start_time) * 1000)

@@ -93,6 +93,14 @@ class LLMStage(Stage):
             if result_text:
                 state.add_message("assistant", result_text)
 
+        # verbose: LLM 응답 완료
+        from ..events.types import StageSubstepEvent as _StageSubstep
+        await state.emit_verbose(_StageSubstep(
+            stage_id=self.stage_id, substep="llm_response_complete",
+            meta={"has_tool_calls": has_tool_calls, "text_length": len(result_text),
+                  "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens},
+        ))
+
         return {
             "call_count": call_count,
             "has_tool_calls": has_tool_calls,
@@ -158,6 +166,17 @@ class LLMStage(Stage):
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         usage = TokenUsage()
+
+        # verbose: LLM 요청 시작
+        from ..events.types import StageSubstepEvent
+        import time as _time
+        _t_llm = _time.time()
+        await state.emit_verbose(StageSubstepEvent(
+            stage_id=self.stage_id, substep="llm_request_start",
+            meta={"provider": provider.provider_name, "model": provider.model_name,
+                  "message_count": len(state.messages),
+                  "tools_count": len(state.tool_definitions or [])},
+        ))
 
         async for event in provider.chat(
             messages=state.messages,
