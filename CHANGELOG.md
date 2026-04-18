@@ -5,6 +5,21 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.24] — 2026-04-19
+
+### Changed — 잔여 하드코딩 정리
+- **`api/router.py`**: `/ws` 엔드포인트의 model 기본값 `"claude-sonnet-4-20250514"` → `PROVIDER_DEFAULT_MODEL` 참조. `OrchestratorRequest.model` Pydantic 기본값 `""` sentinel 로 교체.
+- **`orchestrator/multi_agent.py`**: `MultiAgentExecutor.__init__` 의 `default_model` 하드코딩 제거. 빈 값 전달 시 `PROVIDER_DEFAULT_MODEL` 에서 해석.
+- **`core/config.py:193`**: `from_dict` 의 model fallback 하드코딩 `""` 로 교체. 이전 v0.8.17 에서 openai_model / anthropic_model 만 sentinel 로 바꿨는데 model 필드 누락 — 이번에 통일.
+
+### 잔여 의도 유지 (정당)
+- `providers/anthropic.py:26`, `providers/openai.py:24` — 프로바이더 클래스 생성자의 provider-specific 기본값 (직접 인스턴스화 편의).
+- `core/builder.py:6`, `providers/langchain_adapter.py:13`, `providers/__init__.py:161` — docstring 예시 (실행 코드 아님).
+- `stages/strategies/token_tracker.py` — 모델별 가격표. Anthropic/OpenAI 공식 요금으로 사실 정보.
+- `providers/__init__.py` 의 `PROVIDER_DEFAULT_MODEL` / `PROVIDER_MODELS` — 단일 진실 소스 레지스트리 자체.
+
+---
+
 ## [0.8.23] — 2026-04-19
 
 ### Fixed — verbose_events 가 HarnessConfig 로 전달되지 않던 누수

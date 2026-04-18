@@ -190,7 +190,8 @@ class HarnessConfig:
 
         return cls(
             provider=harness_config.get("provider") or agent_config.get("provider", "anthropic"),
-            model=harness_config.get("model") or agent_config.get("model", "claude-sonnet-4-20250514"),
+            # model 은 sentinel "" 로 받음 — 어댑터/s01_input 이 런타임에 PROVIDER_DEFAULT_MODEL 참조.
+            model=harness_config.get("model") or agent_config.get("model", ""),
             temperature=float(harness_config.get("temperature", agent_config.get("temperature", 0.7))),
             max_tokens=int(harness_config.get("max_tokens", 8192)),
             # provider 별 폴백은 런타임 PROVIDER_DEFAULT_MODEL 에서 해석. 여기선 명시값만 전달.

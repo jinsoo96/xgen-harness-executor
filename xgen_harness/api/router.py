@@ -176,9 +176,10 @@ try:
                 if data.get("type") != "execute":
                     continue
 
+                from ..providers import PROVIDER_DEFAULT_MODEL
                 user_input = data.get("input", "")
                 provider = data.get("provider", "anthropic")
-                model = data.get("model", "claude-sonnet-4-20250514")
+                model = data.get("model") or PROVIDER_DEFAULT_MODEL.get(provider, "")
                 disabled = set(data.get("disabled_stages", []))
 
                 config = HarnessConfig(provider=provider, model=model, disabled_stages=disabled)
@@ -212,7 +213,8 @@ try:
         text: str
         workflow_data: dict
         provider: str = "anthropic"
-        model: str = "claude-sonnet-4-20250514"
+        # sentinel "" — 비어있으면 MultiAgentExecutor 가 PROVIDER_DEFAULT_MODEL 에서 해석
+        model: str = ""
 
     @harness_router.post("/orchestrate")
     async def orchestrate(req: OrchestratorRequest):
