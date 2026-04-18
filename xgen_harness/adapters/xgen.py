@@ -146,9 +146,35 @@ class XgenAdapter:
 
         agent_config = self._extract_agent_config(workflow_data)
 
-        provider = hc.get("provider") or (agent_config or {}).get("provider", "anthropic")
-        model = hc.get("model") or (agent_config or {}).get("model", "claude-sonnet-4-20250514")
-        temperature = hc.get("temperature") if hc.get("temperature") is not None else 0.7
+        provider = hc.get("provider") or (agent_config or {}).get("provider") or "anthropic"
+
+        # 설정 기본값 해석 — UI 입력 없으면 Redis(persistent_configs) → env → 코드 기본 순.
+        # 정책: xgen-core Redis 가 부팅 고정 .env 보다 우선. 관리자 UI 런타임 변경 반영.
+        model = (
+            hc.get("model")
+            or (agent_config or {}).get("model")
+            or await self._resolve_adapter_setting(f"{provider.upper()}_MODEL_DEFAULT")
+            or "claude-sonnet-4-20250514"
+        )
+        temp_raw = (
+            hc.get("temperature")
+            if hc.get("temperature") is not None
+            else (agent_config or {}).get("temperature")
+        )
+        if temp_raw is None:
+            temp_str = await self._resolve_adapter_setting(f"{provider.upper()}_TEMPERATURE_DEFAULT")
+            temperature = float(temp_str) if temp_str else 0.7
+        else:
+            temperature = float(temp_raw)
+
+        # max_tokens 도 Redis 기본값 polling (HarnessConfig 기본 8192 보다 우선).
+        max_tokens_raw = hc.get("max_tokens") or (agent_config or {}).get("max_tokens")
+        if not max_tokens_raw:
+            mt_str = await self._resolve_adapter_setting(f"{provider.upper()}_MAX_TOKENS_DEFAULT")
+            max_tokens = int(mt_str) if mt_str and mt_str.isdigit() else 8192
+        else:
+            max_tokens = int(max_tokens_raw)
+
         system_prompt = hc.get("system_prompt") or (agent_config or {}).get("system_prompt", "")
 
         # ━━━━ 3. API 키 해석 — ExecutionContext → ServiceProvider(Redis 우선) → 환경변수 ━━━━
@@ -183,6 +209,7 @@ class XgenAdapter:
             "provider": provider,
             "model": model,
             "temperature": float(temperature),
+            "max_tokens": max_tokens,
             "system_prompt": system_prompt,
         }
         # stage_params, disabled_stages, active_strategies 등 전달
@@ -358,6 +385,27 @@ class XgenAdapter:
                         text = str(params[0]["value"])
                         break
         return text
+
+    async def _resolve_adapter_setting(self, key: str) -> Optional[str]:
+        """어댑터 레벨 설정 해석 — Redis(ServiceProvider) → env → None.
+
+        사용자 UI 입력이 없을 때 기본값 fallback 경로.
+        정책: Redis(xgen-core persistent_configs) 가 부팅 고정 .env 보다 우선.
+        호출자가 None 처리 + 타입 변환 담당 (model, temperature 등).
+        """
+        if self._services and self._services.config:
+            try:
+                get_setting = getattr(self._services.config, "get_setting", None)
+                if get_setting is not None:
+                    val = await get_setting(key)
+                else:
+                    val = await self._services.config.get_value(key, "")
+                if val:
+                    return str(val)
+            except Exception as e:
+                logger.debug("[Adapter] _resolve_adapter_setting(%s) 실패: %s", key, e)
+        val = os.environ.get(key, "")
+        return val or None
 
     def _extract_agent_config(self, workflow_data: dict) -> Optional[dict]:
         """에이전트 노드에서 설정 추출."""
