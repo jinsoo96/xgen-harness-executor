@@ -3,7 +3,7 @@ S06 Context — 컨텍스트 수집 + 윈도우 관리
 
 역할:
 1. stage_params에서 선택된 RAG 컬렉션으로 문서 검색 (xgen-documents API)
-2. stage_params에서 선택된 DB 연결로 스키마/데이터 조회 (TODO)
+2. stage_params에서 선택된 DB 연결의 스키마 요약 조회 (ServiceProvider.database 위임)
 3. 검색 결과를 system_prompt에 추가
 4. 토큰 예산 초과 시 컨텍스트 압축
 
@@ -59,12 +59,34 @@ class ContextStage(Stage):
                 results["rag_collections"] = len(rag_collections)
                 logger.info("[Context] RAG: %d collections, added to system prompt", len(rag_collections))
 
-        # ── 2. DB 연결 조회 (TODO: stage_params.db_connections) ──
+        # ── 2. DB 연결 — services.database.get_schema_summary 로 위임 ──
+        # 라이브러리는 connection_name 같은 추상 식별자만 다루고,
+        # 실제 SQL/엔진별 해석은 ServiceProvider.database 구현체 책임.
         db_connections: list[str] = self.get_param("db_connections", state, [])
         if db_connections:
-            # TODO: DB 스키마/데이터를 가져와서 컨텍스트에 추가
-            logger.info("[Context] db_connections: %d selected (not yet implemented)", len(db_connections))
-            results["db_results"] = len(db_connections)
+            services = state.metadata.get("services")
+            if services and getattr(services, "database", None):
+                summaries: list[str] = []
+                for conn in db_connections:
+                    try:
+                        summary = await services.database.get_schema_summary(conn)
+                        if summary:
+                            summaries.append(summary)
+                    except Exception as e:
+                        logger.warning("[Context] DB schema 조회 실패 (%s): %s", conn, e)
+                if summaries:
+                    state.system_prompt += "\n\n<db_context>\n" + "\n".join(summaries) + "\n</db_context>"
+                    results["db_results"] = len(summaries)
+                    logger.info("[Context] DB context injected: %d connections", len(summaries))
+                else:
+                    results["db_results"] = 0
+                    logger.info("[Context] db_connections: %d selected, schema 조회 결과 없음", len(db_connections))
+            else:
+                results["db_results"] = 0
+                logger.info(
+                    "[Context] db_connections: %d selected, but ServiceProvider.database 가 주입되지 않음",
+                    len(db_connections),
+                )
 
         # ── 3. 토큰 예산 관리 ──
         context_window = self.get_param("context_window", state, config.context_window if config else 200_000)

@@ -5,6 +5,24 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.15] — 2026-04-18
+
+### Added — DB 추상화 레이어 + 자동 인식
+- **`DatabaseService.get_schema_summary(connection_name, max_tables)`** Protocol 추가 (`core/services.py`): 다중 DB 연결의 스키마 요약을 한 줄 텍스트로 반환. 라이브러리는 `connection_name` 같은 추상 식별자만 다룸.
+- **`XgenDatabaseService.get_schema_summary`** 자동 발견 구현 (`integrations/xgen_services.py`): SQL/dialect 박지 않고 db_manager 가 가진 introspection 메서드를 다중 후보로 순차 시도 — 1순위 자체 요약 메서드(`get_schema_summary`/`describe_schema`/`describe_connection`), 2순위 dialect-agnostic 테이블 목록(`list_tables`/`get_tables`/`tables_in_schema`), 3순위 SQLAlchemy inspector. 어떤 DB 엔진이든 자동 인식.
+- **`XgenAdapter` 자동 라우팅**: top-level `db_connections` 를 `s06_context.stage_params` 로 자동 주입 (rag_collections/mcp_sessions 패턴 동일).
+
+### Changed — 미구현 TODO 2건 해결 (하드코딩 0)
+- **`s11_save`**: 기존 TODO("실제 DB 저장")를 `services.database.insert_record()` 위임으로 해결. ServiceProvider.database 가 주입되면 직접 저장, 없으면 graceful skip — 어댑터 레벨 별도 경로(`harness.py:_save_execution_record`)와 공존.
+- **`s06_context`**: 기존 TODO("DB 스키마/데이터 컨텍스트 추가")를 `services.database.get_schema_summary()` 위임으로 해결. db_connections 가 선언되면 스키마 요약을 `<db_context>` 블록으로 system_prompt 에 자동 주입.
+
+### 원칙
+- 라이브러리 ≠ 인프라 유지 — SQL/dialect/connection 해석 0건. 추상 식별자만 다루고 실제 introspection 은 db_manager 의 자동 발견.
+- 어떤 DB 엔진(PostgreSQL/MySQL/Oracle/SQLite/SQLAlchemy)이든 db_manager 메서드 시그니처만 맞으면 자동 동작.
+- graceful fallback — `services.database` 또는 introspection 메서드 미발견 시 모두 skip, 기존 동작 보존.
+
+---
+
 ## [0.8.14] — 2026-04-18
 
 ### Fixed

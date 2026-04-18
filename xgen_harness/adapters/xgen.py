@@ -202,6 +202,14 @@ class XgenAdapter:
         if s04_params:
             stage_params["s04_tool_index"] = s04_params
 
+        # top-level db_connections 를 s06_context.stage_params 로 자동 주입
+        # (UI/API가 top-level로 넣어도 s06가 읽을 수 있도록 — rag/mcp 패턴 동일)
+        s06_params = dict(stage_params.get("s06_context") or {})
+        if hc.get("db_connections") and "db_connections" not in s06_params:
+            s06_params["db_connections"] = list(hc["db_connections"])
+        if s06_params:
+            stage_params["s06_context"] = s06_params
+
         if stage_params:
             config_kwargs["stage_params"] = stage_params
         if hc.get("disabled_stages"):

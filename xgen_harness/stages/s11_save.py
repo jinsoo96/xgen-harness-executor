@@ -8,6 +8,7 @@ DB 연결이 없으면 graceful skip.
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
@@ -68,11 +69,26 @@ class SaveStage(Stage):
         state.metadata["execution_record"] = record
         state.metadata["execution_table_name"] = table_name
 
-        # TODO: 실제 DB 저장 (db_manager가 state에 있으면)
-        # db_manager.insert_record(table_name, record)
+        # ServiceProvider.database 가 주입되면 직접 저장. 없으면 graceful skip
+        # (어댑터 레벨에서 다른 경로 — 예: harness.py 의 _save_execution_record — 로 처리 가능).
+        inserted_id: Optional[int] = None
+        services = state.metadata.get("services")
+        if services and getattr(services, "database", None):
+            try:
+                inserted_id = await services.database.insert_record(table_name, record)
+            except Exception as e:
+                logger.warning("[Save] DB insert 실패 (graceful skip): %s", e)
 
-        logger.info("[Save] Execution record prepared: %s (table=%s)", state.execution_id, table_name)
-        return {"saved": True, "execution_id": state.execution_id, "table_name": table_name}
+        logger.info(
+            "[Save] Execution record prepared: %s (table=%s, inserted_id=%s)",
+            state.execution_id, table_name, inserted_id,
+        )
+        return {
+            "saved": True,
+            "execution_id": state.execution_id,
+            "table_name": table_name,
+            "inserted_id": inserted_id,
+        }
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [

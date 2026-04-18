@@ -43,6 +43,19 @@ class DatabaseService(Protocol):
         """INSERT or UPDATE."""
         ...
 
+    async def get_schema_summary(
+        self, connection_name: str, max_tables: int = 20
+    ) -> str:
+        """다중 DB 연결의 스키마 요약을 사람이 읽을 수 있는 한 줄 텍스트로 반환.
+
+        s06_context 가 시스템 프롬프트에 컨텍스트로 주입할 때 사용.
+        라이브러리는 connection_name 같은 추상 식별자만 다루고,
+        실제 SQL/엔진별 해석(information_schema, SHOW TABLES 등)은 구현체 책임.
+
+        실패/미지원 시 빈 문자열 반환 — 호출자는 graceful skip.
+        """
+        ...
+
 
 # ──────────────────────────────────────────────
 # 2. ConfigService — 설정/API 키 조회
