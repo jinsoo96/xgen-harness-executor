@@ -259,6 +259,16 @@ class XgenAdapter:
         emitter = EventEmitter()
         pipeline = Pipeline.from_config(config, emitter)
 
+        # verbose_events 활성화 시 services.config 에 emitter 주입 — ServiceLookupEvent 실제 발행
+        # XgenConfigService 가 get_api_key/get_setting 호출 시 Redis/env 경로 이벤트 쏨
+        if config.verbose_events and self._services and self._services.config:
+            try:
+                # _event_emitter 속성이 있는 구현체에만 주입 (duck-typing)
+                if hasattr(self._services.config, "_event_emitter"):
+                    self._services.config._event_emitter = emitter
+            except Exception as e:
+                logger.debug("[Adapter] config emitter 주입 스킵: %s", e)
+
         state = PipelineState(
             user_input=text,
             workflow_id=workflow_id,
