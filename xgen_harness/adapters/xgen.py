@@ -144,6 +144,17 @@ class XgenAdapter:
         if runtime_harness_config:
             hc.update(runtime_harness_config)
 
+        # verbose_events 가 켜져 있으면 emitter 를 선제 생성 + services.config 에 주입.
+        # get_api_key / _resolve_adapter_setting 등 execute 초반 호출에서도 ServiceLookupEvent 발행되도록
+        # Pipeline 생성 시점까지 기다리지 않고 미리 연결.
+        emitter = EventEmitter()
+        if hc.get("verbose_events") and self._services and self._services.config:
+            try:
+                if hasattr(self._services.config, "_event_emitter"):
+                    self._services.config._event_emitter = emitter
+            except Exception as e:
+                logger.debug("[Adapter] config emitter 선제 주입 스킵: %s", e)
+
         agent_config = self._extract_agent_config(workflow_data)
 
         provider = hc.get("provider") or (agent_config or {}).get("provider") or "anthropic"
@@ -256,18 +267,8 @@ class XgenAdapter:
         config = HarnessConfig(**config_kwargs)
 
         # ━━━━ 7. Pipeline + State 생성 ━━━━
-        emitter = EventEmitter()
+        # emitter 는 2번 단계에서 선제 생성됨 (verbose_events 선반영 위해).
         pipeline = Pipeline.from_config(config, emitter)
-
-        # verbose_events 활성화 시 services.config 에 emitter 주입 — ServiceLookupEvent 실제 발행
-        # XgenConfigService 가 get_api_key/get_setting 호출 시 Redis/env 경로 이벤트 쏨
-        if config.verbose_events and self._services and self._services.config:
-            try:
-                # _event_emitter 속성이 있는 구현체에만 주입 (duck-typing)
-                if hasattr(self._services.config, "_event_emitter"):
-                    self._services.config._event_emitter = emitter
-            except Exception as e:
-                logger.debug("[Adapter] config emitter 주입 스킵: %s", e)
 
         state = PipelineState(
             user_input=text,

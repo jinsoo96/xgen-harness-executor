@@ -5,6 +5,13 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.20] — 2026-04-18
+
+### Fixed — verbose emitter 주입 시점 앞당김
+- **`adapters/xgen.py`**: v0.8.19 에서 emitter 주입이 Pipeline 생성 시점(단계 7)이라, 그 전에 호출되는 `get_api_key`/`_resolve_adapter_setting` (단계 3~5) 에서는 이벤트 발행 안 됨. emitter 생성 + services.config 주입을 단계 2(harness_config 해석 직후)로 앞당김. 이제 execute 초반부터 ServiceLookupEvent 가 SSE 에 나타남.
+
+---
+
 ## [0.8.19] — 2026-04-18
 
 ### Fixed — verbose 이벤트 실제 발행 경로 연결
