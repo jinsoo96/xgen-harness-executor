@@ -5,6 +5,17 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.14] — 2026-04-18
+
+### Fixed
+- **API 키 조회 순서 정책 위반 수정** (`adapters/xgen.py`): `XgenAdapter.execute()` 가 `os.environ` (환경변수) 을 `ServiceProvider.config` (Redis/xgen-core) 보다 먼저 조회하던 누수를 수정. 관리자 UI 에서 런타임 변경한 값(Redis)이 .env 부팅 고정값에 무시되던 버그 제거. 정책: ExecutionContext (per-request override) → ServiceProvider (Redis 우선) → .env 폴백.
+
+### Docs
+- `xgen_harness/EXECUTION_DESIGN.md` 신규: 12 스테이지 구조, Progressive Disclosure, Capability 자동 조립, DAG 멀티에이전트, xgen 통합 흐름, 이식 방법, 효과 — 모든 결정에 "왜" 부착.
+- `xgen_harness/REFACTORING_PLAN.md` 신규: 외부 API/스테이지 ID/시그니처 무손상 전제로 R1~R8 리팩토링 안 + Side-by-side 패턴 + 5 Phase 실행계획 + 우선순위 매트릭스.
+
+---
+
 ## [0.8.13] — 2026-04-17
 
 ### Fixed
