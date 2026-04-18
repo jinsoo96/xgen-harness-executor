@@ -5,6 +5,16 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.18] — 2026-04-18
+
+### Fixed — OpenAI provider base_url endpoint 자동 조립
+- **`providers/openai.py`**: `base_url` 이 base(예: `https://api.openai.com/v1`)만 와도 `/chat/completions` 자동 append. 지금까진 `OPENAI_API_URL` 상수(full endpoint URL)만 기대 → Redis `OPENAI_API_BASE_URL=https://api.openai.com/v1` 주입 시 404 발생. Anthropic provider 와 동일 패턴으로 통일.
+
+### Why
+- v0.8.17 에서 `s01_input._resolve_base_url` 이 Redis 에서 base URL 선제 주입 시작. persistent_configs 의 관례는 base URL (`/v1`) 저장이나, provider 는 full endpoint 기대 → 미스매치. 자동 조립으로 양쪽 포맷 모두 수용.
+
+---
+
 ## [0.8.17] — 2026-04-18
 
 ### Added — Stage 계약/이벤트/레지스트리 확장
