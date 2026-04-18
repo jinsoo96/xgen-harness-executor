@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.25] — 2026-04-19
+
+### Changed — NodeAdapter 레지스트리 패턴 (통로화)
+- `ResourceRegistry._load_api_tools` 안의 `if func_id in (...)` 하드코딩 분기를 **NodeAdapter 레지스트리** 로 전환.
+- **`adapters/node_adapters.py` 신규**:
+  - `NodeAdapter` dataclass (name / function_ids / build / resource_type / description)
+  - `register_node_adapter(adapter)` 공개 API
+  - `get_adapter_for(func_id)` 조회
+  - `bootstrap_default_node_adapters()` — api_tool / db_tool 빌트인 2종 + `entry_points(group="xgen_harness.node_adapters")` 자동 발견
+- `_load_api_tools` 는 이제 **분기 0**: 레지스트리 조회 한 번.
+
+### Why
+- 새 xgen 노드 타입(예: `ontology_retrieval`, `web_search`, `vector_search`, `embedding_lookup`) 연동 시 이전엔 `_load_api_tools` 함수 본체 수정 필요. 지금은 `register_node_adapter(NodeAdapter(...))` 한 줄.
+- 외부 패키지가 자체 노드 타입을 PyPI 로 배포하고 `entry_points` 등록만 하면 하네스에서 자동 인식.
+
+### 원칙
+- **확장 = 플러그인 등록**. 핵심 코드(`ResourceRegistry._load_api_tools`) 불변.
+- **if/elif 하드코딩 제거**. 레지스트리 조회로 dispatch.
+- 이식 측(xgen-workflow harness.py) 의 `options/{source}` 도 별도 세션(`1fdce10`)에서 동일 패턴으로 전환 — 대칭 구조 완성.
+
+---
+
 ## [0.8.24] — 2026-04-19
 
 ### Changed — 잔여 하드코딩 정리
