@@ -223,6 +223,9 @@ class XgenAdapter:
             "temperature": float(temperature),
             "max_tokens": max_tokens,
             "system_prompt": system_prompt,
+            # verbose_events 플래그 전달 — 없으면 emit_verbose 가 모두 no-op 이라
+            # capability_bind / stage_substep / retry 이벤트 발행 안 됨
+            "verbose_events": bool(hc.get("verbose_events", False)),
         }
         # stage_params, disabled_stages, active_strategies 등 전달
         stage_params = dict(hc.get("stage_params") or {})
