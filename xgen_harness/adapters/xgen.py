@@ -150,11 +150,12 @@ class XgenAdapter:
 
         # 설정 기본값 해석 — UI 입력 없으면 Redis(persistent_configs) → env → 코드 기본 순.
         # 정책: xgen-core Redis 가 부팅 고정 .env 보다 우선. 관리자 UI 런타임 변경 반영.
+        from ..providers import PROVIDER_DEFAULT_MODEL
         model = (
             hc.get("model")
             or (agent_config or {}).get("model")
             or await self._resolve_adapter_setting(f"{provider.upper()}_MODEL_DEFAULT")
-            or "claude-sonnet-4-20250514"
+            or PROVIDER_DEFAULT_MODEL.get(provider, "")
         )
         temp_raw = (
             hc.get("temperature")

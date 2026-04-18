@@ -17,22 +17,19 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "provider",
                 "label": "LLM 프로바이더",
                 "type": "select",
-                "options": ["anthropic", "openai", "google", "bedrock", "vllm"],
-                "default": "anthropic",
+                # options / default 는 _inject_dynamic_options() 가 list_providers() 로
+                # 런타임 주입. 새 provider register 하면 UI 자동 반영.
+                "options": [],
+                "default": "",
             },
             {
                 "id": "model",
                 "label": "모델",
                 "type": "select",
-                "options": [
-                    "claude-sonnet-4-20250514",
-                    "claude-opus-4-20250514",
-                    "claude-haiku-4-5-20251001",
-                    "gpt-4o",
-                    "gpt-4o-mini",
-                    "gemini-2.5-flash",
-                ],
-                "default": "claude-sonnet-4-20250514",
+                # options / default 는 _inject_dynamic_options() 가 providers 레지스트리에서
+                # 동적 주입. 여기 static 배열 두면 잔여 하드코딩 위험.
+                "options": [],
+                "default": "",
             },
             {
                 "id": "temperature",

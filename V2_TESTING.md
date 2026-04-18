@@ -18,6 +18,39 @@
 
 ---
 
+## 책임 분리 매트릭스 — 라이브러리 vs 이식 측 vs 프론트엔드
+
+| 항목 | 라이브러리 (xgen-harness-executor) | 이식 측 (xgen-workflow) | 프론트엔드 (xgen-frontend) |
+|---|---|---|---|
+| Stage 정의·실행 | ✅ 유일 | ❌ | ❌ |
+| Strategy 레지스트리 | ✅ 유일 | ❌ | ❌ |
+| Artifact I/O 계약 | ✅ 유일 | ❌ | ❌ |
+| Provider 레지스트리 (단일 진실 소스) | ✅ `providers/__init__.py` | 호출만 | 호출만 |
+| Provider 기본 모델 이름 | ✅ `PROVIDER_DEFAULT_MODEL` | 호출만 | 호출만 |
+| SSE 이벤트 타입 | ✅ 유일 | SSE 변환 담당 | 수신/렌더만 |
+| `/harness/*` 라우트 | ❌ | ✅ `harness.py` | 호출만 |
+| `harness_execution_log` DDL | ❌ | ✅ `_ensure_exec_table` | ❌ |
+| 서비스 URL (xgen-core 등) | ❌ 환경변수로 받음 | ✅ Docker Compose env | ❌ |
+| 사용자 인증 (JWT→x-user-*) | ❌ | ✅ gateway + extract_user_session | ❌ |
+| UI Provider display name 매핑 | ❌ | ✅ `_DISPLAY_NAMES` (표기용) | 아이콘/번역 |
+| stage_params / artifacts 스키마 렌더 | ✅ `get_stage_config` | 그대로 proxy | ✅ UI 렌더 |
+
+**원칙**: 동작은 **라이브러리**, 배치는 **이식 측**, 표시는 **프론트엔드**. 각 레이어 책임 경계 겹치면 하드코딩 누수.
+
+---
+
+## v2 검수 결과 — 하드코딩 제거 작업 (커밋 기준)
+
+| 커밋 | 영역 | 내용 |
+|---|---|---|
+| `5602626` | 라이브러리 | base_url Redis 우선 조회 누수 수정 (s01_input `_resolve_base_url`) |
+| `05ccd34` | 라이브러리 | model/temperature/max_tokens Redis polling 추가 (어댑터 `_resolve_adapter_setting`) |
+| 다음 | 라이브러리 | model 기본값 9곳 중복 → `PROVIDER_DEFAULT_MODEL` 단일 진실 소스 통일 |
+| 다음 | 라이브러리 | `stage_config.py` static options 배열 비움 (`_inject_dynamic_options` 자동 주입) |
+| 다음 | 이식 측 | `harness.py:_list_providers` 하드코딩 딕셔너리 → 라이브러리 `list_providers()` 호출로 교체 |
+
+---
+
 ## v2 핵심 개념 요약
 
 ### 1. Stage 계약 — "뭘 받고 뭘 내보내나" 선언
@@ -77,6 +110,51 @@ xgen_harness.strategies =
     s04_tool_index:discovery:my_algo = my_pkg.strategies:MyDiscovery
 ```
 → `pip install my_pkg` 만으로 자동 등록.
+
+---
+
+## 이식 실구동 테스트 — 3 시나리오
+
+각 시나리오는 **xgen-workflow 컨테이너가 v2 라이브러리를 editable 로 물고** 있는 상태에서 수행.
+
+### 시나리오 A — Anthropic full 12 스테이지 + Redis 우선 조회 검증
+
+1. `persistent_configs.ANTHROPIC_API_KEY` 에 유효 키 설정 (xgen-core UI 또는 SQL UPDATE)
+2. Redis 캐시 refresh: `docker exec redis-feature-store redis-cli -a <pass> DEL config:ANTHROPIC_API_KEY`
+3. 요청:
+```json
+{
+  "workflow_name": "v2 anthropic full",
+  "input_data": "1+1은?",
+  "interaction_id": "v2_anthropic_001",
+  "harness_config": {
+    "preset": "standard",
+    "provider": "anthropic",
+    "verbose_events": true
+  }
+}
+```
+4. 기대: 12 스테이지 enter/exit + `service_lookup` 이벤트 (source=redis, hit=true) + `data` 토큰 스트림 + metrics
+
+### 시나리오 B — OpenAI + builtin tool loop (v0.8.16 fix)
+
+1. 요청:
+```json
+{
+  "harness_config": {
+    "provider": "openai",
+    "stage_params": {"s04_tool_index": {"builtin_tools": ["discover_tools"]}},
+    "verbose_events": true
+  }
+}
+```
+2. 기대: s04_tool_index **bypass 안 됨** (`tools_bound>=1`), `tool_call` / `tool_result` 발생
+
+### 시나리오 C — Stage 교체 (v2 artifact)
+
+1. 외부 모듈에서 `register_stage("s09_validate", "v2", MyValidateV2)` 등록
+2. Config: `"artifacts": {"s09_validate": "v2"}`
+3. 기대: `/harness/stages` 응답의 `current_artifact: "v2"`, 실행 시 MyValidateV2 가 호출
 
 ---
 
