@@ -26,6 +26,9 @@ from typing import Any, AsyncGenerator, Dict, Optional
 
 from ..core.config import HarnessConfig
 from ..core.execution_context import set_execution_context, get_api_key as ctx_get_api_key
+# xgen 특화 NodeAdapter 전수 등록 (import 시점 자동) — document_loaders / file_system / tools / arithmetic / ml
+from ..integrations.xgen_node_adapters import bootstrap_xgen_node_adapters
+bootstrap_xgen_node_adapters()
 from ..core.pipeline import Pipeline
 from ..core.state import PipelineState
 from ..core.services import ServiceProvider, NullServiceProvider
