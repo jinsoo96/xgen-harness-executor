@@ -180,7 +180,7 @@ class XgenConfigService:
     from ..providers import PROVIDER_API_KEY_MAP
     _PROVIDER_KEY_MAP = PROVIDER_API_KEY_MAP
 
-    def __init__(self, base_url: str, internal_key: str = ""):
+    def __init__(self, base_url: str, internal_key: str = "", event_emitter=None):
         self._base_url = base_url.rstrip("/")
         self._headers = {
             "Content-Type": "application/json",
@@ -188,6 +188,20 @@ class XgenConfigService:
                 "XGEN_INTERNAL_API_KEY", "xgen-internal-key-2024"
             ),
         }
+        # verbose 모드 ServiceLookupEvent 발행용 (어댑터가 EventEmitter 주입)
+        self._event_emitter = event_emitter
+
+    async def _emit_lookup(self, key: str, source: str, hit: bool, provider: str = "") -> None:
+        """verbose 모드에서 조회 경로 이벤트 발행."""
+        if self._event_emitter is None:
+            return
+        try:
+            from ..events.types import ServiceLookupEvent
+            await self._event_emitter.emit(ServiceLookupEvent(
+                key=key, source=source, hit=hit, provider=provider,
+            ))
+        except Exception:
+            pass  # 이벤트 발행은 조회 실패에 영향 주지 않음
 
     async def get_value(self, key: str, default: str = "") -> str:
         url = f"{self._base_url}/api/data/config/get-value"
@@ -210,11 +224,13 @@ class XgenConfigService:
         # 1. Redis 기반 xgen-core config (관리자 UI 런타임 변경 반영)
         key = await self.get_value(key_name)
         if key:
+            await self._emit_lookup(key_name, "redis", True, provider)
             return key
 
         # 2. 환경변수 (.env) 폴백
         key = os.environ.get(key_name, "")
         if key:
+            await self._emit_lookup(key_name, "env", True, provider)
             return key
 
         # 3. 다른 프로바이더 폴백
@@ -224,9 +240,33 @@ class XgenConfigService:
             key = os.environ.get(fallback, "") or await self.get_value(fallback)
             if key:
                 logger.info("[Config] %s 없음, %s로 폴백", key_name, fallback)
+                await self._emit_lookup(fallback, "fallback", True, provider)
                 return key
 
+        await self._emit_lookup(key_name, "missing", False, provider)
         return None
+
+    async def get_setting(
+        self, key: str, *, default: Optional[str] = None
+    ) -> Optional[str]:
+        """일반 설정 조회 — Redis → .env → default 순서 강제.
+
+        `get_value` 가 이미 Redis(xgen-core) 조회를 담당하고, 실패 시 default 반환.
+        여기선 Redis 미스일 때만 .env 를 추가로 시도하고, source 를 이벤트로 발행.
+        """
+        # 1. Redis
+        value = await self.get_value(key, default="")
+        if value:
+            await self._emit_lookup(key, "redis", True)
+            return value
+        # 2. .env
+        value = os.environ.get(key, "")
+        if value:
+            await self._emit_lookup(key, "env", True)
+            return value
+        # 3. default
+        await self._emit_lookup(key, "missing", False)
+        return default
 
 
 # ──────────────────────────────────────────────

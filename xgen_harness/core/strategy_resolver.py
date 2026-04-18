@@ -155,3 +155,43 @@ def _register_defaults() -> None:
     register_strategy("*", "scorer", "weighted", WeightedScorer)
 
     logger.debug("Registered %d strategies", len(_REGISTRY))
+
+    # 플러그인 자동 발견 — 외부 패키지 setup.cfg 의 entry_points 지원
+    _discover_plugin_strategies()
+
+
+def _discover_plugin_strategies() -> None:
+    """외부 패키지가 setup.cfg 에 등록한 Strategy 를 자동 발견.
+
+    entry_point 형식: ``stage_id:slot_name:impl_name = package.module:ClassName``
+    (ep.name = "stage_id:slot_name:impl_name", ep.value = 클래스 경로)
+    """
+    import sys
+    try:
+        if sys.version_info >= (3, 10):
+            from importlib.metadata import entry_points
+            eps = entry_points(group="xgen_harness.strategies")
+        else:
+            from importlib.metadata import entry_points
+            eps = entry_points().get("xgen_harness.strategies", [])
+
+        for ep in eps:
+            try:
+                parts = ep.name.split(":")
+                if len(parts) != 3:
+                    logger.warning(
+                        "Strategy entry_point 이름 형식 오류 (stage_id:slot:impl 기대): %s",
+                        ep.name,
+                    )
+                    continue
+                stage_id, slot_name, impl_name = parts
+                cls = ep.load()
+                register_strategy(stage_id, slot_name, impl_name, cls)
+                logger.info(
+                    "Plugin strategy registered: %s/%s/%s (%s)",
+                    stage_id, slot_name, impl_name, cls.__name__,
+                )
+            except Exception as e:
+                logger.warning("Failed to load plugin strategy %s: %s", ep.name, e)
+    except Exception:
+        pass  # entry_points 자체 실패 시 무시

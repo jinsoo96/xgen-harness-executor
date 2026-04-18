@@ -73,6 +73,11 @@ class HarnessConfig:
     thinking_enabled: bool = False
     thinking_budget_tokens: int = 10000
 
+    # --- 관찰/디버깅 ---
+    # True 면 Pipeline/Stage 내부 세밀한 이벤트(ServiceLookup / CapabilityBind /
+    # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
+    verbose_events: bool = False
+
     # 레거시 호환
     preset: str = ""
 
