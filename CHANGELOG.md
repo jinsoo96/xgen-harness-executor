@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.27] — 2026-04-19
+
+### Added — DocumentService 전면 확장 (xgen-documents 전수 연동)
+- `DocumentService` Protocol 에 **`embed_query` / `rerank` / `list_folders` / `ontology_query`** 4 메서드 추가.
+- `XgenDocumentService` 구현 — xgen-documents 전 엔드포인트 위임:
+  - `embed_query`: `/api/embedding/query-embedding`
+  - `rerank`:      `/api/embedding/reranker/rerank`
+  - `list_folders`:`/api/folder/list`
+  - `ontology_query`: `/api/ontology/graph-rag/multi-turn`
+  - 기존: `search` (retrieval), `list_collections`
+
+### Docs
+- `README.md` 에 **인터페이스 구조도** 추가 (Config→Pipeline→Runtime→실행→Result + 각 박스별 API 매핑 + 확장 통로 표).
+
+---
+
 ## [0.8.26] — 2026-04-19
 
 ### Added — xgen 노드 카테고리 전수 NodeAdapter 등록

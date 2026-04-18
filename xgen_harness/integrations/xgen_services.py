@@ -411,6 +411,75 @@ class XgenDocumentService:
             logger.warning("[Documents] list_collections failed: %s", e)
         return []
 
+    async def embed_query(self, text: str, user_id: str = "") -> list[float]:
+        """xgen-documents: /api/embedding/query-embedding"""
+        url = f"{self._base_url}/api/embedding/query-embedding"
+        headers = self._auth_headers(user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json={"text": text}, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("embedding", data.get("vector", []))
+                logger.warning("[Documents] embed_query %s: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.warning("[Documents] embed_query failed: %s", e)
+        return []
+
+    async def rerank(
+        self, query: str, documents: list[str], top_k: int = 5, user_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """xgen-documents 리랭커 — /api/embedding/reranker/rerank (없으면 빈 결과)."""
+        url = f"{self._base_url}/api/embedding/reranker/rerank"
+        headers = self._auth_headers(user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    url,
+                    json={"query": query, "documents": documents, "top_k": top_k},
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("results", data if isinstance(data, list) else [])
+                logger.debug("[Documents] rerank %s: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.debug("[Documents] rerank failed: %s", e)
+        return []
+
+    async def list_folders(self, user_id: str = "") -> list[dict[str, Any]]:
+        """xgen-documents: /api/folder/list"""
+        url = f"{self._base_url}/api/folder/list"
+        headers = self._auth_headers(user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("folders", data if isinstance(data, list) else [])
+        except Exception as e:
+            logger.debug("[Documents] list_folders failed: %s", e)
+        return []
+
+    async def ontology_query(
+        self, collection_id: str, query: str, user_id: str = "",
+    ) -> dict[str, Any]:
+        """xgen-documents GraphRAG — /api/ontology/graph-rag/multi-turn (있을 때만)."""
+        url = f"{self._base_url}/api/ontology/graph-rag/multi-turn"
+        headers = self._auth_headers(user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    url,
+                    json={"collection_id": collection_id, "query": query},
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception as e:
+            logger.debug("[Documents] ontology_query failed: %s", e)
+        return {}
+
 
 # ──────────────────────────────────────────────
 # 5. XgenServiceProvider — 팩토리

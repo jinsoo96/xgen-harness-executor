@@ -23,6 +23,38 @@ pip install xgen-harness
 
 ---
 
+## 인터페이스 구조 (실행 흐름)
+
+```
+  [Config 선언] → [Pipeline 조립] → [Runtime 바인딩] → [실행] → [Result]
+        ↑               ↑                  ↑              |         |
+        |               |                  |              |         |
+   Save/Load JSON   Stage Plugin      Capability 자동   SSE Events  Replay
+   Builder API     Strategy Swap     Tool/RAG/MCP      Guard 체인  Metrics
+   Preset/Share    Artifact 선택     Param Resolver    재시도 루프  Cost 집계
+```
+
+| 박스 | 책임 | 핵심 API |
+|---|---|---|
+| **Config 선언** | `HarnessConfig` dataclass — provider/model/stage_params/active_strategies/capabilities | `to_json` / `from_dict` / `PipelineBuilder` / `PRESETS` |
+| **Pipeline 조립** | `ArtifactRegistry.build_pipeline_stages` — 등록된 Stage + Strategy 자동 조립 | `register_stage` / `StrategyResolver` / `entry_points` |
+| **Runtime 바인딩** | `ServiceProvider` 주입 + `CapabilityRegistry` 발행 + `ParameterResolver` | `ResourceRegistry.publish_capabilities` / `NodeAdapter` |
+| **실행** | `Pipeline.run` 12 Stage 순차 + Agentic Loop + on_error/RetryEvent | `EventEmitter` / `verbose_events` |
+| **Result** | `state.validated_output` + `MetricsEvent` + `DoneEvent` | SSE 스트림 / Replay (events 저장) |
+
+### 확장 통로 (통로 패턴 — 핵심 코드 불변)
+
+| 확장 지점 | 빌트인 + 외부 플러그인 |
+|---|---|
+| Stage 추가 | `register_stage()` · `entry_points(group="xgen_harness.stages")` |
+| Strategy 추가 | `register_strategy()` · `entry_points(group="xgen_harness.strategies")` |
+| **NodeAdapter 추가** | `register_node_adapter()` · `entry_points(group="xgen_harness.node_adapters")` |
+| 이식 측 옵션 소스 | `register_option_source()` · `entry_points(group="xgen_harness.option_sources")` |
+| 프론트 Stage selector | `registerStageSelector(stage_id, Component)` |
+| Capability 추가 | `CapabilityRegistry.register()` · Adapter `publish_capabilities()` |
+
+---
+
 ## 하네스 엔지니어링 — C타입 허브 3층 구조
 
 ```
