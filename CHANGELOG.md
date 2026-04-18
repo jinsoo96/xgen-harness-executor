@@ -5,6 +5,36 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.17] — 2026-04-18
+
+### Added — Stage 계약/이벤트/레지스트리 확장
+- **`StageInput`, `StageOutput`, `STAGE_IO_SPECS`, `get_stage_io`** public export (`__init__.py`): 외부 기여자가 Stage 서브클래스 작성 시 I/O 계약을 명시 선언 가능. Pipeline 이 실행 전 `validate()` 로 누락 필드 검출.
+- **Verbose 이벤트 4종** (`events/types.py`): `ServiceLookupEvent` (Redis vs env 경로), `CapabilityBindEvent` (선언/발견/자동발행), `StageSubstepEvent` (스테이지 내부 단계), `RetryEvent` (재시도/폴백). `HarnessConfig.verbose_events=True` 에서만 발행 (기본 False, 하위 호환).
+- **`ConfigService.get_setting(key, default)`** Protocol 메서드 (`core/services.py`): Redis → .env → default 순서 강제. 구현체는 `ServiceLookupEvent` 로 source 발행.
+- **`PROVIDER_MODELS`, `get_provider_models(provider)`** (`providers/__init__.py`): provider 당 여러 모델 레지스트리. UI 드롭다운이 자동 반영, 새 provider 등록 시 목록만 추가하면 끝.
+- **Strategy entry_points 자동 발견** (`core/strategy_resolver.py`): 외부 패키지가 `xgen_harness.strategies` entry_point 로 Strategy 등록 가능 (이름 형식: `stage_id:slot:impl`).
+- **ArtifactRegistry.describe_all 에 `current_artifact`** 필드 + 중복 등록 경고.
+
+### Fixed — Redis 우선 정책 누수 제거
+- **`s01_input._resolve_base_url`** (`stages/s01_input.py`): `providers/__init__.py:70` 의 `os.environ.get({PROVIDER}_API_BASE_URL)` env-only 누수 수정. ServiceProvider → env 순 주입. 어댑터/스테이지 레이어에서 선제 해석.
+- **model/temperature/max_tokens 기본값 Redis polling** (`adapters/xgen.py`): `_resolve_adapter_setting(key)` 헬퍼 추가. 해석 순서: UI → agent_config → Redis(`{PROVIDER}_*_DEFAULT`) → env → 코드 기본.
+
+### Changed — 하드코딩 단일 진실 소스 통일
+- **model 기본값 하드코딩 9곳 제거** (`session.py`, `builder.py`, `api/router.py`, `adapters/xgen.py`): 모두 `PROVIDER_DEFAULT_MODEL` 레지스트리 참조로 교체. 남은 2곳(dataclass 기본값, provider 생성자)만 유지.
+- **`HarnessConfig.model/openai_model/anthropic_model`** 기본값을 `""` 로 변경: 어댑터/스테이지가 `PROVIDER_DEFAULT_MODEL` 에서 런타임 해석. 새 provider 추가 시 config.py 수정 불필요.
+- **`stage_config.py` s01_input select options 배열 제거**: `_inject_dynamic_options()` 가 `get_provider_models()` 로 자동 주입. static 배열 = 오해 소지 제거.
+
+### Docs
+- **`V2_TESTING.md`** 신규: 책임 분리 매트릭스 (라이브러리/이식 측/프론트엔드) + 이식 실구동 3 시나리오.
+- `REFACTORING_PLAN.md` / `EXECUTION_DESIGN.md`: 0.8.13 배포 시 추가분 유지.
+
+### 원칙
+- **라이브러리 ≠ 인프라 유지**: SQL/dialect/connection 해석 0. 추상 식별자만 다루고 구현체가 자동 발견.
+- **Redis → env 역순 금지**: 모든 설정 조회에서 xgen-core Redis 가 부팅 고정 .env 보다 우선.
+- **외부 API / 엔드포인트 / 12 Stage ID / 추상 시그니처 / public 심볼 0 변화**.
+
+---
+
 ## [0.8.16] — 2026-04-18
 
 ### Fixed — E2E 테스트 중 발견한 s04 bypass 누수
