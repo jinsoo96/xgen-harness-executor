@@ -77,6 +77,66 @@ class XgenDatabaseService:
             logger.error("[DB] upsert %s failed: %s", table, e)
             return False
 
+    async def get_schema_summary(
+        self, connection_name: str, max_tables: int = 20
+    ) -> str:
+        """db_manager 가 제공하는 스키마/테이블 조회 메서드를 자동 발견하여 위임.
+
+        SQL/dialect 를 라이브러리에서 박지 않음. db_manager 구현체(PostgreSQL/MySQL/Oracle/...)
+        가 가진 introspection 메서드를 다중 후보로 순차 시도 → 첫 성공값 사용.
+        없으면 빈 문자열 (graceful skip).
+        """
+        if not connection_name:
+            return ""
+
+        # 1순위: 구현체가 자체 요약 메서드를 가진 경우 (가장 dialect-aware)
+        for name in ("get_schema_summary", "describe_schema", "describe_connection"):
+            fn = getattr(self._db, name, None)
+            if callable(fn):
+                try:
+                    result = fn(connection_name, max_tables)
+                    if hasattr(result, "__await__"):
+                        result = await result
+                    if isinstance(result, str) and result:
+                        return result
+                except Exception as e:
+                    logger.warning("[DB] %s(%s) failed: %s", name, connection_name, e)
+
+        # 2순위: 테이블 목록만 반환하는 메서드 (dialect-agnostic)
+        for name in ("list_tables", "get_tables", "tables_in_schema"):
+            fn = getattr(self._db, name, None)
+            if callable(fn):
+                try:
+                    result = fn(connection_name)
+                    if hasattr(result, "__await__"):
+                        result = await result
+                    if isinstance(result, list) and result:
+                        tables = [str(t) for t in result[:max_tables]]
+                        return f"[DB:{connection_name}] tables ({len(tables)}): {', '.join(tables)}"
+                except Exception as e:
+                    logger.warning("[DB] %s(%s) failed: %s", name, connection_name, e)
+
+        # 3순위: SQLAlchemy inspector 호환 (engine/inspect 속성)
+        for attr in ("inspect", "inspector", "engine"):
+            obj = getattr(self._db, attr, None)
+            if obj is None:
+                continue
+            try:
+                # SQLAlchemy: inspect(engine).get_table_names(schema=...)
+                from sqlalchemy import inspect as sa_inspect
+                inspector = sa_inspect(obj) if attr == "engine" else obj
+                tables = inspector.get_table_names(schema=connection_name)[:max_tables]
+                if tables:
+                    return f"[DB:{connection_name}] tables ({len(tables)}): {', '.join(tables)}"
+            except Exception:
+                continue
+
+        logger.info(
+            "[DB] get_schema_summary(%s): db_manager 에서 introspection 메서드 미발견 (db_manager=%s)",
+            connection_name, type(self._db).__name__,
+        )
+        return ""
+
     async def execute_raw_query(
         self, query: str, params: Optional[list] = None, limit: int = 100
     ) -> list[dict[str, Any]]:
