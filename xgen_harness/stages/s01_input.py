@@ -44,6 +44,10 @@ class InputStage(Stage):
         # 2. stage_params에서 LLM 설정 오버라이드 (3-level fallback)
         provider_name: str = self.get_param("provider", state, config.provider)
         model_name: str = self.get_param("model", state, config.model)
+        # model 이 비어있으면 providers 레지스트리의 기본값 사용 — 하드코딩 대신 단일 진실 소스
+        if not model_name:
+            from ..providers import PROVIDER_DEFAULT_MODEL
+            model_name = PROVIDER_DEFAULT_MODEL.get(provider_name.lower(), "")
         temperature: float = float(self.get_param("temperature", state, config.temperature))
 
         config.provider = provider_name

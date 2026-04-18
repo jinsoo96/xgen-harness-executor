@@ -40,6 +40,45 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "google": "gemini-2.0-flash",
 }
 
+# 프로바이더별 추가 모델 목록 — UI 드롭다운 동적 렌더용.
+# 기본 모델(PROVIDER_DEFAULT_MODEL)은 자동으로 맨 앞에 포함됨.
+# 새 provider 등록 시 이 dict 에 append → stage_config / harness.py 가 자동 반영.
+PROVIDER_MODELS: dict[str, list[str]] = {
+    "anthropic": [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        "claude-haiku-4-5-20251001",
+    ],
+    "openai": [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "o3-mini",
+    ],
+    "google": [
+        "gemini-2.0-flash",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+    ],
+    "bedrock": [],
+    "vllm": [],
+}
+
+
+def get_provider_models(provider: str) -> list[str]:
+    """프로바이더별 모델 목록 (기본 모델 포함, 중복 제거).
+
+    UI 가 이 목록을 드롭다운으로 렌더. 새 provider 추가 시
+    PROVIDER_MODELS 에 append → 자동 반영.
+    """
+    models: list[str] = []
+    default = PROVIDER_DEFAULT_MODEL.get(provider.lower(), "")
+    if default:
+        models.append(default)
+    for m in PROVIDER_MODELS.get(provider.lower(), []):
+        if m and m not in models:
+            models.append(m)
+    return models
+
 
 def register_provider(name: str, cls: Type[LLMProvider]) -> None:
     """프로바이더 등록. 기존 이름이면 덮어씀."""
@@ -131,5 +170,6 @@ __all__ = [
     "LLMProvider", "ProviderEvent", "ProviderEventType",
     "register_provider", "create_provider", "wrap_langchain",
     "get_api_key_env", "get_default_model", "list_providers",
-    "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL",
+    "get_provider_models",
+    "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL", "PROVIDER_MODELS",
 ]

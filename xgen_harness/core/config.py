@@ -33,14 +33,17 @@ class HarnessConfig:
     """하네스 파이프라인 설정 — 프리셋 없음, 스테이지 개별 토글"""
 
     # --- LLM ---
+    # model 기본값은 providers.PROVIDER_DEFAULT_MODEL[provider] 에서 런타임 해석.
+    # "" 로 들어오면 어댑터/s01_input 이 Redis → env → PROVIDER_DEFAULT_MODEL 순으로 결정.
     provider: str = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
+    model: str = ""
     temperature: float = 0.7
     max_tokens: int = 8192
 
-    # --- 폴백 모델 ---
-    openai_model: str = "gpt-4o-mini"
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    # --- 폴백 모델 (provider 별) — PROVIDER_DEFAULT_MODEL 레지스트리가 단일 진실 소스.
+    # "" 로 두면 런타임에 레지스트리 lookup. 새 provider 추가 시 레지스트리만 갱신.
+    openai_model: str = ""
+    anthropic_model: str = ""
 
     # --- 루프 제어 ---
     max_iterations: int = 10
@@ -190,8 +193,9 @@ class HarnessConfig:
             model=harness_config.get("model") or agent_config.get("model", "claude-sonnet-4-20250514"),
             temperature=float(harness_config.get("temperature", agent_config.get("temperature", 0.7))),
             max_tokens=int(harness_config.get("max_tokens", 8192)),
-            openai_model=harness_config.get("openai_model") or agent_config.get("openai_model", "gpt-4o-mini"),
-            anthropic_model=harness_config.get("anthropic_model") or agent_config.get("anthropic_model", "claude-sonnet-4-20250514"),
+            # provider 별 폴백은 런타임 PROVIDER_DEFAULT_MODEL 에서 해석. 여기선 명시값만 전달.
+            openai_model=harness_config.get("openai_model") or agent_config.get("openai_model", ""),
+            anthropic_model=harness_config.get("anthropic_model") or agent_config.get("anthropic_model", ""),
             system_prompt=harness_config.get("system_prompt") or agent_config.get("system_prompt", ""),
             max_iterations=int(harness_config.get("max_iterations", 10)),
             max_retries=int(harness_config.get("max_retries", 3)),
