@@ -5,6 +5,13 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.21] — 2026-04-18
+
+### Fixed — verbose 이벤트 SSE 변환 누락
+- **`integrations/xgen_streaming.py`**: `convert_to_xgen_event` 가 `ServiceLookupEvent`, `CapabilityBindEvent`, `StageSubstepEvent`, `RetryEvent` 4종을 모르는 타입으로 처리해 `None` 반환 → SSE 에서 필터링 누락. 각 이벤트를 `{type: "log", data.event_kind: <name>, ...}` 로 변환 추가. 이제 verbose_events=true 실행 시 SSE 에 실제로 나타남.
+
+---
+
 ## [0.8.20] — 2026-04-18
 
 ### Fixed — verbose emitter 주입 시점 앞당김
