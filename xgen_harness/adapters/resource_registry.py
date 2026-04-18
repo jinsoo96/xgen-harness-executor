@@ -344,70 +344,30 @@ class ResourceRegistry:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _load_api_tools(self, workflow_data: dict) -> None:
+        """워크플로우 노드 → 도구 변환.
+
+        `func_id` if/elif 하드코딩 분기 제거. NodeAdapter 레지스트리 조회 방식.
+        새 xgen 노드 타입 연동 = `register_node_adapter(NodeAdapter(...))` 한 줄.
+        외부 패키지는 entry_points(group="xgen_harness.node_adapters") 자동 발견.
+        """
+        from .node_adapters import bootstrap_default_node_adapters, get_adapter_for
+        bootstrap_default_node_adapters()
+
         for node in workflow_data.get("nodes", []):
             nd = node.get("data", {})
             func_id = nd.get("functionId", "")
-
-            # API Calling Tool 노드
-            if func_id in ("api_calling_tool", "api_tool", "custom_api"):
-                params = {p["id"]: p.get("value") for p in nd.get("parameters", []) if p.get("value")}
-                tool_name = params.get("tool_name", params.get("name", ""))
-                if not tool_name or tool_name in self._tool_executors:
-                    continue
-
-                spec = {
-                    "api_url": params.get("api_endpoint", params.get("api_url", "")),
-                    "api_method": params.get("method", "POST"),
-                    "api_body": params.get("request_body", {}),
-                    "timeout": params.get("timeout", 30),
-                    "response_filter": params.get("response_filter", ""),
-                }
-
-                desc = params.get("description", f"API tool: {tool_name}")
-                input_schema = params.get("input_schema", {"type": "object", "properties": {}})
-                if isinstance(input_schema, str):
-                    try:
-                        input_schema = json.loads(input_schema)
-                    except Exception:
-                        input_schema = {"type": "object", "properties": {}}
-
-                self._tool_defs.append({
-                    "name": tool_name,
-                    "description": desc,
-                    "input_schema": input_schema,
-                })
-                self._tool_executors[tool_name] = _APIToolRef(spec=spec)
-                self._tool_infos.append(ResourceInfo(
-                    resource_type="api_tool", name=tool_name,
-                    description=desc, source=spec.get("api_url", ""),
-                ))
-
-            # DB Query 노드 → 도구로 노출
-            elif func_id in ("postgresql_query", "oracle_query", "db_query"):
-                params = {p["id"]: p.get("value") for p in nd.get("parameters", []) if p.get("value")}
-                tool_name = params.get("tool_name", f"db_query_{node.get('id', '')[:8]}")
-                if tool_name in self._tool_executors:
-                    continue
-
-                desc = params.get("description", f"Database query: {tool_name}")
-                self._tool_defs.append({
-                    "name": tool_name,
-                    "description": desc,
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {"query": {"type": "string", "description": "SQL query"}},
-                        "required": ["query"],
-                    },
-                })
-                # DB 도구 실행은 ServiceProvider.database 경유
-                self._tool_executors[tool_name] = _DBToolRef(
-                    connection_id=params.get("connection_id", ""),
-                    db_type=params.get("db_type", "postgresql"),
+            if not func_id:
+                continue
+            adapter = get_adapter_for(func_id)
+            if adapter is None:
+                continue
+            try:
+                adapter.build(node, self)
+            except Exception as e:
+                logger.warning(
+                    "[ResourceRegistry] NodeAdapter '%s' failed on %s: %s",
+                    adapter.name, func_id, e,
                 )
-                self._tool_infos.append(ResourceInfo(
-                    resource_type="db_tool", name=tool_name,
-                    description=desc, source=params.get("db_type", "db"),
-                ))
 
     async def _call_api_tool(self, spec: dict, tool_input: dict) -> str:
         import httpx
