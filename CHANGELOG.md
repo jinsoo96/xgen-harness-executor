@@ -5,6 +5,16 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.23] — 2026-04-19
+
+### Fixed — verbose_events 가 HarnessConfig 로 전달되지 않던 누수
+- **`adapters/xgen.py`**: `config_kwargs` 에 `verbose_events` 누락 → HarnessConfig dataclass 기본값 False 사용 → `emit_verbose` 가 항상 no-op. v0.8.22 에 추가한 4종 이벤트 발행이 0 건이었던 이유. `hc.get("verbose_events", False)` 를 `config_kwargs` 에 명시 전달.
+
+### Why
+- v0.8.20 에서 emitter 를 선제 주입했으나 Config 의 verbose_events 자체는 전달 안 됨. emit_verbose 가 `state.config.verbose_events` 체크해서 무시.
+
+---
+
 ## [0.8.22] — 2026-04-19
 
 ### Added — Verbose 이벤트 실제 발행 경로 완성
