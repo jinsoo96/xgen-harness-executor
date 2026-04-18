@@ -19,6 +19,10 @@ from ..events.types import (
     MetricsEvent,
     ErrorEvent,
     DoneEvent,
+    ServiceLookupEvent,
+    CapabilityBindEvent,
+    StageSubstepEvent,
+    RetryEvent,
 )
 
 
@@ -162,6 +166,71 @@ def convert_to_xgen_event(event: HarnessEvent) -> Optional[dict[str, Any]]:
                 "final_output": event.final_output,
                 "success": event.success,
                 "timestamp": event.timestamp,
+            },
+        }
+
+    # ─── Verbose 이벤트 (HarnessConfig.verbose_events=True 시 발행) ───
+    elif isinstance(event, ServiceLookupEvent):
+        return {
+            "type": "log",
+            "data": {
+                "level": "DEBUG",
+                "message": f"[HARNESS] setting lookup {event.key}={event.source} hit={event.hit}",
+                "node_name": "Harness",
+                "timestamp": event.timestamp,
+                "event_kind": "service_lookup",
+                "key": event.key,
+                "source": event.source,
+                "hit": event.hit,
+                "provider": event.provider,
+            },
+        }
+
+    elif isinstance(event, CapabilityBindEvent):
+        return {
+            "type": "log",
+            "data": {
+                "level": "DEBUG",
+                "message": f"[HARNESS] capability bind {event.name} ({event.source})",
+                "node_name": "Harness",
+                "timestamp": event.timestamp,
+                "event_kind": "capability_bind",
+                "name": event.name,
+                "source": event.source,
+                "score": event.score,
+                "stage_id": event.stage_id,
+            },
+        }
+
+    elif isinstance(event, StageSubstepEvent):
+        return {
+            "type": "log",
+            "data": {
+                "level": "DEBUG",
+                "message": f"[HARNESS] {event.stage_id} · {event.substep}",
+                "node_name": "Harness",
+                "timestamp": event.timestamp,
+                "event_kind": "stage_substep",
+                "stage_id": event.stage_id,
+                "substep": event.substep,
+                "duration_ms": event.duration_ms,
+                "meta": event.meta,
+            },
+        }
+
+    elif isinstance(event, RetryEvent):
+        return {
+            "type": "log",
+            "data": {
+                "level": "WARN",
+                "message": f"[HARNESS] retry {event.stage_id} ({event.attempt}/{event.max_attempts}): {event.reason}",
+                "node_name": "Harness",
+                "timestamp": event.timestamp,
+                "event_kind": "retry",
+                "stage_id": event.stage_id,
+                "reason": event.reason,
+                "attempt": event.attempt,
+                "max_attempts": event.max_attempts,
             },
         }
 
