@@ -24,7 +24,14 @@ class OpenAIProvider(LLMProvider):
     def __init__(self, api_key: str, model: str = "gpt-4o-mini", base_url: Optional[str] = None):
         self._api_key = api_key
         self._model = model
-        self._base_url = base_url or OPENAI_API_URL
+        # base_url 이 base(예: "https://api.openai.com/v1") 만 와도 endpoint 자동 조립.
+        # Anthropic provider 와 동일 패턴 (persistent_configs 에 base URL 저장 시 호환).
+        self._base_url = (base_url or OPENAI_API_URL).rstrip("/")
+        if not self._base_url.endswith("/chat/completions"):
+            if self._base_url.endswith("/v1"):
+                self._base_url += "/chat/completions"
+            else:
+                self._base_url += "/v1/chat/completions"
 
     @property
     def provider_name(self) -> str:
