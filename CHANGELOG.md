@@ -5,6 +5,21 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.37] — 2026-04-20
+
+### Added — 대화 이어하기 + UX 가시성 4종
+
+- **XgenAdapter.execute** — `conversation_history: Optional[list]` 파라미터 신규. PipelineState.conversation_history 로 전달 → s02_memory 가 이미 주입 경로 갖고 있어 **라이브러리 본체 변경 0, 호출자만 인입**.
+- **stage_config `progressive_threshold` 메타 노출** — `get_stage_config('s04_tool_index')` / `get_all_stage_configs()` 응답에 search_tools 임계치(기본 12) 자동 주입. UI 라이브 배지 전제.
+- **discovery 상수 공개화** — `_SEARCH_TOOLS_THRESHOLD` → `SEARCH_TOOLS_THRESHOLD` (공개) + `get_progressive_threshold()` getter. 외부 전략 교체 시에도 일관 키.
+- **`_inject_stage_meta(stage_id, cfg)`** 내부 훅 — 스테이지별 UI 메타를 단일 지점에서 주입. 추후 다른 Stage 에 threshold/limit 노출 시 동일 함수 확장.
+
+### Notes
+- 외부 회사가 `adapter.execute(..., conversation_history=[{role, content}, ...])` 로 직접 과거 턴 주입 가능.
+- 이식 측 `/harness/threads/{interaction_id}` 가 이 파라미터 채우는 소비자 (이식 레이어 참고).
+
+---
+
 ## [0.8.36] — 2026-04-19
 
 ### Fixed — s06_context variable shadow

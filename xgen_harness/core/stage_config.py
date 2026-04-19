@@ -414,12 +414,36 @@ def _inject_dynamic_options(cfg: dict) -> dict:
     return {**cfg, "fields": updated_fields}
 
 
+def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
+    """스테이지별 추가 메타 주입 — UI 배지/라이브 카운터용.
+
+    현재: s04_tool_index 에 progressive_threshold.
+    외부 전략 교체 시에도 일관된 키로 노출되도록 단일 지점 관리.
+    """
+    if not cfg or not isinstance(cfg, dict):
+        return cfg
+    if stage_id == "s04_tool_index":
+        try:
+            from ..stages.strategies.discovery import get_progressive_threshold
+            cfg = {**cfg, "progressive_threshold": get_progressive_threshold()}
+        except Exception:
+            pass
+    return cfg
+
+
 def get_stage_config(stage_id: str) -> dict:
     """스테이지 설정 스키마 반환 — provider/model 옵션은 레지스트리에서 동적 주입."""
     cfg = STAGE_CONFIGS.get(stage_id, {})
-    return _inject_dynamic_options(cfg)
+    cfg = _inject_dynamic_options(cfg)
+    cfg = _inject_stage_meta(stage_id, cfg)
+    return cfg
 
 
 def get_all_stage_configs() -> dict:
-    """전체 스테이지 설정 스키마"""
-    return STAGE_CONFIGS
+    """전체 스테이지 설정 스키마 — 각 스테이지에 dynamic options + meta 자동 주입."""
+    out: dict = {}
+    for sid, base in STAGE_CONFIGS.items():
+        cfg = _inject_dynamic_options(base)
+        cfg = _inject_stage_meta(sid, cfg)
+        out[sid] = cfg
+    return out
