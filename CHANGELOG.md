@@ -5,6 +5,18 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.32] — 2026-04-19
+
+### Added — Progressive Disclosure Level 0 (`search_tools`)
+- **`tools/builtin.SearchToolsTool`** 신설 — Anthropic sandbox 패턴 차용. 키워드/카테고리 매칭으로 도구 카탈로그 검색.
+- **`stages/strategies/discovery.ProgressiveDiscovery`**: 카탈로그 ≥ 12 개 일 때만 자동으로 `search_tools` 빌트인 추가. 작은 워크플로우는 system_prompt 비대화 안 됨.
+- **`stages/s08_execute._dispatch_tool`**: `search_tools` 디스패치 추가 (인스턴스 `state.metadata.tool_registry["search_tools"]` 우선, 없으면 즉시 생성).
+
+### Fixed — agent audit 결과 잔여
+- 진짜 진정한 "환경만 주고 에이전트가 점진 발견" 흐름 — 0(검색) → 1(메타) → 2(스키마) → 3(실행) 4단계.
+
+---
+
 ## [0.8.31] — 2026-04-19
 
 ### Changed — 전수 audit fix (하드코딩/중복/silent-except 정리)

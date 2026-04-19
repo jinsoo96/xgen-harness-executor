@@ -7,6 +7,10 @@ from ..interfaces import ToolDiscoveryStrategy
 # Level 1 description 최대 길이 (~40 tokens ≈ 120 chars)
 _MAX_DESC_CHARS = 120
 
+# 카탈로그가 이 크기 이상이면 search_tools 빌트인을 함께 등록.
+# 작은 워크플로우는 discover_tools 만으로 충분 — 검색 도구를 늘려봐야 컨텍스트만 먹음.
+_SEARCH_TOOLS_THRESHOLD = 12
+
 
 class ProgressiveDiscovery(ToolDiscoveryStrategy):
     """Progressive Disclosure 3단계 -- 기본 전략.
@@ -50,11 +54,22 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
             # Level 2 캐시에는 전체 스키마 보관
             tool_schemas[name] = td
 
-        # discover_tools 빌트인 추가 (Level 2 게이트웨이)
-        from ...tools.builtin import DiscoverToolsTool
-        discover = DiscoverToolsTool(tool_definitions)
+        # search_tools (Level 0) + discover_tools (Level 2) 빌트인 추가.
+        # 카탈로그 ≥ _SEARCH_TOOLS_THRESHOLD 면 search_tools 도 등록 (큰 환경에서 진정한 progressive).
+        from ...tools.builtin import DiscoverToolsTool, SearchToolsTool
         augmented = list(tool_definitions)
+        discover = DiscoverToolsTool(tool_definitions)
         augmented.append(discover.to_api_format())
+
+        if len(tool_definitions) >= _SEARCH_TOOLS_THRESHOLD:
+            search = SearchToolsTool(tool_definitions)
+            augmented.append(search.to_api_format())
+            tool_index.append({
+                "name": search.name, "description": search.description[:_MAX_DESC_CHARS], "category": "system",
+            })
+            # tool_registry 에 인스턴스 등록 (s08_execute 가 디스패치 시 찾음)
+            if hasattr(state, "metadata"):
+                state.metadata.setdefault("tool_registry", {})["search_tools"] = search
 
         # state에 스키마 캐시 저장 (s08 discover_tools 핸들러에서 사용)
         if hasattr(state, 'tool_schemas'):

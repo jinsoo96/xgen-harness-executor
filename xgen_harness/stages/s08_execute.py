@@ -290,6 +290,18 @@ class ExecuteStage(Stage):
         if tool_name == "discover_tools":
             return self._handle_discover_tools(tool_input, state)
 
+        # 빌트인: search_tools (progressive disclosure Level 0 — 큰 카탈로그용)
+        if tool_name == "search_tools":
+            search = state.metadata.get("tool_registry", {}).get("search_tools")
+            if search and hasattr(search, "execute"):
+                result = await search.execute(tool_input)
+                return result.content if hasattr(result, "content") else str(result)
+            # 폴백: 인스턴스 없으면 즉시 생성
+            from ..tools.builtin import SearchToolsTool
+            search = SearchToolsTool(state.tool_definitions)
+            result = await search.execute(tool_input)
+            return result.content if hasattr(result, "content") else str(result)
+
         # 빌트인: rag_search (에이전트가 직접 호출하는 RAG 검색)
         if tool_name == "rag_search":
             return await self._handle_rag_search(tool_input, state)
