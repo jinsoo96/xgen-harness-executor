@@ -51,7 +51,16 @@ class ToolIndexStage(Stage):
         #    stage_params에 mcp_sessions가 있으면 해당 세션만,
         #    없으면 s01_input에서 이미 수집한 tool_definitions 유지 (하위 호환)
         if selected_mcp_sessions:
+            from ..events.types import StageSubstepEvent
+            await state.emit_verbose(StageSubstepEvent(
+                stage_id=self.stage_id, substep="mcp_discover_start",
+                meta={"sessions": selected_mcp_sessions},
+            ))
             await self._discover_selected_mcp_tools(selected_mcp_sessions, state)
+            await state.emit_verbose(StageSubstepEvent(
+                stage_id=self.stage_id, substep="mcp_discover_complete",
+                meta={"tool_count": len(state.tool_definitions)},
+            ))
 
         # 2. builtin_tools 필터링 — 선택된 빌트인만 추가
         selected_builtins: list[str] = self.get_param("builtin_tools", state, ["discover_tools"])

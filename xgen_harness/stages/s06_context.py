@@ -46,6 +46,12 @@ class ContextStage(Stage):
             rag_collections = getattr(config, 'rag_collections', []) or []
 
         if rag_collections and state.user_input:
+            # verbose: RAG fetch 시작
+            from ..events.types import StageSubstepEvent as _Sub
+            await state.emit_verbose(_Sub(
+                stage_id=self.stage_id, substep="rag_fetch_start",
+                meta={"collections": rag_collections, "top_k": int(self.get_param("rag_top_k", state, 4))},
+            ))
             rag_context = await self._fetch_rag(
                 collections=rag_collections,
                 query=state.user_input,
@@ -58,6 +64,11 @@ class ContextStage(Stage):
                 results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
                 results["rag_collections"] = len(rag_collections)
                 logger.info("[Context] RAG: %d collections, added to system prompt", len(rag_collections))
+            from ..events.types import StageSubstepEvent as _Sub2
+            await state.emit_verbose(_Sub2(
+                stage_id=self.stage_id, substep="rag_fetch_complete",
+                meta={"chunks": results.get("rag_chunks", 0)},
+            ))
 
         # ── 2. DB 연결 — services.database.get_schema_summary 로 위임 ──
         # 라이브러리는 connection_name 같은 추상 식별자만 다루고,

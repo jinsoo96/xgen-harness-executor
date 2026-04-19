@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.28] — 2026-04-19
+
+### Added — Verbose substep events 확대 + xgen 노드 메타 어댑터
+- **`s06_context`**: RAG fetch 시작/완료 시 `StageSubstepEvent` 발행 (`rag_fetch_start` / `rag_fetch_complete`).
+- **`s08_execute`**: 각 도구 호출 전후로 `StageSubstepEvent` 발행 (`tool_call_start` / `tool_call_complete` + `tool_name`/`chars` 메타).
+- **`s04_tool_index`**: MCP discovery 시작/완료 substep 추가 (`mcp_discover_start` / `mcp_discover_complete`).
+- **`integrations/xgen_node_adapters.py`**: 5개 metadata-only NodeAdapter 추가 — `agents` / `chat_models` / `memory` / `routers` / `interaction`.
+  - tool_def 는 발행하지 않고 `ResourceInfo` 만 등록 (해당 카테고리는 Stage 내부 로직이 직접 처리).
+  - `/options/__list__` / capability UI 가 카테고리 존재를 인지할 수 있게 됨.
+
+### Changed — UI Generic helper / Runtime tab
+- **`ResourceSelector.tsx`**: 6개의 `toggle*` 함수를 하나의 `toggleIn(stageId, fieldId, current, id, setStageParam)` 헬퍼로 통합.
+- **`StageDetailPanel.tsx`**: `RuntimeSection` 추가 — 선택한 Stage 의 마지막 `stage.exit` 출력(JSON) + verbose substep 이벤트를 패널 안에 표시.
+
+---
+
 ## [0.8.27] — 2026-04-19
 
 ### Added — DocumentService 전면 확장 (xgen-documents 전수 연동)

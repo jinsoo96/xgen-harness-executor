@@ -15,7 +15,7 @@ from typing import Any
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
-from ..events.types import ToolResultEvent
+from ..events.types import ToolResultEvent, StageSubstepEvent
 from ..errors import ToolError, ToolTimeoutError
 
 logger = logging.getLogger("harness.stage.execute")
@@ -183,6 +183,11 @@ class ExecuteStage(Stage):
             # ParameterResolver로 누락된 필수 파라미터를 context에서 채움
             tool_input = await self._enrich_with_capability(tool_name, tool_input, state)
 
+            await state.emit_verbose(StageSubstepEvent(
+                stage_id=self.stage_id, substep="tool_call_start",
+                meta={"tool_name": tool_name, "tool_use_id": tool_use_id},
+            ))
+
             result_text = await self._execute_tool(tool_name, tool_input, state)
 
             # 결과 축약 (예산 초과 시)
@@ -201,6 +206,11 @@ class ExecuteStage(Stage):
                     result=result_text[:500],
                     is_error=False,
                 ))
+
+            await state.emit_verbose(StageSubstepEvent(
+                stage_id=self.stage_id, substep="tool_call_complete",
+                meta={"tool_name": tool_name, "chars": chars, "ok": True},
+            ))
 
             return {"tool_name": tool_name, "success": True, "chars": chars}, chars
 

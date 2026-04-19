@@ -212,6 +212,24 @@ def _build_ml_tool(node: dict, registry: "ResourceRegistry") -> None:
 # ─── Bootstrap ───────────────────────────────────────────────
 
 # functionId 카테고리 → builder 매핑. 한 줄 추가 = 새 카테고리 등록.
+def _build_generic_metadata_only(node: dict, registry: "ResourceRegistry") -> None:
+    """metadata-only 어댑터 — Stage 내부 로직(s02/s07/s10) 이 이미 처리하는 카테고리.
+
+    tool_def 는 등록 안 함. ResourceInfo 만 발행해 *발견됐음* 을 표시.
+    이렇게 등록함으로써 /options/__list__ 등에서 카테고리 인식 + Capability 발행 가능.
+    """
+    from ..adapters.resource_registry import ResourceInfo
+    nd = node.get("data", {})
+    node_id = nd.get("id") or node.get("id", "")
+    if not node_id:
+        return
+    cat = nd.get("functionId", "")
+    registry._tool_infos.append(ResourceInfo(
+        resource_type=f"xgen_{cat}", name=node_id,
+        description=nd.get("nodeName", ""), source=cat,
+    ))
+
+
 _XGEN_CATEGORY_ADAPTERS: dict[str, tuple[list[str], callable, str]] = {
     # name: (function_ids 매칭, builder, description)
     "xgen_document_loaders": (
@@ -233,6 +251,29 @@ _XGEN_CATEGORY_ADAPTERS: dict[str, tuple[list[str], callable, str]] = {
     "xgen_ml": (
         ["ml"], _build_ml_tool,
         "xgen ml 예측 도구",
+    ),
+    # ── metadata-only (Stage 자체 로직 카테고리 — ResourceInfo 발행만) ──
+    # agents/chat_models/memory/routers/interaction 노드 발견 시 capability/UI 가
+    # 그 존재를 인지할 수 있게 ResourceInfo 만 등록. tool_def 는 발행 안 함.
+    "xgen_agents_meta": (
+        ["agents"], _build_generic_metadata_only,
+        "agent 노드 메타데이터 (Stage s07_llm 자체가 처리)",
+    ),
+    "xgen_chat_models_meta": (
+        ["chat_models"], _build_generic_metadata_only,
+        "chat_model/provider 메타 (Stage s01/s07 의 provider 설정 우선)",
+    ),
+    "xgen_memory_meta": (
+        ["memory"], _build_generic_metadata_only,
+        "memory 노드 메타 (Stage s02_memory 자체 처리)",
+    ),
+    "xgen_routers_meta": (
+        ["routers"], _build_generic_metadata_only,
+        "router 노드 메타 (Stage s10_decide 자체 처리)",
+    ),
+    "xgen_interaction_meta": (
+        ["interaction"], _build_generic_metadata_only,
+        "interaction/scenario 노드 메타",
     ),
 }
 
