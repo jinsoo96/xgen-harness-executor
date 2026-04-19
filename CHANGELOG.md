@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.29] — 2026-04-19
+
+### Added — Stage 확장성 본격 구현 (외부 Stage swap-in + 멀티에이전트)
+- **`core/registry.py`**: entry_points 키에 `__` 구분자 지원. `"s04_tool_index__lotte"` 같이 등록하면 같은 슬롯에 새 artifact 로 swap-in. 디폴트는 안 깨짐.
+- **`orchestrator/complexity.py`**: `ComplexityDetector` — 사용자 입력 길이 / 다중 인텐트 키워드 / RAG 컬렉션 수 / capability 수 / 도구 수 5 신호로 escalate 결정. 모든 가중치/임계값 stage_params override 가능.
+- **`orchestrator/multi_agent_planner.py`**: `MultiAgentPlannerStage` — `s05_plan` 슬롯의 새 artifact `multi_agent`. 복잡도 escalate 시 RAG 컬렉션 별 sub-agent 자동 fan-out → DAGOrchestrator 병렬 실행 → 결과를 system_prompt 부록으로 주입 → s07_llm 이 종합. 캔버스 데이터 의존 0.
+
+### Docs (별도 트리)
+- `docs/harness/STAGE_CONTRACT.md` — 외부 작업자가 보고 그대로 따라 만들 수 있는 1페이지 Stage 계약서.
+- `xgen-harness-stage-sample/` — 외부 Stage 샘플 패키지 (`s04_tool_index/lotte` artifact). pip install → entry_points 자동 발견 → UI swap 검증 완료.
+
+### Frontend (xgen-frontend feature/harness-v2 동시 배포 예정)
+- `index.tsx` 에서 `registerStageSelector / listRegisteredStageSelectors / ResourceSelector` 외부 export — 외부 패키지가 자기 Stage UI 를 plug-in 으로 등록 가능.
+
+---
+
 ## [0.8.28] — 2026-04-19
 
 ### Added — Verbose substep events 확대 + xgen 노드 메타 어댑터

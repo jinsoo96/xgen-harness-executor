@@ -205,6 +205,14 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
     except ImportError:
         pass
 
+    # 멀티에이전트 자동 분기 — s05_plan 의 second artifact ('multi_agent').
+    # 디폴트 PlanStage 와 동일 슬롯 swap 후보. UI 에서 1클릭으로 선택.
+    try:
+        from ..orchestrator.multi_agent_planner import MultiAgentPlannerStage
+        registry.register("s05_plan", "multi_agent", MultiAgentPlannerStage)
+    except ImportError:
+        pass
+
     # 플러그인 자동 탐색
     _discover_plugin_stages(registry)
 
@@ -222,8 +230,17 @@ def _discover_plugin_stages(registry: ArtifactRegistry) -> None:
         for ep in eps:
             try:
                 stage_class = ep.load()
-                registry.register(ep.name, "default", stage_class)
-                logger.info("Plugin stage registered: %s", ep.name)
+                # ep.name 형식:
+                #   "s04_tool_index"          → (stage_id="s04_tool_index", artifact="default")
+                #   "s04_tool_index__lotte"   → (stage_id="s04_tool_index", artifact="lotte")
+                # __ 구분자로 같은 슬롯에 외부 artifact 를 swap-in 가능.
+                if "__" in ep.name:
+                    stage_id, artifact_name = ep.name.split("__", 1)
+                else:
+                    stage_id, artifact_name = ep.name, "default"
+                registry.register(stage_id, artifact_name, stage_class)
+                logger.info("Plugin stage registered: %s/%s (from ep '%s')",
+                            stage_id, artifact_name, ep.name)
             except Exception as e:
                 logger.warning("Failed to load plugin stage %s: %s", ep.name, e)
     except Exception:
