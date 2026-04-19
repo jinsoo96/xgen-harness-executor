@@ -9,7 +9,14 @@ _MAX_DESC_CHARS = 120
 
 # 카탈로그가 이 크기 이상이면 search_tools 빌트인을 함께 등록.
 # 작은 워크플로우는 discover_tools 만으로 충분 — 검색 도구를 늘려봐야 컨텍스트만 먹음.
-_SEARCH_TOOLS_THRESHOLD = 12
+# 공개 상수 — stage config API / UI 배지 가 import 해서 "검색 모드 전환 임계치" 로 표시.
+SEARCH_TOOLS_THRESHOLD = 12
+_SEARCH_TOOLS_THRESHOLD = SEARCH_TOOLS_THRESHOLD  # 내부 호환
+
+
+def get_progressive_threshold() -> int:
+    """현재 Progressive Disclosure search_tools 임계치. UI 배지/로그가 참조."""
+    return SEARCH_TOOLS_THRESHOLD
 
 
 class ProgressiveDiscovery(ToolDiscoveryStrategy):

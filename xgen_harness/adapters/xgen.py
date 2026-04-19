@@ -109,6 +109,7 @@ class XgenAdapter:
         workflow_name: str = "",
         attached_files: Optional[list] = None,
         runtime_harness_config: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[list] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """워크플로우 실행 → xgen SSE 이벤트 스트림.
 
@@ -284,6 +285,7 @@ class XgenAdapter:
             user_id=str(user_id),
             attached_files=attached_files or [],
             workflow_data=workflow_data,
+            conversation_history=list(conversation_history or []),
         )
         state.metadata["services"] = self._services
 
