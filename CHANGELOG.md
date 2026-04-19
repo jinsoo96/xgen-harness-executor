@@ -5,6 +5,19 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.35] — 2026-04-19
+
+### Changed — 어댑터 고결성 audit 결과 fix
+- **`pyproject.toml`**: 9개 entry_points 그룹 명시 (`xgen_harness.{stages,strategies,node_adapters,option_sources,tool_sources,providers,capabilities,fan_out_strategies,evaluation_criteria}`). 외부 작업자가 어떤 그룹으로 등록해야 하는지 lock-in.
+- **`s06_context`**: ServiceProvider.documents 우선, httpx 직접 호출은 ServiceProvider 미주입 환경의 폴백으로 강등. `extract_source/text/score` 헬퍼로 응답 정규화.
+  - 이전: 무조건 `_fetch_rag` (xgen-documents 스키마 직접 호출) → 라이브러리가 특정 회사 endpoint 알게 됨.
+  - 지금: 외부 회사가 ServiceProvider.documents 자기 구현 주입하면 그걸로 라우팅, xgen 환경이 아니어도 작동.
+
+### Notes
+- 라이브러리 고결도 audit: C → B (어댑터 분리도 개선, magic URL fallback 은 `adapters/xgen.py` 안에서만 사용 — 라이브러리 본체 무침범)
+
+---
+
 ## [0.8.34] — 2026-04-19
 
 ### Fixed — Multi-agent sub-agent SSE forwarding

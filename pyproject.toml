@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.8.34"
+version = "0.8.35"
 description = "XGEN Harness Pipeline Library — 12-stage dual-abstraction agent pipeline"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -33,6 +33,37 @@ api = [
 
 [project.urls]
 Repository = "https://github.com/jinsoo96/xgen-harness-executor"
+
+# ─── 외부 패키지 확장 통로 ───
+# 외부 패키지가 자기 pyproject.toml 의 [project.entry-points."xgen_harness.<group>"] 에
+# 항목 추가하면 xgen-harness 부팅 시 자동 발견 + register. 라이브러리 소스 수정 0.
+# 빈 본 섹션은 외부 작업자 lock-in — 그룹 이름이 어떤 것이 valid 인지 명시.
+[project.entry-points."xgen_harness.stages"]
+# 예: s04_tool_index__lotte = "lotte_stages.tool_index:LotteToolIndexStage"
+
+[project.entry-points."xgen_harness.strategies"]
+# 예: "s07_llm:default:my_strategy" = "my_pkg.strategies:MyStrategyClass"
+
+[project.entry-points."xgen_harness.node_adapters"]
+# 예: my_category = "my_pkg.adapters:get_adapter"
+
+[project.entry-points."xgen_harness.option_sources"]
+# 예: my_source = "my_pkg:get_spec"   # () -> OptionSourceSpec
+
+[project.entry-points."xgen_harness.tool_sources"]
+# 예: my_tools = "my_pkg.tools:MyToolSource"
+
+[project.entry-points."xgen_harness.providers"]
+# 예: my_provider = "my_pkg.providers:MyProvider"
+
+[project.entry-points."xgen_harness.capabilities"]
+# 예: my_capability = "my_pkg.capabilities:get_spec"
+
+[project.entry-points."xgen_harness.fan_out_strategies"]
+# 예: per_intent = "my_pkg.orchestrator:per_intent_builder"
+
+[project.entry-points."xgen_harness.evaluation_criteria"]
+# 예: korean_quality = "my_pkg.criteria:get_spec"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

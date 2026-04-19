@@ -71,18 +71,44 @@ class ContextStage(Stage):
         if rag_collections and state.user_input:
             # verbose: RAG fetch 시작
             from ..events.types import StageSubstepEvent as _Sub
+            top_k = int(self.get_param("rag_top_k", state, 4))
             await state.emit_verbose(_Sub(
                 stage_id=self.stage_id, substep="rag_fetch_start",
-                meta={"collections": rag_collections, "top_k": int(self.get_param("rag_top_k", state, 4))},
+                meta={"collections": rag_collections, "top_k": top_k},
             ))
-            rag_context = await self._fetch_rag(
-                collections=rag_collections,
-                query=state.user_input,
-                user_id=state.user_id or "0",
-                top_k=int(self.get_param("rag_top_k", state, 4)),
-                score_threshold=float(self.get_param("score_threshold", state, 0.2)),
-                use_model_prompt=bool(self.get_param("use_model_prompt", state, True)),
-            )
+            # **우선**: ServiceProvider.documents 위임 (외부 회사가 자기 구현 주입 가능).
+            # **폴백**: ServiceProvider 없을 때만 직접 httpx → xgen-documents 스키마.
+            services = state.metadata.get("services")
+            doc_service = getattr(services, "documents", None) if services else None
+            rag_context = ""
+            if doc_service and hasattr(doc_service, "search"):
+                parts: list[str] = []
+                from ..utils.docs import extract_source, extract_text, extract_score
+                for col in rag_collections:
+                    try:
+                        results = await doc_service.search(state.user_input, col, limit=top_k) or []
+                        if results:
+                            part = f"## {col} ({len(results)}건)\n\n"
+                            for i, r in enumerate(results):
+                                if isinstance(r, dict):
+                                    src = extract_source(r) or r.get("file_name", "")
+                                    score = extract_score(r)
+                                    text = extract_text(r) or r.get("chunk_text", "")
+                                    part += f"[{i+1}] {src} ({score:.3f})\n{text}\n\n"
+                            parts.append(part)
+                    except Exception as e:
+                        logger.warning("[Context] DocumentService.search failed for %s: %s", col, e)
+                rag_context = "\n\n".join(parts)
+            else:
+                # 폴백 — ServiceProvider 미주입 환경에서 라이브러리만 단독 사용 시
+                rag_context = await self._fetch_rag(
+                    collections=rag_collections,
+                    query=state.user_input,
+                    user_id=state.user_id or "0",
+                    top_k=top_k,
+                    score_threshold=float(self.get_param("score_threshold", state, 0.2)),
+                    use_model_prompt=bool(self.get_param("use_model_prompt", state, True)),
+                )
             # rerank — DocumentService.rerank 위임 (선택된 reranker 가 있을 때만)
             reranker_name: str = self.get_param("reranker", state, "") or ""
             if reranker_name and rag_context:
