@@ -5,6 +5,17 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.30] — 2026-04-19
+
+### Changed — multi_agent_planner audit fix
+- **Fan-out 전략 레지스트리**: `register_fan_out_strategy(name, builder, description)` 공개 API. if/elif 분기 제거, 외부 작업자가 한 줄로 새 전략 추가 가능.
+- **sub_cfg 클론 헬퍼**: `_clone_config_for_sub` — `dataclasses.asdict` 로 base_config 의 모든 필드 복제 후 system_prompt / artifacts / stage_params 만 override. 이전엔 5개 필드만 복사해 다른 설정이 누락됐음.
+- **system_prompt 템플릿 분리**: `DEFAULT_SUB_PROMPT_TEMPLATE` 상수 + `sub_agent_prompt_template` stage_param 으로 외부 override 가능.
+- **stage_id 문자열 상수화**: `PLAN_SLOT / TOOL_INDEX_SLOT / CONTEXT_SLOT` — 문자열 리터럴 반복 제거.
+- **type guard 추가**: `_collect_rag_collections` 가 dict / str / None 모두 안전하게 처리.
+
+---
+
 ## [0.8.29] — 2026-04-19
 
 ### Added — Stage 확장성 본격 구현 (외부 Stage swap-in + 멀티에이전트)

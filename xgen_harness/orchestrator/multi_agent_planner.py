@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from ..core.config import HarnessConfig
@@ -23,6 +24,18 @@ from ..events.types import StageSubstepEvent
 from .complexity import ComplexityDetector
 from .dag import AgentNode, DAGEdge, DAGOrchestrator
 
+# sub-agent 의 system_prompt 템플릿 — stage_params['sub_agent_prompt_template'] 로 override.
+# {col} = 컬렉션 이름 placeholder. 외부 작업자가 자기 톤으로 바꿀 수 있게 분리.
+DEFAULT_SUB_PROMPT_TEMPLATE = (
+    "너는 '{col}' 컬렉션에 대해서만 답하는 전문 sub-agent. "
+    "주어진 사용자 질의에서 이 컬렉션과 관련된 부분만 응답. 1500자 이내."
+)
+
+# 하위 슬롯 stage_id 상수 — 문자열 리터럴 반복 제거.
+PLAN_SLOT = "s05_plan"
+TOOL_INDEX_SLOT = "s04_tool_index"
+CONTEXT_SLOT = "s06_context"
+
 logger = logging.getLogger("harness.orchestrator.planner")
 
 
@@ -31,7 +44,7 @@ class MultiAgentPlannerStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s05_plan"
+        return PLAN_SLOT
 
     @property
     def order(self) -> int:
@@ -144,19 +157,20 @@ class MultiAgentPlannerStage(Stage):
 
     def _collect_rag_collections(self, state: PipelineState) -> list[str]:
         """RAG 컬렉션은 s04_tool_index 와 s06_context 두 곳의 stage_params 에 흩어짐.
-        둘 다 모아서 dedupe."""
+        둘 다 모아서 dedupe. dict/str 형태 모두 허용."""
         config = state.config
         seen: list[str] = []
         if not config:
             return seen
-        for sid in ("s04_tool_index", "s06_context"):
-            params = config.stage_params.get(sid, {}) or {}
+        for sid in (TOOL_INDEX_SLOT, CONTEXT_SLOT):
+            params = (config.stage_params or {}).get(sid, {}) or {}
             for c in params.get("rag_collections", []) or []:
-                if c and c not in seen:
-                    seen.append(c)
+                name = c if isinstance(c, str) else (c.get("collection") if isinstance(c, dict) else None)
+                if name and name not in seen:
+                    seen.append(name)
         # state.metadata fallback (Builder 흐름)
-        for c in state.metadata.get("rag_collections", []) or []:
-            name = c.get("collection") if isinstance(c, dict) else c
+        for c in (state.metadata or {}).get("rag_collections", []) or []:
+            name = c if isinstance(c, str) else (c.get("collection") if isinstance(c, dict) else None)
             if name and name not in seen:
                 seen.append(name)
         return seen
@@ -165,45 +179,105 @@ class MultiAgentPlannerStage(Stage):
         self,
         state: PipelineState,
         rag_collections: list[str],
-        base_config,
+        base_config: HarnessConfig | None,
     ) -> list[AgentNode]:
-        """fan-out 전략: per-RAG-collection (문서 RAG 가 주 use case)."""
-        strategy = self.get_param("fan_out", state, "per_rag_collection")
+        """fan-out 전략 디스패치 — `_FAN_OUT_STRATEGIES` 레지스트리.
+
+        외부 작업자가 `register_fan_out_strategy('per_intent', fn)` 한 줄로 추가 가능.
+        """
         if not base_config:
             return []
-        provider = getattr(base_config, "provider", "openai")
-        model = getattr(base_config, "model", "")
-        temperature = getattr(base_config, "temperature", 0.7)
-
-        agents: list[AgentNode] = []
-        if strategy == "per_rag_collection" and rag_collections:
-            for col in rag_collections:
-                sub_cfg = HarnessConfig(
-                    preset="standard",
-                    provider=provider,
-                    model=model,
-                    temperature=temperature,
-                    system_prompt=(
-                        f"너는 '{col}' 컬렉션에 대해서만 답하는 전문 sub-agent. "
-                        "주어진 사용자 질의에서 이 컬렉션과 관련된 부분만 응답. 1500자 이내."
-                    ),
-                    # sub-agent 는 멀티에이전트 재진입 방지 — 디폴트 plan 으로 강제
-                    artifacts={"s05_plan": "default"},
-                    # RAG 컬렉션은 stage_params 로 주입 (s04/s06 둘 다 인지)
-                    stage_params={
-                        "s04_tool_index": {"rag_collections": [col]},
-                        "s06_context": {"rag_collections": [col]},
-                    },
-                )
-                agents.append(AgentNode(
-                    node_id=f"sub_{col}",
-                    name=f"RAG[{col}]",
-                    config=sub_cfg,
-                ))
-        # 다른 전략 (per_intent, per_capability) 은 추후 추가 가능 (entry_points 로 외부 등록)
-        return agents
+        strategy = self.get_param("fan_out", state, "per_rag_collection")
+        builder = _FAN_OUT_STRATEGIES.get(strategy)
+        if builder is None:
+            logger.warning("[MultiAgentPlanner] unknown fan_out strategy '%s', skipping", strategy)
+            return []
+        prompt_template = self.get_param(
+            "sub_agent_prompt_template", state, DEFAULT_SUB_PROMPT_TEMPLATE,
+        )
+        return builder(
+            base_config=base_config,
+            rag_collections=rag_collections,
+            prompt_template=prompt_template,
+        )
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [
-            StrategyInfo("per_rag_collection", "RAG 컬렉션 별로 sub-agent fan-out", is_default=True),
+            StrategyInfo(name, info["desc"], is_default=info.get("default", False))
+            for name, info in _FAN_OUT_STRATEGIES_META.items()
         ]
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Fan-out 전략 레지스트리 — 외부 확장 통로
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_FAN_OUT_STRATEGIES: dict = {}
+_FAN_OUT_STRATEGIES_META: dict = {}
+
+
+def register_fan_out_strategy(
+    name: str, builder, description: str, is_default: bool = False,
+) -> None:
+    """외부 작업자가 새 fan-out 전략을 한 줄로 등록.
+
+    builder 시그니처: (base_config, rag_collections, prompt_template) -> list[AgentNode]
+    """
+    _FAN_OUT_STRATEGIES[name] = builder
+    _FAN_OUT_STRATEGIES_META[name] = {"desc": description, "default": is_default}
+
+
+def _clone_config_for_sub(
+    base_config: HarnessConfig,
+    *,
+    system_prompt: str,
+    rag_collection: str,
+) -> HarnessConfig:
+    """base_config 의 모든 필드를 복제 + sub-agent 용으로 일부만 override.
+
+    재진입 방지: artifacts[s05_plan] = 'default' 강제.
+    """
+    base_dict = dataclasses.asdict(base_config)
+    # disabled_stages 는 set 인데 asdict 가 list 로 변환 → 다시 set 화 필요
+    base_dict["disabled_stages"] = set(base_dict.get("disabled_stages", []))
+    base_dict["system_prompt"] = system_prompt
+    sub_artifacts = dict(base_dict.get("artifacts", {}) or {})
+    sub_artifacts[PLAN_SLOT] = "default"
+    base_dict["artifacts"] = sub_artifacts
+    sub_params = dict(base_dict.get("stage_params", {}) or {})
+    sub_params[TOOL_INDEX_SLOT] = {
+        **(sub_params.get(TOOL_INDEX_SLOT) or {}),
+        "rag_collections": [rag_collection],
+    }
+    sub_params[CONTEXT_SLOT] = {
+        **(sub_params.get(CONTEXT_SLOT) or {}),
+        "rag_collections": [rag_collection],
+    }
+    base_dict["stage_params"] = sub_params
+    return HarnessConfig(**base_dict)
+
+
+def _per_rag_collection(
+    *, base_config: HarnessConfig, rag_collections: list[str], prompt_template: str,
+) -> list[AgentNode]:
+    if not rag_collections:
+        return []
+    nodes: list[AgentNode] = []
+    for col in rag_collections:
+        sub_cfg = _clone_config_for_sub(
+            base_config,
+            system_prompt=prompt_template.format(col=col),
+            rag_collection=col,
+        )
+        nodes.append(AgentNode(
+            node_id=f"sub_{col}", name=f"RAG[{col}]", config=sub_cfg,
+        ))
+    return nodes
+
+
+# 기본 전략 등록
+register_fan_out_strategy(
+    "per_rag_collection", _per_rag_collection,
+    "RAG 컬렉션 별로 sub-agent fan-out (문서 RAG 가 주 use case)",
+    is_default=True,
+)
