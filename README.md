@@ -693,10 +693,27 @@ xgen_harness/
 
 ---
 
+## 외부 기여 / 확장 매뉴얼
+
+라이브러리 소스 수정 0 — 외부 패키지 + entry_points + `register_*()` API 만으로 9개 지점 확장.
+
+- **[docs/harness/STAGE_CONTRACT.md](../docs/harness/STAGE_CONTRACT.md)** — Stage 1페이지 계약서 (가장 핵심)
+- **[docs/harness/EXTENSION_POINTS.md](../docs/harness/EXTENSION_POINTS.md)** — 9개 확장 지점 전수 매뉴얼 (Stage / Strategy / NodeAdapter / OptionSource / Fan-out / Evaluation / ToolSource / Capability / UI Selector)
+- **`xgen-harness-stage-sample/`** — 외부 Stage 샘플 패키지 (pip install → entry_points → swap 까지 end-to-end 증명)
+
+---
+
 ## 버전 이력
 
 | 버전 | 주요 변경 |
 |------|----------|
+| 0.8.31 | **전수 audit fix** — s07 RETRY_DELAYS override, providers `normalize_base_url` 헬퍼, `utils/docs` 추출 헬퍼, response_filter 안전 처리, `register_evaluation_criterion` 공개 API |
+| 0.8.30 | multi_agent_planner audit fix — fan_out 레지스트리, `_clone_config_for_sub` 헬퍼, 템플릿/상수 분리 |
+| 0.8.29 | **Stage 확장성** — registry `__` 구분자 (같은 슬롯 artifact swap-in), `ComplexityDetector`, `MultiAgentPlannerStage` (s05_plan/multi_agent artifact), 외부 stage 샘플 |
+| 0.8.28 | Verbose substep (s04/s06/s08), xgen 노드 메타 어댑터 5종, frontend toggleIn + Runtime 섹션 |
+| 0.8.27 | DocumentService 전면 확장 (embed_query/rerank/list_folders/ontology_query), README 인터페이스 구조도 |
+| 0.8.26 | xgen 노드 카테고리 bulk NodeAdapter 등록 |
+| 0.8.25 | NodeAdapter 레지스트리 패턴 (노드 타입 통로화) |
 | 0.8.0 | Strategy 실구현 (with_classification/embedding_search/sliding_window/parallel_read), Guard 설정화, Progressive Disclosure |
 | 0.7.0 | RAG Tool Mode, 컨텍스트 크기 제한, Citation |
 | 0.6.0 | 9개 파라미터 실연동, Strategy 구현 |
