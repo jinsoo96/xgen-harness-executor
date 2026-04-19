@@ -83,3 +83,22 @@ class LLMProvider(ABC):
     @abstractmethod
     def supports_thinking(self) -> bool:
         ...
+
+
+def normalize_base_url(base_url: str, *, api_path: str, version: str = "v1") -> str:
+    """LLM provider base_url 을 endpoint 까지 자동 조립.
+
+    "<base>" / "<base>/v1" / "<base>/v1/<api_path>" 모두 같은 결과로 정규화.
+    예) normalize_base_url("https://api.openai.com/v1", api_path="chat/completions")
+        → "https://api.openai.com/v1/chat/completions"
+    """
+    base = (base_url or "").rstrip("/")
+    suffix = f"/{api_path}"
+    versioned_suffix = f"/{version}/{api_path}"
+    if base.endswith(versioned_suffix):
+        return base
+    if base.endswith(f"/{version}"):
+        return base + suffix
+    if base.endswith(suffix):
+        return base
+    return base + versioned_suffix

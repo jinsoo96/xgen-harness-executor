@@ -26,12 +26,8 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", base_url: Optional[str] = None):
         self._api_key = api_key
         self._model = model
-        self._base_url = (base_url or ANTHROPIC_API_URL).rstrip("/")
-        if not self._base_url.endswith("/v1/messages"):
-            if self._base_url.endswith("/v1"):
-                self._base_url += "/messages"
-            elif not self._base_url.endswith("/messages"):
-                self._base_url += "/v1/messages"
+        from .base import normalize_base_url
+        self._base_url = normalize_base_url(base_url or ANTHROPIC_API_URL, api_path="messages")
 
     @property
     def provider_name(self) -> str:

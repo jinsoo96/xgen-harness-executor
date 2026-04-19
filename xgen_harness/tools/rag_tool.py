@@ -149,13 +149,14 @@ class RAGSearchTool(Tool):
     @staticmethod
     def _format_results(results: list) -> str:
         """검색 결과를 [DOC_N] 태그 포맷으로 변환."""
+        from ..utils.docs import extract_source, extract_text, extract_score
         chunks: list[str] = []
         for i, doc in enumerate(results, 1):
             tag = f"[DOC_{i}]"
             if isinstance(doc, dict):
-                content = doc.get("content", doc.get("text", doc.get("page_content", "")))
-                source = doc.get("metadata", {}).get("source", doc.get("source", ""))
-                score = doc.get("score", doc.get("similarity", None))
+                content = extract_text(doc)
+                source = extract_source(doc)
+                score = extract_score(doc) or None
 
                 header = tag
                 if source:

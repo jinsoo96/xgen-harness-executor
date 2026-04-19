@@ -26,12 +26,8 @@ class OpenAIProvider(LLMProvider):
         self._model = model
         # base_url 이 base(예: "https://api.openai.com/v1") 만 와도 endpoint 자동 조립.
         # Anthropic provider 와 동일 패턴 (persistent_configs 에 base URL 저장 시 호환).
-        self._base_url = (base_url or OPENAI_API_URL).rstrip("/")
-        if not self._base_url.endswith("/chat/completions"):
-            if self._base_url.endswith("/v1"):
-                self._base_url += "/chat/completions"
-            else:
-                self._base_url += "/v1/chat/completions"
+        from .base import normalize_base_url
+        self._base_url = normalize_base_url(base_url or OPENAI_API_URL, api_path="chat/completions")
 
     @property
     def provider_name(self) -> str:

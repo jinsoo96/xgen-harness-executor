@@ -5,6 +5,17 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.31] — 2026-04-19
+
+### Changed — 전수 audit fix (하드코딩/중복/silent-except 정리)
+- **`s07_llm.RETRY_DELAYS`**: stage_params override 가능 — `retry_delays_rate_limit/overload/server` 키로 사용자 임계값 주입.
+- **`providers/base.normalize_base_url`**: anthropic/openai 의 base_url 정규화 로직(`/v1` 자동 조립) 단일 헬퍼로 통합. 두 provider 의 5줄씩 중복 제거.
+- **`utils/docs.py`**: `extract_source / extract_text / extract_score` — RAG 결과 dict 정규화 헬퍼. resource_registry / s03_system_prompt / rag_tool 4곳의 중복 추출 로직 통합.
+- **`adapters/resource_registry._call_api_tool`**: response_filter dot-path 추출 시 KeyError → silent fallback + debug 로그. 이전엔 except pass.
+- **`stages/s09_validate.register_evaluation_criterion`**: 외부 작업자가 평가 기준을 한 줄로 추가하는 공개 API. ALL_CRITERIA dict 가 단일 진실 소스.
+
+---
+
 ## [0.8.30] — 2026-04-19
 
 ### Changed — multi_agent_planner audit fix

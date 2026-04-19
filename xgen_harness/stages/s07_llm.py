@@ -110,28 +110,42 @@ class LLMStage(Stage):
         }
 
     async def _call_with_retry(self, state: PipelineState) -> tuple[str, list[dict], TokenUsage]:
-        """재시도 로직 포함 LLM 호출"""
-        config = state.config
-        max_retries = int(self.get_param("max_retries", state, DEFAULT_MAX_RETRIES))
-        last_error: Optional[Exception] = None
+        """재시도 로직 포함 LLM 호출.
 
+        딜레이는 stage_params override 가능:
+          retry_delays_rate_limit: list[int] (초)
+          retry_delays_overload:   list[int]
+          retry_delays_server:     list[int]
+        """
+        max_retries = int(self.get_param("max_retries", state, DEFAULT_MAX_RETRIES))
+        delays = {
+            "rate_limit": list(self.get_param("retry_delays_rate_limit", state, RETRY_DELAYS["rate_limit"])),
+            "overload":   list(self.get_param("retry_delays_overload",   state, RETRY_DELAYS["overload"])),
+            "server":     list(self.get_param("retry_delays_server",     state, RETRY_DELAYS["server"])),
+        }
+
+        def _pick(kind: str, attempt: int) -> int:
+            seq = delays[kind] or RETRY_DELAYS[kind]
+            return int(seq[min(attempt, len(seq) - 1)])
+
+        last_error: Optional[Exception] = None
         for attempt in range(max_retries + 1):
             try:
                 return await self._single_call(state)
             except RateLimitError as e:
                 last_error = e
-                delay = RETRY_DELAYS["rate_limit"][min(attempt, 2)]
+                delay = _pick("rate_limit", attempt)
                 logger.warning("[LLM] Rate limited, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                 await asyncio.sleep(delay)
             except OverloadError as e:
                 last_error = e
-                delay = RETRY_DELAYS["overload"][min(attempt, 2)]
+                delay = _pick("overload", attempt)
                 logger.warning("[LLM] Overloaded, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                 await asyncio.sleep(delay)
             except ProviderError as e:
                 if e.recoverable and attempt < max_retries:
                     last_error = e
-                    delay = RETRY_DELAYS["server"][min(attempt, 2)]
+                    delay = _pick("server", attempt)
                     logger.warning("[LLM] Provider error, retry %d/%d after %ds", attempt + 1, max_retries, delay)
                     await asyncio.sleep(delay)
                 else:

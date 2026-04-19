@@ -145,10 +145,11 @@ class SystemPromptStage(Stage):
         for collection in collections:
             try:
                 results = await doc_service.search(query, collection, limit=top_k)
+                from ..utils.docs import extract_source, extract_text
                 for i, doc in enumerate(results, 1):
                     if isinstance(doc, dict):
-                        content = doc.get("content", doc.get("text", ""))
-                        source = doc.get("source", doc.get("metadata", {}).get("source", ""))
+                        content = extract_text(doc)
+                        source = extract_source(doc)
                         if content:
                             header = f"[{len(all_chunks) + 1}]"
                             if source:
@@ -201,18 +202,18 @@ class SystemPromptStage(Stage):
                     return ""
 
                 # 결과를 텍스트로 조립
+                from ..utils.docs import extract_source, extract_text, extract_score
                 chunks = []
                 for i, doc in enumerate(results, 1):
-                    content = ""
                     if isinstance(doc, dict):
-                        content = doc.get("content", doc.get("text", doc.get("page_content", "")))
-                        source = doc.get("metadata", {}).get("source", doc.get("source", ""))
-                        score = doc.get("score", doc.get("similarity", ""))
+                        content = extract_text(doc)
+                        source = extract_source(doc)
+                        score = extract_score(doc)
                         header = f"[{i}]"
                         if source:
                             header += f" ({source})"
                         if score:
-                            header += f" score={score:.3f}" if isinstance(score, float) else f" score={score}"
+                            header += f" score={score:.3f}"
                         chunks.append(f"{header}\n{content}")
                     elif isinstance(doc, str):
                         chunks.append(f"[{i}]\n{doc}")

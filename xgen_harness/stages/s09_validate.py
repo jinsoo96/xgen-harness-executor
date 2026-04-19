@@ -18,12 +18,22 @@ from ..providers.base import ProviderEventType
 
 logger = logging.getLogger("harness.stage.validate")
 
-ALL_CRITERIA = {
-    "relevance": {"description": "Does the response address the user's question?", "weight": 0.3},
-    "completeness": {"description": "Is the response thorough and complete?", "weight": 0.3},
-    "accuracy": {"description": "Is the information accurate and well-supported?", "weight": 0.2},
-    "clarity": {"description": "Is the response clear and well-organized?", "weight": 0.2},
+ALL_CRITERIA: dict[str, dict] = {
+    "relevance":    {"description": "Does the response address the user's question?", "weight": 0.3},
+    "completeness": {"description": "Is the response thorough and complete?",        "weight": 0.3},
+    "accuracy":     {"description": "Is the information accurate and well-supported?", "weight": 0.2},
+    "clarity":      {"description": "Is the response clear and well-organized?",     "weight": 0.2},
 }
+
+
+def register_evaluation_criterion(name: str, description: str, weight: float = 0.1) -> None:
+    """외부 작업자가 평가 기준을 추가하는 공개 API.
+
+    예) register_evaluation_criterion("korean_quality",
+            "한국어 표현이 자연스럽고 어색한 부분이 없는가?", weight=0.2)
+    UI 의 stage_params['criteria'] 멀티셀렉터에 자동 노출.
+    """
+    ALL_CRITERIA[name] = {"description": description, "weight": float(weight)}
 
 EVALUATION_PROMPT_TEMPLATE = """You are an AI response evaluator. Evaluate the assistant's response based on these criteria:
 

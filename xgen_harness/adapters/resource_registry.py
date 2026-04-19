@@ -271,10 +271,11 @@ class ResourceRegistry:
         for col in target_collections:
             try:
                 results = await self._services.documents.search(query, col, limit=top_k)
+                from ..utils.docs import extract_source, extract_text
                 for doc in results:
                     if isinstance(doc, dict):
-                        content = doc.get("content", doc.get("text", ""))
-                        source = doc.get("source", doc.get("metadata", {}).get("source", ""))
+                        content = extract_text(doc)
+                        source = extract_source(doc)
                         if content:
                             header = f"[{len(chunks) + 1}]"
                             if source:
@@ -385,16 +386,20 @@ class ResourceRegistry:
                     resp = await client.post(url, json=body)
 
                 text = resp.text[:10000]
-                # response_filter 적용
+                # response_filter 적용 — "a.b.c" 형식의 dot path 로 응답 dict 안 깊은 값 추출.
+                # 키 누락은 silent fallback (전체 텍스트 유지) + debug 로그.
                 rf = spec.get("response_filter", "")
                 if rf and resp.status_code == 200:
                     try:
                         data = resp.json()
                         for key in rf.split("."):
-                            data = data[key]
+                            if isinstance(data, dict) and key in data:
+                                data = data[key]
+                            else:
+                                raise KeyError(key)
                         text = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else data
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("[ResourceRegistry] response_filter '%s' miss: %s", rf, e)
 
                 return text if resp.status_code == 200 else f"API error {resp.status_code}: {text[:500]}"
         except Exception as e:
