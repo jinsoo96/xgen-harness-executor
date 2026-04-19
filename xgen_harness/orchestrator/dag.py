@@ -242,18 +242,33 @@ class DAGOrchestrator:
             rag_context=node.rag_context,
             tool_definitions=node.tool_definitions,
         )
+        # sub-pipeline 의 모든 Stage 가 verbose 이벤트를 발행하도록 emitter 직접 주입.
+        # 이게 없으면 sub-agent 의 stage_enter / substep / metrics 가 메인 SSE 에 안 흐름.
+        state.event_emitter = emitter
+        state.config = config       # ← stage_params / artifacts 가 sub 에서도 적용되게
 
-        # 파이프라인 실행 (이벤트는 소비하지 않음 — 메인 emitter에 전달)
         async def _forward_events():
-            async for event in emitter.stream():
-                # 메인 오케스트레이터 emitter로 전달 (node_id 태그 추가)
-                if hasattr(event, "stage_name"):
-                    event.stage_name = f"[{node.name}] {event.stage_name}"
-                await self._event_emitter.emit(event)
+            try:
+                async for event in emitter.stream():
+                    if hasattr(event, "stage_name"):
+                        event.stage_name = f"[{node.name}] {event.stage_name}"
+                    await self._event_emitter.emit(event)
+            except Exception as e:
+                logger.warning("[Orchestrator] forward stopped: %s", e)
 
         forward_task = asyncio.create_task(_forward_events())
-        await pipeline.run(state)
-        await forward_task
+        try:
+            await pipeline.run(state)
+        finally:
+            # 반드시 sub-emitter 를 닫아야 forward_task 가 stream() 루프를 빠져나옴.
+            try:
+                await emitter.close()
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(forward_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            forward_task.cancel()
 
         elapsed = int((time.time() - t0) * 1000)
         return NodeResult(

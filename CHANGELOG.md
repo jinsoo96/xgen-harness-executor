@@ -5,6 +5,18 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.34] — 2026-04-19
+
+### Fixed — Multi-agent sub-agent SSE forwarding
+- **`orchestrator/dag.DAGOrchestrator._run_node`**: sub-pipeline 의 모든 Stage 가 verbose 이벤트를 발행하도록 `state.event_emitter` 직접 주입 + `state.config` 전달.
+- forward_task 가 무한 루프하지 않도록 `pipeline.run` 종료 후 sub-emitter `close()` 보장 (try/finally).
+- forward_task 종료 timeout 2초 + 미종료 시 cancel — 메인 pipeline 이 sub-emitter 에 묶여 hang 안 됨.
+
+이전: sub-agent 실행은 됐지만 메인 SSE 스트림에 sub 의 stage_enter/exit/substep 이벤트가 안 흐름 → UI 에서 DAG 진행 안 보임.
+지금: 메인 EventLog 에 `[RAG[col_name]] Stage Start/Done` 형태로 sub-agent 진행 시계열 표시.
+
+---
+
 ## [0.8.33] — 2026-04-19
 
 ### Fixed — UI 클릭이 실제로 동작하게 (이전엔 7개 param 이 stage 에서 무시됨)
