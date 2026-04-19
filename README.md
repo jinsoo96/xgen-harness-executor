@@ -2,7 +2,7 @@
 
 # xgen-harness
 
-### C타입 허브처럼 기능을 꽂았다 뺐다 하는 에이전트 실행 엔진
+### 12-Stage 에이전트 실행 하네스 · 플로우는 엔진이 그린다
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
@@ -55,39 +55,39 @@ pip install xgen-harness
 
 ---
 
-## 하네스 엔지니어링 — C타입 허브 3층 구조
+## 3층 아키텍처 — Stage · Strategy · Resource
 
 ```
                        ┌──────────────────────────────────┐
-   ┌──────────────────▶│       Resource (주변기기)         │
-   │                   │  🔌 MCP 도구 · RAG 컬렉션         │
-   │                   │  🔌 DB · API · Gallery · Capability │
+   ┌──────────────────▶│           Resource               │
+   │                   │  MCP · RAG · DB · API · Gallery  │
+   │                   │  · Capability (선언형)           │
    │                   └──────────────────────────────────┘
    │                                   ▲
-   │                                   │ 어댑터가 꽂음
    │                                   │ register_service()
+   │                                   │ register_tool_source()
    │      ┌────────────────────────────┴──────────────────┐
-   │      │          Strategy (포트별 어댑터)              │
-   │      │  ExponentialBackoff · AnthropicCache · ...    │
-   │      │  LLMJudge · RuleBased · Progressive3Level ... │
-   │      │  약 40+ 구현체, StrategyResolver로 런타임 교체  │
+   │      │                  Strategy                     │
+   │      │  ExponentialBackoff · AnthropicCache ·        │
+   │      │  LLMJudge · RuleBased · Progressive3Level ...│
+   │      │  40+ 구현체, StrategyResolver 로 런타임 교체  │
    │      └───────────────────────────┬──────────────────┘
    │                                  │
    │        ┌─────────────────────────┴────────────────────┐
-   └────────┤              Stage (허브 본체 포트)            │
-            │  s01 Input  s02 Memory  s03 SystemPrompt     │
-            │  s04 ToolIndex  s05 Plan  s06 Context        │
-            │  s07 LLM  s08 Execute  s09 Validate          │
-            │  s10 Decide  s11 Save  s12 Complete          │
-            │  ──── 12개 고정 포트, 개별 on/off 체크박스 ────│
+   └────────┤                     Stage                    │
+            │  s01 Input · s02 Memory · s03 SystemPrompt   │
+            │  s04 ToolIndex · s05 Plan · s06 Context      │
+            │  s07 LLM · s08 Execute · s09 Validate        │
+            │  s10 Decide · s11 Save · s12 Complete        │
+            │  12개 고정 슬롯 (Artifact 로 구현 swap)      │
             └──────────────────────────────────────────────┘
 ```
 
-| 층 | 역할 | 비유 | 실제 API |
-|---|------|------|----------|
-| **Stage** | 12개 고정 포트 | C허브 본체 | `register_stage()` / `disabled_stages` |
-| **Strategy** | 포트별 어댑터 | USB 슬롯 어댑터 | `register_strategy()` / `active_strategies` |
-| **Resource** | 꽂는 주변기기 | USB 장치 | `register_service()` / `CapabilityRegistry` |
+| 층 | 역할 | 실제 API |
+|---|------|----------|
+| **Stage** | 12개 고정 슬롯 — Artifact 로 구현 교체 | `register_stage()` / `disabled_stages` |
+| **Strategy** | Stage 내부 알고리즘 교체 | `register_strategy()` / `active_strategies` |
+| **Resource** | 외부 자원 (MCP/RAG/DB/API/Capability) | `register_service()` / `CapabilityRegistry` |
 
 **핵심 원칙**
 - **라이브러리 ≠ 인프라**: 라이브러리는 URL·API 키·프로바이더 이름을 모른다 → 어댑터가 주입
