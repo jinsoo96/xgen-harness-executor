@@ -2,7 +2,7 @@
 
 # xgen-harness
 
-### 12-Stage 에이전트 실행 하네스 · 플로우는 엔진이 그린다
+### 12-Stage XGEN 에이전트 환경 설정 기반 실행 프레임워크
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
