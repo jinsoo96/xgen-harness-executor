@@ -5,6 +5,23 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.33] — 2026-04-19
+
+### Fixed — UI 클릭이 실제로 동작하게 (이전엔 7개 param 이 stage 에서 무시됨)
+- **`s06_context`**:
+  - `folders`: 선택 폴더 안 컬렉션을 `rag_collections` 에 자동 펼침 (DocumentService.list_collections 위임)
+  - `ontology_collections`: GraphRAG 검색 → DocumentService.ontology_query → `<graph_rag>` 블록 system_prompt 주입
+  - `reranker`: RAG 결과를 DocumentService.rerank 로 재정렬
+- **`s04_tool_index`**:
+  - `custom_tools`: ResourceRegistry 의 사용자 도구를 tool_definitions 로 편입
+  - `cli_skills` / `node_tags`: metadata 로 노출 (capability/s08 가 참조 가능)
+  - `node_tags`: tool_definitions 필터 (선택 태그를 가진 도구만 통과)
+
+이전: UI 가 7개 param 저장 → DB 저장은 OK 였으나 **stage.get_param 호출 0개** → 실제 동작 0.
+지금: 7개 모두 stage 에서 사용 → 클릭이 실제 RAG/도구 흐름에 반영.
+
+---
+
 ## [0.8.32] — 2026-04-19
 
 ### Added — Progressive Disclosure Level 0 (`search_tools`)

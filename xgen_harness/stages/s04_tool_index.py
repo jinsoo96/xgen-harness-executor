@@ -36,6 +36,16 @@ class ToolIndexStage(Stage):
         selected_mcp_sessions: list[str] = self.get_param("mcp_sessions", state, [])
         rag_collections: list[str] = self.get_param("rag_collections", state, [])
         rag_top_k: int = self.get_param("rag_top_k", state, 4)
+        # 추가 선택값 — 이전엔 UI 만 저장하고 stage 가 무시하던 항목들. metadata 로 노출.
+        selected_custom_tools: list[str] = list(self.get_param("custom_tools", state, []) or [])
+        selected_cli_skills: list[str] = list(self.get_param("cli_skills", state, []) or [])
+        selected_node_tags: list[str] = list(self.get_param("node_tags", state, []) or [])
+        if selected_custom_tools:
+            state.metadata["selected_custom_tools"] = selected_custom_tools
+        if selected_cli_skills:
+            state.metadata["selected_cli_skills"] = selected_cli_skills
+        if selected_node_tags:
+            state.metadata["selected_node_tags"] = selected_node_tags
 
         # 0.5. Capability 바인딩 — 선언된 capability를 Tool 인스턴스로 materialize
         cap_result = self._bind_capabilities(state)
@@ -61,6 +71,29 @@ class ToolIndexStage(Stage):
                 stage_id=self.stage_id, substep="mcp_discover_complete",
                 meta={"tool_count": len(state.tool_definitions)},
             ))
+
+        # 1.5. 사용자 선택 도구를 tool_definitions 에 편입.
+        #   - custom_tools: 사용자가 등록한 API tool 의 function_id 목록
+        #   - cli_skills: 로컬 CLI 스킬 식별자
+        #   ResourceRegistry 가 워크플로 노드 변환 시 _tool_defs 에 이미 풀어놓는다 →
+        #   여기서는 metadata 로 노출만 (capability_bind / s08_execute 가 필요시 참조).
+        if selected_custom_tools and state.metadata.get("resource_registry"):
+            registry = state.metadata["resource_registry"]
+            available = registry.get_tool_definitions() if hasattr(registry, "get_tool_definitions") else []
+            existing_names = {td.get("name") for td in state.tool_definitions}
+            for td in available:
+                if td.get("name") in selected_custom_tools and td.get("name") not in existing_names:
+                    state.tool_definitions.append(td)
+        # node_tags 필터: 선택 태그가 있으면 해당 태그 메타가 있는 tool 만 통과 (매치 0 면 필터 적용 안함)
+        if selected_node_tags:
+            tagged = []
+            for td in state.tool_definitions:
+                tags = ((td.get("metadata") or {}).get("tags") or []) or td.get("tags") or []
+                if any(t in selected_node_tags for t in tags):
+                    tagged.append(td)
+            if tagged:
+                state.tool_definitions = tagged
+                logger.info("[Tool Index] node_tags filter: kept %d tools", len(tagged))
 
         # 2. builtin_tools 필터링 — 선택된 빌트인만 추가
         selected_builtins: list[str] = self.get_param("builtin_tools", state, ["discover_tools"])

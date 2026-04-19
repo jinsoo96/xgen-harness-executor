@@ -37,13 +37,36 @@ class ContextStage(Stage):
 
     async def execute(self, state: PipelineState) -> dict:
         config = state.config
-        results = {"rag_chunks": 0, "rag_collections": 0, "db_results": 0, "compacted": False}
+        results = {
+            "rag_chunks": 0, "rag_collections": 0, "db_results": 0, "compacted": False,
+            "ontology_results": 0, "folders_expanded": 0, "reranked": False,
+        }
 
-        # ── 1. RAG 검색 — stage_params에서 선택된 컬렉션 ──
-        rag_collections: list[str] = self.get_param("rag_collections", state, [])
-        # harness_config에서도 읽기 (프론트 ConfigPanel 호환)
+        # ── 1. RAG 컬렉션 + folders 확장 ──
+        rag_collections: list[str] = list(self.get_param("rag_collections", state, []) or [])
         if not rag_collections and hasattr(config, 'rag_collections'):
-            rag_collections = getattr(config, 'rag_collections', []) or []
+            rag_collections = list(getattr(config, 'rag_collections', []) or [])
+
+        # folders → 해당 폴더 안의 컬렉션 자동 추가 (DocumentService.list_collections 위임)
+        folders: list[str] = list(self.get_param("folders", state, []) or [])
+        if folders:
+            services = state.metadata.get("services")
+            doc_service = getattr(services, "documents", None) if services else None
+            if doc_service and hasattr(doc_service, "list_collections"):
+                try:
+                    all_cols = await doc_service.list_collections() or []
+                    expanded = [
+                        c.get("collection_name") for c in all_cols
+                        if isinstance(c, dict)
+                        and (c.get("folder_id") in folders or str(c.get("folder_id")) in folders)
+                        and c.get("collection_name")
+                    ]
+                    for col in expanded:
+                        if col not in rag_collections:
+                            rag_collections.append(col)
+                    results["folders_expanded"] = len(expanded)
+                except Exception as e:
+                    logger.warning("[Context] folder expansion failed: %s", e)
 
         if rag_collections and state.user_input:
             # verbose: RAG fetch 시작
@@ -58,6 +81,19 @@ class ContextStage(Stage):
                 user_id=state.user_id or "0",
                 top_k=int(self.get_param("rag_top_k", state, 4)),
             )
+            # rerank — DocumentService.rerank 위임 (선택된 reranker 가 있을 때만)
+            reranker_name: str = self.get_param("reranker", state, "") or ""
+            if reranker_name and rag_context:
+                services = state.metadata.get("services")
+                doc_service = getattr(services, "documents", None) if services else None
+                if doc_service and hasattr(doc_service, "rerank"):
+                    try:
+                        rag_context = await doc_service.rerank(
+                            query=state.user_input, text=rag_context, provider=reranker_name,
+                        ) or rag_context
+                        results["reranked"] = True
+                    except Exception as e:
+                        logger.warning("[Context] rerank failed: %s", e)
             if rag_context:
                 # system_prompt에 RAG 컨텍스트 추가
                 state.system_prompt = f"{state.system_prompt}\n\n{rag_context}"
@@ -69,6 +105,30 @@ class ContextStage(Stage):
                 stage_id=self.stage_id, substep="rag_fetch_complete",
                 meta={"chunks": results.get("rag_chunks", 0)},
             ))
+
+        # ── 1.5 Ontology / GraphRAG — DocumentService.ontology_query 위임 ──
+        ontology_collections: list[str] = list(self.get_param("ontology_collections", state, []) or [])
+        if ontology_collections and state.user_input:
+            services = state.metadata.get("services")
+            doc_service = getattr(services, "documents", None) if services else None
+            if doc_service and hasattr(doc_service, "ontology_query"):
+                try:
+                    onto_chunks: list[str] = []
+                    for col in ontology_collections:
+                        try:
+                            r = await doc_service.ontology_query(state.user_input, col)
+                            if r:
+                                onto_chunks.append(f"[graph:{col}]\n{r if isinstance(r, str) else str(r)[:2000]}")
+                        except Exception as e:
+                            logger.warning("[Context] ontology_query (%s) failed: %s", col, e)
+                    if onto_chunks:
+                        state.system_prompt = (state.system_prompt or "") + (
+                            "\n\n<graph_rag>\n" + "\n\n".join(onto_chunks) + "\n</graph_rag>"
+                        )
+                        results["ontology_results"] = len(onto_chunks)
+                        logger.info("[Context] ontology: %d collections injected", len(onto_chunks))
+                except Exception as e:
+                    logger.warning("[Context] ontology pipeline error: %s", e)
 
         # ── 2. DB 연결 — services.database.get_schema_summary 로 위임 ──
         # 라이브러리는 connection_name 같은 추상 식별자만 다루고,
