@@ -20,10 +20,13 @@ NodeAdapter 로 등록. 각 카테고리별로 파라미터 스키마를 추출�
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from ..adapters.node_adapters import NodeAdapter, register_node_adapter
 
@@ -34,20 +37,190 @@ logger = logging.getLogger("harness.xgen_node_adapters")
 
 _BOOTSTRAPPED = False
 
+_POLICY_FILENAME = "node_control_policy.json"
+
 
 @dataclass
 class _XgenNodeRef:
     """ResourceRegistry 의 _tool_executors 에 저장되는 xgen 노드 실행 참조.
 
     실행 시 ServiceProvider 의 적절한 서비스로 라우팅 (documents/database/files).
+
+    params    — mode == 'manual' 인 파라미터 값 (사용자 입력 + 기본값). LLM 스키마에 **노출 안 됨**.
+    spec_id   — 캔버스 Node 클래스 id (= nodeId). get_node_class_by_id() 조회 키.
+    control_map — {param_key: {'control': 'manual'|'auto'|'switchable', 'mode': 'manual'|'auto'}}
+                  디버깅/UI 피드백용 메타.
     """
-    node_id: str
+    node_id: str                  # 캔버스 인스턴스 id (그래프 내 유일)
     category: str                 # 'document_loaders' / 'file_system' / ...
     params: dict
+    spec_id: str = ""
+    control_map: dict = field(default_factory=dict)
 
 
 def _extract_params(nd: dict) -> dict:
     return {p["id"]: p.get("value") for p in nd.get("parameters", []) if p.get("value") is not None}
+
+
+# ─── control policy 로더 / 리졸버 ────────────────────────────
+
+@functools.lru_cache(maxsize=1)
+def _load_control_policy() -> dict:
+    """node_control_policy.json 을 라이브러리 리소스에서 lazy 로드.
+
+    파일 없음/파싱 오류는 빈 policy 로 폴백 — 레거시 호환 (global_default 만 적용).
+    환경변수 XGEN_HARNESS_NODE_POLICY_PATH 로 override 가능 (테스트/운영 override).
+    """
+    override = os.environ.get("XGEN_HARNESS_NODE_POLICY_PATH")
+    candidates = [Path(override)] if override else []
+    candidates.append(Path(__file__).parent / _POLICY_FILENAME)
+    for path in candidates:
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                logger.info("[node-control-policy] loaded from %s", path)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.warning("[node-control-policy] failed to load %s: %s", path, e)
+    logger.info("[node-control-policy] no policy file found — using global default")
+    return {}
+
+
+def reload_control_policy() -> dict:
+    """테스트/핫리로드 용. 캐시 비우고 다시 로드."""
+    _load_control_policy.cache_clear()
+    return _load_control_policy()
+
+
+def _resolve_control_for_node(
+    spec_id: str,
+    category: str,
+    params_def: list[dict],
+) -> dict:
+    """노드 한 건에 대해 {param_key: {control, default_mode, auto_hint?, synthetic?, type?}} 맵 생성.
+
+    우선순위: policy.nodes[spec_id].params[pk] > policy.categories[category] > policy.global_default.
+    synthetic_auto 는 별도 키로 추가 (params 에 없고 LLM 입력으로만 노출).
+    """
+    policy = _load_control_policy()
+    node_pol = (policy.get("nodes") or {}).get(spec_id) or {}
+    cat_pol = (policy.get("categories") or {}).get(category) or {}
+    glob = policy.get("global_default") or {"control": "switchable", "default_mode": "manual"}
+
+    resolved: dict = {}
+    node_params = (node_pol.get("params") or {})
+    for p in params_def:
+        pid = p.get("id")
+        if not pid:
+            continue
+        np = node_params.get(pid) or {}
+        control = np.get("control") or cat_pol.get("default_control") or glob.get("control", "switchable")
+        default_mode = np.get("default_mode") or cat_pol.get("default_mode") or glob.get("default_mode", "manual")
+        if control == "auto":
+            default_mode = "auto"
+        elif control == "manual":
+            default_mode = "manual"
+        resolved[pid] = {
+            "control": control,
+            "default_mode": default_mode,
+            "auto_hint": np.get("auto_hint"),
+        }
+
+    for key, spec in (node_pol.get("synthetic_auto") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        resolved[key] = {
+            "control": "auto",
+            "default_mode": "auto",
+            "auto_hint": spec.get("auto_hint"),
+            "type": spec.get("type", "string"),
+            "required": bool(spec.get("required", True)),
+            "synthetic": True,
+        }
+
+    return resolved
+
+
+_TYPE_MAP = {"STR": "string", "INT": "integer", "FLOAT": "number", "BOOL": "boolean"}
+
+
+def _apply_node_overrides(
+    spec_id: str,
+    category: str,
+    params_def: list[dict],
+    node_overrides: dict,
+    base_params: dict,
+) -> tuple[dict, dict, list[str], dict]:
+    """파라미터별 mode 결정 + manual 값 / auto schema 분리.
+
+    Returns
+    -------
+    manual_params : dict
+        mode == 'manual' 파라미터의 실행 시 값 ({...base_params, user override value}).
+    auto_props : dict
+        JSON Schema properties — mode == 'auto' 파라미터 + synthetic_auto 전부.
+    auto_required : list[str]
+        input_schema.required 후보 (required=True 인 auto 키).
+    final_control_map : dict
+        {param_key: {'control', 'mode'}} — 디버깅/UI 피드백용.
+    """
+    ctrl = _resolve_control_for_node(spec_id, category, params_def)
+    manual_params: dict = {}
+    auto_props: dict = {}
+    auto_required: list[str] = []
+    final: dict = {}
+
+    overrides = node_overrides or {}
+
+    # 1. 정의된 파라미터
+    for p in params_def:
+        pid = p.get("id")
+        if not pid:
+            continue
+        meta = ctrl.get(pid, {"control": "switchable", "default_mode": "manual"})
+        control = meta["control"]
+        ov = overrides.get(pid) if isinstance(overrides.get(pid), dict) else None
+
+        if control == "manual":
+            mode = "manual"
+        elif control == "auto":
+            mode = "auto"
+        else:
+            # switchable: override > default_mode
+            mode = (ov.get("mode") if ov else None) or meta.get("default_mode") or "manual"
+
+        final[pid] = {"control": control, "mode": mode}
+
+        if mode == "manual":
+            val = ov.get("value") if ov and "value" in ov else None
+            if val is None:
+                val = base_params.get(pid)
+            if val is None:
+                val = p.get("value")
+            if val is not None:
+                manual_params[pid] = val
+        else:
+            t = _TYPE_MAP.get(str(p.get("type", "")).upper(), "string")
+            desc = meta.get("auto_hint") or p.get("description") or p.get("label") or ""
+            auto_props[pid] = {"type": t, "description": desc}
+            # 정의된 파라미터의 required 는 JSON Schema 에선 보수적으로 비워둠
+            # (원본 parameters.required 를 그대로 쓰면 auto 로 돌린 선택 필드까지 강제됨)
+
+    # 2. synthetic_auto — 정의엔 없지만 LLM 이 채워야 하는 입력
+    for key, meta in ctrl.items():
+        if key in final:
+            continue
+        if meta.get("synthetic") and meta.get("control") == "auto":
+            auto_props[key] = {
+                "type": meta.get("type", "string"),
+                "description": meta.get("auto_hint") or "Input",
+            }
+            if meta.get("required"):
+                auto_required.append(key)
+            final[key] = {"control": "auto", "mode": "auto"}
+
+    return manual_params, auto_props, auto_required, final
 
 
 def _build_input_schema_from_params(params_def: list[dict], required: list[str] | None = None) -> dict:
@@ -73,140 +246,191 @@ def _build_input_schema_from_params(params_def: list[dict], required: list[str] 
 
 # ─── 카테고리별 builder ──────────────────────────────────────
 
-def _build_document_loader_tool(node: dict, registry: "ResourceRegistry") -> None:
-    """document_loaders 카테고리 (vectordb_retrieval_*, ontology_search, tool_selector, ...) → rag 계열 tool."""
+def _register_xgen_node_tool(
+    registry: "ResourceRegistry",
+    *,
+    instance_id: str,
+    spec_id: str,
+    category: str,
+    tool_name: str,
+    description: str,
+    resource_type: str,
+    source: str,
+    manual_params: dict,
+    auto_props: dict,
+    auto_required: list[str],
+    control_map: dict,
+    fallback_schema: dict | None = None,
+) -> None:
+    """5 개 builder 공통 등록 로직.
+
+    - tool_defs.input_schema : auto_props 만 노출 (manual 값은 LLM 스키마에서 숨김).
+    - tool_executors : _XgenNodeRef — dispatch 시 _call_xgen_node 로 라우팅.
+    - fallback_schema : auto_props 가 비어있을 때 사용할 최소 스키마 (LLM 호출 가능 상태 유지).
+    """
     from ..adapters.resource_registry import ResourceInfo
-    nd = node.get("data", {})
-    node_id = nd.get("id") or node.get("id", "")
-    if not node_id or node_id in registry._tool_executors:
+
+    if not tool_name:
         return
-    params = _extract_params(nd)
-    collection = params.get("collection_name") or params.get("collection") or ""
-    top_k = params.get("top_k", 4)
-    tool_name = f"rag_{node_id}"
-    desc = params.get("description") or f"Document retrieval on '{collection}' (top_k={top_k})"
+
+    if auto_props:
+        input_schema = {
+            "type": "object",
+            "properties": dict(auto_props),
+            "required": list(auto_required or []),
+        }
+    else:
+        input_schema = {
+            "type": "object",
+            "properties": dict(fallback_schema or {"input": {"type": "string", "description": "Free-form input (optional)"}}),
+            "required": [],
+        }
+
     registry._tool_defs.append({
         "name": tool_name,
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string", "description": "Search query"}},
-            "required": ["query"],
-        },
+        "description": description,
+        "input_schema": input_schema,
     })
     registry._tool_executors[tool_name] = _XgenNodeRef(
-        node_id=node_id, category="document_loaders", params=params,
+        node_id=instance_id,
+        category=category,
+        params=manual_params,
+        spec_id=spec_id,
+        control_map=control_map,
     )
     registry._tool_infos.append(ResourceInfo(
-        resource_type="rag_collection" if collection else "custom_tool",
-        name=tool_name, description=desc, source=collection or "documents",
+        resource_type=resource_type,
+        name=tool_name,
+        description=description,
+        source=source,
     ))
+
+
+def _unpack_node_for_builder(node: dict, registry: "ResourceRegistry", category: str):
+    """builder 공통 전처리. 반환: (instance_id, spec_id, params_def, base, manual, auto_props, auto_req, ctrl)."""
+    nd = node.get("data", {})
+    instance_id = node.get("id") or nd.get("id", "")
+    spec_id = nd.get("id") or ""
+    if not instance_id or instance_id in registry._tool_executors:
+        return None
+    params_def = nd.get("parameters") or []
+    base = _extract_params(nd)
+    overrides = registry.get_node_overrides().get(instance_id, {}) if hasattr(registry, "get_node_overrides") else {}
+    manual, auto_props, auto_required, ctrl = _apply_node_overrides(
+        spec_id=spec_id,
+        category=category,
+        params_def=params_def,
+        node_overrides=overrides,
+        base_params=base,
+    )
+    return nd, instance_id, spec_id, params_def, base, manual, auto_props, auto_required, ctrl
+
+
+def _build_document_loader_tool(node: dict, registry: "ResourceRegistry") -> None:
+    """document_loaders (Qdrant / RetrievalToolHard/Light/Light+ / Ontology / ToolSelector) → RAG tool."""
+    unpacked = _unpack_node_for_builder(node, registry, "document_loaders")
+    if unpacked is None:
+        return
+    nd, instance_id, spec_id, _, base, manual, auto_props, auto_required, ctrl = unpacked
+
+    # tool_name: manual tool_name (ToolHard/Light 등) > nodeName > "rag_{instance_id}"
+    tool_name = (manual.get("tool_name") or base.get("tool_name")
+                 or f"rag_{instance_id}")
+    collection = manual.get("collection_name") or base.get("collection_name") or ""
+    top_k = manual.get("top_k") or base.get("top_k") or 4
+    desc = (manual.get("description") or base.get("description")
+            or nd.get("nodeName")
+            or f"Document retrieval on '{collection}' (top_k={top_k})")
+
+    _register_xgen_node_tool(
+        registry, instance_id=instance_id, spec_id=spec_id, category="document_loaders",
+        tool_name=tool_name, description=desc,
+        resource_type="rag_collection" if collection else "custom_tool",
+        source=collection or "documents",
+        manual_params=manual, auto_props=auto_props, auto_required=auto_required, control_map=ctrl,
+        fallback_schema={"query": {"type": "string", "description": "Search query"}},
+    )
 
 
 def _build_file_system_tool(node: dict, registry: "ResourceRegistry") -> None:
-    """file_system 카테고리 → file read/write tool."""
-    from ..adapters.resource_registry import ResourceInfo
-    nd = node.get("data", {})
-    node_id = nd.get("id") or node.get("id", "")
-    if not node_id or node_id in registry._tool_executors:
+    """file_system (filesystem_storage / table_data_mcp / minio_adapter) → file tool."""
+    unpacked = _unpack_node_for_builder(node, registry, "file_system")
+    if unpacked is None:
         return
-    params = _extract_params(nd)
-    tool_name = f"fs_{node_id}"
-    desc = params.get("description") or f"File system: {node_id}"
-    registry._tool_defs.append({
-        "name": tool_name,
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "File path"},
-                "content": {"type": "string", "description": "Content (write 시)"},
-            },
-            "required": ["path"],
-        },
-    })
-    registry._tool_executors[tool_name] = _XgenNodeRef(
-        node_id=node_id, category="file_system", params=params,
+    nd, instance_id, spec_id, _, base, manual, auto_props, auto_required, ctrl = unpacked
+
+    tool_name = manual.get("tool_name") or base.get("tool_name") or f"fs_{instance_id}"
+    desc = (manual.get("description") or base.get("description")
+            or nd.get("nodeName") or f"File system: {instance_id}")
+
+    _register_xgen_node_tool(
+        registry, instance_id=instance_id, spec_id=spec_id, category="file_system",
+        tool_name=tool_name, description=desc,
+        resource_type="custom_tool", source="filesystem",
+        manual_params=manual, auto_props=auto_props, auto_required=auto_required, control_map=ctrl,
+        fallback_schema={"path": {"type": "string", "description": "File path"}},
     )
-    registry._tool_infos.append(ResourceInfo(
-        resource_type="custom_tool", name=tool_name, description=desc, source="filesystem",
-    ))
 
 
 def _build_tools_category_tool(node: dict, registry: "ResourceRegistry") -> None:
-    """tools 카테고리 (input_string, print_any, local_cli_tool 등 20여 종) → generic tool."""
-    from ..adapters.resource_registry import ResourceInfo
-    nd = node.get("data", {})
-    node_id = nd.get("id") or node.get("id", "")
-    if not node_id or node_id in registry._tool_executors:
+    """tools 카테고리 — 20+ 노드 (local_cli_tool, workflow_tool, print_any 등)."""
+    unpacked = _unpack_node_for_builder(node, registry, "tools")
+    if unpacked is None:
         return
-    params = _extract_params(nd)
-    tool_name = params.get("tool_name") or node_id
-    desc = params.get("description") or nd.get("nodeName") or f"Tool: {tool_name}"
-    # params_def 에서 input_schema 자동 생성
-    schema = _build_input_schema_from_params(nd.get("parameters", []))
-    registry._tool_defs.append({
-        "name": tool_name,
-        "description": desc,
-        "input_schema": schema,
-    })
-    registry._tool_executors[tool_name] = _XgenNodeRef(
-        node_id=node_id, category="tools", params=params,
+    nd, instance_id, spec_id, _, base, manual, auto_props, auto_required, ctrl = unpacked
+
+    tool_name = manual.get("tool_name") or base.get("tool_name") or instance_id
+    desc = (manual.get("description") or base.get("description")
+            or nd.get("nodeName") or f"Tool: {tool_name}")
+
+    _register_xgen_node_tool(
+        registry, instance_id=instance_id, spec_id=spec_id, category="tools",
+        tool_name=tool_name, description=desc,
+        resource_type="custom_tool", source="xgen-tools",
+        manual_params=manual, auto_props=auto_props, auto_required=auto_required, control_map=ctrl,
     )
-    registry._tool_infos.append(ResourceInfo(
-        resource_type="custom_tool", name=tool_name, description=desc, source="xgen-tools",
-    ))
 
 
 def _build_math_tool(node: dict, registry: "ResourceRegistry") -> None:
-    """arithmetic 카테고리 → calculator 계열."""
-    from ..adapters.resource_registry import ResourceInfo
-    nd = node.get("data", {})
-    node_id = nd.get("id") or node.get("id", "")
-    if not node_id or node_id in registry._tool_executors:
+    """arithmetic — math/add_integers 등. a,b 는 synthetic_auto."""
+    unpacked = _unpack_node_for_builder(node, registry, "arithmetic")
+    if unpacked is None:
         return
-    tool_name = f"math_{node_id}"
-    desc = nd.get("nodeName") or f"Arithmetic: {node_id}"
-    registry._tool_defs.append({
-        "name": tool_name,
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "a": {"type": "number"}, "b": {"type": "number"},
-                "expression": {"type": "string", "description": "Math expression (optional)"},
-            },
+    nd, instance_id, spec_id, _, _, manual, auto_props, auto_required, ctrl = unpacked
+
+    tool_name = f"math_{instance_id}"
+    desc = nd.get("nodeName") or f"Arithmetic: {instance_id}"
+
+    _register_xgen_node_tool(
+        registry, instance_id=instance_id, spec_id=spec_id, category="arithmetic",
+        tool_name=tool_name, description=desc,
+        resource_type="custom_tool", source="math",
+        manual_params=manual, auto_props=auto_props, auto_required=auto_required, control_map=ctrl,
+        fallback_schema={
+            "a": {"type": "number", "description": "First operand"},
+            "b": {"type": "number", "description": "Second operand"},
         },
-    })
-    registry._tool_executors[tool_name] = _XgenNodeRef(
-        node_id=node_id, category="arithmetic", params=_extract_params(nd),
     )
-    registry._tool_infos.append(ResourceInfo(
-        resource_type="custom_tool", name=tool_name, description=desc, source="math",
-    ))
 
 
 def _build_ml_tool(node: dict, registry: "ResourceRegistry") -> None:
-    """ml 카테고리 → prediction tool."""
-    from ..adapters.resource_registry import ResourceInfo
-    nd = node.get("data", {})
-    node_id = nd.get("id") or node.get("id", "")
-    if not node_id or node_id in registry._tool_executors:
+    """ml — prediction 노드."""
+    unpacked = _unpack_node_for_builder(node, registry, "ml")
+    if unpacked is None:
         return
-    params = _extract_params(nd)
-    tool_name = f"ml_{node_id}"
-    desc = params.get("description") or nd.get("nodeName") or f"ML: {node_id}"
-    registry._tool_defs.append({
-        "name": tool_name,
-        "description": desc,
-        "input_schema": _build_input_schema_from_params(nd.get("parameters", [])),
-    })
-    registry._tool_executors[tool_name] = _XgenNodeRef(
-        node_id=node_id, category="ml", params=params,
+    nd, instance_id, spec_id, _, base, manual, auto_props, auto_required, ctrl = unpacked
+
+    tool_name = manual.get("tool_name") or base.get("tool_name") or f"ml_{instance_id}"
+    desc = (manual.get("description") or base.get("description")
+            or nd.get("nodeName") or f"ML: {instance_id}")
+
+    _register_xgen_node_tool(
+        registry, instance_id=instance_id, spec_id=spec_id, category="ml",
+        tool_name=tool_name, description=desc,
+        resource_type="custom_tool", source="ml",
+        manual_params=manual, auto_props=auto_props, auto_required=auto_required, control_map=ctrl,
+        fallback_schema={"record": {"type": "object", "description": "Feature key-value dict"}},
     )
-    registry._tool_infos.append(ResourceInfo(
-        resource_type="custom_tool", name=tool_name, description=desc, source="ml",
-    ))
 
 
 # ─── Bootstrap ───────────────────────────────────────────────

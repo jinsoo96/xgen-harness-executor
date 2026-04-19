@@ -1,0 +1,161 @@
+{
+  "_comment": "xgen 캔버스 노드 파라미터의 control 정책. 하네스 모드에서 LLM/사용자 중 누가 채울지 결정.",
+  "_doc": "docs/harness/2026-04-20-node-parameter-wiring.md",
+  "_version_note": "default_mode 를 바꾸면 저장된 기존 워크플로우 동작이 바뀜. 메이저 버전업 + 마이그레이션 노트 필수.",
+  "version": 1,
+
+  "nodes": {
+    "document_loaders/Qdrant": {
+      "_description": "RAG 기본 검색 — 사용자가 collection 박고, query 는 LLM 런타임.",
+      "params": {
+        "collection_name":  { "control": "manual" },
+        "top_k":            { "control": "switchable", "default_mode": "manual" },
+        "score_threshold":  { "control": "switchable", "default_mode": "manual" },
+        "use_model_prompt": { "control": "switchable", "default_mode": "manual" },
+        "rerank":           { "control": "switchable", "default_mode": "manual" },
+        "rerank_top_k":     { "control": "switchable", "default_mode": "manual" },
+        "enhance_prompt":   { "control": "switchable", "default_mode": "manual" }
+      },
+      "synthetic_auto": {
+        "query": { "type": "string", "auto_hint": "Search query. Describe what to find in the document collection.", "required": true }
+      }
+    },
+
+    "document_loaders/QdrantRetrievalToolHard": {
+      "_description": "고정확 반복 RAG. tool_name/description/collection/model 은 사람이 박아야 함.",
+      "params": {
+        "tool_name":       { "control": "manual" },
+        "description":     { "control": "manual" },
+        "collection_name": { "control": "manual" },
+        "llm_provider":    { "control": "manual" },
+        "openai_model":    { "control": "manual" },
+        "anthropic_model": { "control": "manual" },
+        "google_model":    { "control": "manual" },
+        "bedrock_model":   { "control": "manual" },
+        "vllm_model":      { "control": "manual" },
+        "vllm_base_url":   { "control": "manual" }
+      },
+      "synthetic_auto": {
+        "query": { "type": "string", "auto_hint": "Search query for iterative RAG retrieval.", "required": true }
+      }
+    },
+
+    "document_loaders/QdrantRetrievalToolLight": {
+      "params": {
+        "tool_name":       { "control": "manual" },
+        "description":     { "control": "manual" },
+        "collection_name": { "control": "manual" }
+      },
+      "synthetic_auto": {
+        "query": { "type": "string", "auto_hint": "Search query for light RAG retrieval.", "required": true }
+      }
+    },
+
+    "document_loaders/QdrantRetrievalToolLightPlus": {
+      "params": {
+        "tool_name":       { "control": "manual" },
+        "description":     { "control": "manual" },
+        "collection_name": { "control": "manual" }
+      },
+      "synthetic_auto": {
+        "query": { "type": "string", "auto_hint": "Search query for light+ RAG retrieval.", "required": true }
+      }
+    },
+
+    "document_loaders/OntologySearch": {
+      "params": {
+        "tool_name":       { "control": "manual" },
+        "description":     { "control": "manual" },
+        "collection_name": { "control": "manual" }
+      },
+      "synthetic_auto": {
+        "query": { "type": "string", "auto_hint": "Search query traversing ontology graph.", "required": true }
+      }
+    },
+
+    "document_loaders/ToolSelector": {
+      "_description": "여러 RAG 도구 중 LLM 이 선택 — 통짜로 manual 파라미터로 유지.",
+      "params": {
+        "tool_name":   { "control": "manual" },
+        "description": { "control": "manual" }
+      }
+    },
+
+    "file_system/filesystem_storage": {
+      "_description": "사용자별 MinIO 폴더. storage_name 은 per-user 경로라 LLM 추론 불가.",
+      "params": {
+        "storage_name": { "control": "manual" }
+      }
+    },
+
+    "file_system/table_data_mcp": {
+      "_description": "테이블 데이터 MCP — 파라미터 거의 없음. 기본 카테고리 정책 적용."
+    },
+
+    "math/add_integers": {
+      "_description": "정수 덧셈. a, b 는 LLM 이 채워야 함 (input ports → synthetic_auto 로 승격).",
+      "synthetic_auto": {
+        "a": { "type": "integer", "auto_hint": "First integer to add.", "required": true },
+        "b": { "type": "integer", "auto_hint": "Second integer to add.", "required": true }
+      }
+    },
+
+    "ml/MachineLearningTool": {
+      "_description": "ML 예측 도구. 모델 선택/등록은 사람이, record/옵션은 switchable.",
+      "params": {
+        "tool_name":        { "control": "manual" },
+        "description":      { "control": "manual" },
+        "model_identifier": { "control": "manual" },
+        "model_version":    { "control": "manual" },
+        "model_file_path":  { "control": "manual" },
+        "default_return_probabilities": { "control": "switchable", "default_mode": "manual" },
+        "default_return_dict":          { "control": "switchable", "default_mode": "manual" },
+        "enable_batch_predictions":     { "control": "switchable", "default_mode": "manual" }
+      },
+      "synthetic_auto": {
+        "record": { "type": "object", "auto_hint": "Feature key-value dict for prediction. Keys come from the registered model's input_schema.", "required": true }
+      }
+    },
+
+    "tools/local_cli_tool": {
+      "_description": "Tauri 전용 CLI 도구. skills_json 은 사람이 화이트리스트 정의.",
+      "params": {
+        "skills_json": { "control": "manual" }
+      }
+    },
+
+    "tools/workflow_tool": {
+      "params": {
+        "tool_name":   { "control": "manual" },
+        "description": { "control": "manual" }
+      }
+    },
+
+    "tools/print_any": {
+      "_description": "디버그 출력 — input port 'any_value' 가 LLM 입력."
+    },
+
+    "input_string": {
+      "_description": "사용자 문자열 입력 — startnode. 기본값 manual."
+    },
+    "input_integer": {
+      "_description": "정수 입력."
+    },
+    "image_loader": {
+      "_description": "이미지 로더."
+    }
+  },
+
+  "categories": {
+    "document_loaders": { "default_control": "switchable", "default_mode": "manual" },
+    "file_system":      { "default_control": "manual" },
+    "ml":               { "default_control": "switchable", "default_mode": "manual" },
+    "arithmetic":       { "default_control": "auto" },
+    "tools":            { "default_control": "switchable", "default_mode": "manual" }
+  },
+
+  "global_default": {
+    "control": "switchable",
+    "default_mode": "manual"
+  }
+}

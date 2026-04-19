@@ -5,6 +5,37 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.38] — 2026-04-20
+
+### Added — 캔버스 노드 파라미터 manual/auto 토글 (dispatch 단절 해결)
+
+이전까지 캔버스 노드가 `_tool_executors` 에 등록은 되지만 `ResourceRegistry.execute_tool()` dispatch 에 분기 없어 **실행 안 됨**. 이번 릴리즈로 실행 경로가 열리고, 파라미터마다 사용자가 **🤖(LLM)** 와 **✏(직접 입력)** 를 파라미터 단위로 토글 가능.
+
+- **`node_control_policy.json`** — 카테고리 × 노드 × 파라미터별 control 정책. 3종: `manual`(LLM 금지) / `auto`(사람 입력 무의미) / `switchable`(사용자 선택). `synthetic_auto` 로 `query`/`a,b` 같은 input port 를 LLM 스키마에 승격. **노드 `.py` 파일 0 수정** — 전부 라이브러리 오버레이.
+- **`_apply_node_overrides(spec_id, category, params_def, node_overrides, base_params)`** — 파라미터별 mode 결정 + `manual` 은 `_XgenNodeRef.params` 로, `auto` 는 `input_schema.properties` 로 분리. manual 키는 LLM 스키마에서 **숨김** (덮어쓰기 차단).
+- **`ResourceRegistry.execute_tool()` dispatch** — `_XgenNodeRef` 분기 신설. 병합 순서 `{...tool_input, ...params}` — manual 이 마지막에 spread 돼 LLM 이 우회 주입해도 무시. `_call_xgen_node(instance_id, spec_id, category, merged)` 가 `editor.node_composer.get_node_class_by_id` 로 실제 노드 실행. 라이브러리 독립 환경에서는 graceful 에러 문자열 반환.
+- **`ResourceRegistry.get_node_overrides()`** — builder 가 `harness_config.node_overrides` 조회. `load_all()` 시작부에서 스냅샷.
+- **builder 5종 통합 리팩토링** — document_loaders / file_system / tools / arithmetic / ml 이 `_register_xgen_node_tool()` 공통 헬퍼를 쓰도록 정리. 중복 60줄 → 각 builder 15줄.
+- **`_XgenNodeRef`** 에 `spec_id` / `control_map` 필드 추가. dispatch/디버깅에 사용.
+- **env override** — `XGEN_HARNESS_NODE_POLICY_PATH` 로 policy JSON 경로 runtime 교체 가능 (외부 회사 custom 정책 주입).
+
+### Fixed
+- **레거시 캔버스 노드 호환 — 정책 미지정 노드는 `switchable + default_mode=manual`** 기본 적용 (기존 동작 보존).
+- **manual-lock 보호** — `control: 'manual'` 파라미터는 사용자가 override 에 `mode='auto'` 를 주입해도 무시 (UI + backend 이중 방어).
+
+### Packaging
+- `pyproject.toml [tool.setuptools.package-data]` — `xgen_harness/integrations/*.json` 휠에 포함.
+
+### Tests
+- `test_node_parameter_control.py` — 14 케이스 PASS (policy 로드 / 카테고리별 control / manual 숨김 / switchable 토글 / manual-lock 방어 / synthetic_auto / builder 등록 / dispatch 병합 순서 / graceful unavailable).
+
+### Notes (이식 측 / 프론트)
+- xgen-workflow `/harness/options/node-control-policy` 엔드포인트 추가 (policy JSON 그대로 반환).
+- xgen-frontend `useHarnessStore.node_overrides` + `fetchNodeControlPolicy` + `setNodeParamMode/Value` 액션.
+- s04 `ResourceSelector` 에 `XgenNodeInlineList` (아이템 인라인, 🤖/✏ 토글) — 새 Stage/탭/모달 추가 없음.
+
+---
+
 ## [0.8.37] — 2026-04-20
 
 ### Added — 대화 이어하기 + UX 가시성 4종

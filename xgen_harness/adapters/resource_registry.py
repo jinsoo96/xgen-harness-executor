@@ -55,8 +55,15 @@ class ResourceRegistry:
         self._tool_infos: list[ResourceInfo] = []   # UI용 메타
         # RAG 컬렉션
         self._rag_collections: list[ResourceInfo] = []
+        # 하네스 설정 스냅샷 — node_overrides 등 builder 가 조회
+        self._harness_config: dict = {}
         # 로드 상태
         self._loaded = False
+
+    def get_node_overrides(self) -> dict:
+        """builder 가 조회: {node_instance_id: {param_key: {mode, value?}}}. 없으면 빈 dict."""
+        ov = (self._harness_config or {}).get("node_overrides") or {}
+        return ov if isinstance(ov, dict) else {}
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  통합 로드 — 한 번에 모든 xgen 자산 수집
@@ -75,6 +82,8 @@ class ResourceRegistry:
         """
         wf = workflow_data or {}
         hc = harness_config or {}
+        # builder 들이 node_overrides 등을 조회할 수 있게 스냅샷 (load 1회 동안만 유효)
+        self._harness_config = dict(hc)
 
         # 1. MCP 도구
         mcp_sessions = self._collect_mcp_sessions(wf, hc)
@@ -123,6 +132,9 @@ class ResourceRegistry:
 
     async def execute_tool(self, tool_name: str, tool_input: dict) -> str:
         """도구 실행 — MCP, API, Gallery, 빌트인 전부 통합."""
+        # 지연 import — 순환 참조 회피
+        from ..integrations.xgen_node_adapters import _XgenNodeRef
+
         executor = self._tool_executors.get(tool_name)
         if executor is None:
             return f"Error: Tool '{tool_name}' not found in registry"
@@ -137,6 +149,16 @@ class ResourceRegistry:
                 return await self._call_api_tool(executor.spec, tool_input)
             elif isinstance(executor, _DBToolRef):
                 return await self._call_db_tool(executor, tool_input)
+            elif isinstance(executor, _XgenNodeRef):
+                # 병합 순서: manual 이 마지막에 spread — LLM 이 스키마를 우회해 manual 키를
+                # 끼워넣어도 덮어쓰지 못하게. 최종 우선순위: manual > auto (tool_input).
+                merged = {
+                    **(tool_input or {}),
+                    **(executor.params or {}),
+                }
+                return await self._call_xgen_node(
+                    executor.node_id, executor.spec_id, executor.category, merged
+                )
             elif callable(executor):
                 result = executor(tool_name, tool_input)
                 if hasattr(result, '__await__'):
@@ -148,6 +170,74 @@ class ResourceRegistry:
                 return f"Error: Unknown executor type for '{tool_name}'"
         except Exception as e:
             return f"Error executing '{tool_name}': {e}"
+
+    async def _call_xgen_node(
+        self,
+        instance_id: str,
+        spec_id: str,
+        category: str,
+        merged_params: dict,
+    ) -> str:
+        """xgen 캔버스 노드 클래스를 직접 실행 (editor.node_composer.get_node_class_by_id).
+
+        라이브러리 독립 실행 환경(xgen-workflow 모듈 없음)에서는 graceful 에러 문자열 반환.
+        """
+        import inspect
+
+        try:
+            from editor.node_composer import get_node_class_by_id  # type: ignore
+        except Exception as e:
+            return (
+                f"Error: xgen-workflow editor.node_composer is unavailable "
+                f"(cannot execute '{spec_id}'): {e}"
+            )
+
+        NodeClass = get_node_class_by_id(spec_id) if spec_id else None
+        if NodeClass is None:
+            return f"Error: Node class '{spec_id}' not found in registry"
+
+        # execute 시그니처에 허용되는 kwargs 만 통과 — LLM 이 엉뚱한 키 넣어도 TypeError 방지.
+        # **kwargs 가 열려있으면 전체 통과.
+        try:
+            sig = inspect.signature(NodeClass.execute)
+            accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if accepts_kwargs:
+                call_kwargs = dict(merged_params)
+            else:
+                allowed = {
+                    name for name, p in sig.parameters.items()
+                    if p.kind in (
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    ) and name != "self"
+                }
+                call_kwargs = {k: v for k, v in (merged_params or {}).items() if k in allowed}
+        except (TypeError, ValueError):
+            call_kwargs = dict(merged_params or {})
+
+        try:
+            instance = NodeClass()
+            result = instance.execute(**call_kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+        except TypeError as te:
+            return f"Error: parameter mismatch for node '{spec_id}': {te}"
+        except Exception as e:
+            return f"Error executing node '{spec_id}': {e}"
+
+        # 결과 직렬화
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result[:10000]
+        if isinstance(result, (dict, list)):
+            try:
+                return json.dumps(result, ensure_ascii=False, default=str)[:10000]
+            except Exception:
+                return str(result)[:10000]
+        return str(result)[:10000]
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     #  Capability 자동 발행 — 로드된 자산을 CapabilityRegistry에 등록
