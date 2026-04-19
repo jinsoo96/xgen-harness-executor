@@ -96,7 +96,7 @@ pip install xgen-harness
 
 ---
 
-## 확장성 & 안정성 검증 (v0.8.12 코드 감사 결과)
+## 확장성 & 안정성 검증 (v0.8.35 재감사 결과)
 
 | 확장 지점 | 방식 | 등급 |
 |----------|------|------|
@@ -697,9 +697,25 @@ xgen_harness/
 
 라이브러리 소스 수정 0 — 외부 패키지 + entry_points + `register_*()` API 만으로 9개 지점 확장.
 
+- 📌 **[docs/harness/INDEX.md](../docs/harness/INDEX.md)** — **모든 문서 단일 진입점**
 - **[docs/harness/STAGE_CONTRACT.md](../docs/harness/STAGE_CONTRACT.md)** — Stage 1페이지 계약서 (가장 핵심)
-- **[docs/harness/EXTENSION_POINTS.md](../docs/harness/EXTENSION_POINTS.md)** — 9개 확장 지점 전수 매뉴얼 (Stage / Strategy / NodeAdapter / OptionSource / Fan-out / Evaluation / ToolSource / Capability / UI Selector)
+- **[docs/harness/EXTENSION_POINTS.md](../docs/harness/EXTENSION_POINTS.md)** — 9개 확장 지점 전수 매뉴얼 (Stage / Strategy / NodeAdapter / OptionSource / Fan-out / Evaluation / ToolSource / Capability / Provider)
+- **[docs/harness/ANTHROPIC_OPENAI_PATTERNS.md](../docs/harness/ANTHROPIC_OPENAI_PATTERNS.md)** — Anthropic/OpenAI Tool use · Progressive Disclosure · Citations · Sandbox · Structured Output 패턴 ↔ 우리 구현 매핑
+- **[docs/harness/TOOL_GUIDE.md](../docs/harness/TOOL_GUIDE.md)** — 도구 패키지 작성 가이드 (TOOL_DEFINITIONS + call_tool)
 - **`xgen-harness-stage-sample/`** — 외부 Stage 샘플 패키지 (pip install → entry_points → swap 까지 end-to-end 증명)
+
+### 9 entry_points 그룹 (`pyproject.toml`)
+```toml
+[project.entry-points."xgen_harness.stages"]          # Stage 추가/swap
+[project.entry-points."xgen_harness.strategies"]      # Stage 내부 알고리즘
+[project.entry-points."xgen_harness.node_adapters"]   # 노드 카테고리 → tool_def
+[project.entry-points."xgen_harness.option_sources"]  # UI 셀렉터 데이터
+[project.entry-points."xgen_harness.tool_sources"]    # 외부 도구 디스패치
+[project.entry-points."xgen_harness.providers"]       # LLM 프로바이더
+[project.entry-points."xgen_harness.capabilities"]    # 선언형 도구 바인딩
+[project.entry-points."xgen_harness.fan_out_strategies"]   # 멀티에이전트 분기
+[project.entry-points."xgen_harness.evaluation_criteria"]  # s09 평가 기준
+```
 
 ---
 
@@ -707,18 +723,25 @@ xgen_harness/
 
 | 버전 | 주요 변경 |
 |------|----------|
-| 0.8.31 | **전수 audit fix** — s07 RETRY_DELAYS override, providers `normalize_base_url` 헬퍼, `utils/docs` 추출 헬퍼, response_filter 안전 처리, `register_evaluation_criterion` 공개 API |
-| 0.8.30 | multi_agent_planner audit fix — fan_out 레지스트리, `_clone_config_for_sub` 헬퍼, 템플릿/상수 분리 |
-| 0.8.29 | **Stage 확장성** — registry `__` 구분자 (같은 슬롯 artifact swap-in), `ComplexityDetector`, `MultiAgentPlannerStage` (s05_plan/multi_agent artifact), 외부 stage 샘플 |
-| 0.8.28 | Verbose substep (s04/s06/s08), xgen 노드 메타 어댑터 5종, frontend toggleIn + Runtime 섹션 |
-| 0.8.27 | DocumentService 전면 확장 (embed_query/rerank/list_folders/ontology_query), README 인터페이스 구조도 |
-| 0.8.26 | xgen 노드 카테고리 bulk NodeAdapter 등록 |
-| 0.8.25 | NodeAdapter 레지스트리 패턴 (노드 타입 통로화) |
-| 0.8.0 | Strategy 실구현 (with_classification/embedding_search/sliding_window/parallel_read), Guard 설정화, Progressive Disclosure |
-| 0.7.0 | RAG Tool Mode, 컨텍스트 크기 제한, Citation |
-| 0.6.0 | 9개 파라미터 실연동, Strategy 구현 |
+| 0.8.35 | **어댑터 고결성 audit fix** — 9 entry_points 그룹 명시(lock-in), s06_context 가 ServiceProvider.documents 우선 (httpx 직접 호출 fallback 강등), field dep 레지스트리 generic 화 |
+| 0.8.34 | DAG sub-agent SSE forwarding fix (sub-pipeline state emitter 직접 주입, forward_task 종료 보장) |
+| 0.8.33 | UI 클릭 실제 동작 (7개 stage_param 누수 fix) — folders/ontology/reranker 실 연동 |
+| 0.8.32 | Progressive Disclosure Level 0 (`search_tools`) — Anthropic sandbox 패턴 |
+| 0.8.31 | 전수 audit fix — `utils/docs`, `normalize_base_url`, `register_evaluation_criterion`, 등 |
+| 0.8.30 | multi_agent_planner audit — fan_out 레지스트리, `_clone_config_for_sub` |
+| 0.8.29 | **Stage 확장성** — entry_points `__` 구분자, `MultiAgentPlannerStage`, 외부 stage sample |
+| 0.8.28 | Verbose substep (s04/s06/s08), xgen 노드 메타 어댑터 5종 |
+| 0.8.27 | DocumentService 전면 확장 (embed/rerank/folders/ontology) |
+| 0.8.25 ~ 0.8.26 | NodeAdapter 레지스트리 + xgen 노드 카테고리 bulk 등록 |
+| 0.8.0 | Strategy 실구현, Guard 설정화, Progressive Disclosure |
 | 0.5.x | ServiceRegistry, ExecutionContext, Plugin System |
-| 0.4.0 | ResourceRegistry, XgenAdapter |
-| 0.3.0 | Provider Registry, Gallery Tools |
-| 0.2.0 | ServiceProvider, workflow_bridge |
 | 0.1.0 | 12 Stage 파이프라인 초기 구현 |
+
+---
+
+## Acknowledgement
+
+설계·UI/UX 영감 및 12-stage harness 구성의 reference —
+🎁 **[geny-executor](https://github.com/CocoRoF/geny-executor)** by [CocoRoF](https://github.com/CocoRoF).
+
+본 프로젝트의 **Stage 고정 + Artifact 교체** 패턴, **DAG 오케스트레이터** 사고, **Progressive Disclosure** 환경 설계는 geny-executor 에서 많은 영감을 얻었습니다.
