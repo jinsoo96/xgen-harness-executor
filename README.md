@@ -103,7 +103,7 @@ pip install xgen-harness
 | **Stage 추가** | `register_stage()` + entry_points 자동 발견 + Pipeline 전역 레지스트리 결합 | **A** |
 | **Strategy 교체** | `StrategyResolver` 전역 레지스트리 (40+ 구현체, 런타임 교체) | **A** |
 | **LLM 프로바이더** | `PROVIDER_REGISTRY` + `register_provider()` + `PROVIDER_DEFAULT_MODEL` 단일 진실 소스 | **A** |
-| **Tool 소스** | `ToolSource` Protocol + Gallery entry_points + `TOOL_GUIDE.md` | **A** |
+| **Tool 소스** | `ToolSource` Protocol + Gallery entry_points + [`TOOL_GUIDE`](../docs/harness/TOOL_GUIDE.md) | **A** |
 | **서비스 URL** | `ServiceRegistry` + 환경변수 폴백 + graceful skip | **A** |
 | **Capability** | 타입 무관 `CapabilityRegistry` (5개 인덱스, 3가지 바인딩 경로) | **A** |
 | **Config 직렬화** | `dataclasses.fields()` 자동 순회 — 새 필드 추가해도 코드 수정 불필요 | **A** |
