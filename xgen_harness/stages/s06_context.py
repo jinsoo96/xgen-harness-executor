@@ -86,10 +86,11 @@ class ContextStage(Stage):
                 from ..utils.docs import extract_source, extract_text, extract_score
                 for col in rag_collections:
                     try:
-                        results = await doc_service.search(state.user_input, col, limit=top_k) or []
-                        if results:
-                            part = f"## {col} ({len(results)}건)\n\n"
-                            for i, r in enumerate(results):
+                        # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
+                        search_hits = await doc_service.search(state.user_input, col, limit=top_k) or []
+                        if search_hits:
+                            part = f"## {col} ({len(search_hits)}건)\n\n"
+                            for i, r in enumerate(search_hits):
                                 if isinstance(r, dict):
                                     src = extract_source(r) or r.get("file_name", "")
                                     score = extract_score(r)

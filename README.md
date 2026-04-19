@@ -96,7 +96,7 @@ pip install xgen-harness
 
 ---
 
-## 확장성 & 안정성 검증 (v0.8.35 재감사 결과)
+## 확장성 & 안정성 검증 (v0.8.36 재감사 결과)
 
 | 확장 지점 | 방식 | 등급 |
 |----------|------|------|
@@ -120,7 +120,7 @@ v0.8.10/0.8.11 에서 `if provider == "..."` 같은 분기 전부 제거 — 현
 - `HarnessConfig.to_dict()` — `dataclasses.fields()` 순회로 22개 필드 자동 직렬화. 새 필드 추가 시 직렬화 코드 수정 불필요.
 - `_extract_agent_config_from_nodes()` — `list_providers()` 순회하며 per-provider 기본 모델을 레지스트리에서 해석.
 - `get_stage_config()` — UI 옵션(provider/model) 을 `list_providers()` + `get_default_model()` 에서 실시간 주입.
-- 외부 개발자가 `register_provider("my_llm", MyProvider)` 한 줄 추가만 해도 config / UI / stage / 직렬화 전부 자동 반영.
+- 사용자가 `register_provider("my_llm", MyProvider)` 한 줄 추가만 해도 config / UI / stage / 직렬화 전부 자동 반영.
 
 ---
 
@@ -723,6 +723,7 @@ xgen_harness/
 
 | 버전 | 주요 변경 |
 |------|----------|
+| 0.8.36 | **s06_context regression fix** — `results` dict 가 search 결과 list 로 덮어씌워지던 variable shadow bug (v0.8.35 도입 regression) 해결 |
 | 0.8.35 | **어댑터 고결성 audit fix** — 9 entry_points 그룹 명시(lock-in), s06_context 가 ServiceProvider.documents 우선 (httpx 직접 호출 fallback 강등), field dep 레지스트리 generic 화 |
 | 0.8.34 | DAG sub-agent SSE forwarding fix (sub-pipeline state emitter 직접 주입, forward_task 종료 보장) |
 | 0.8.33 | UI 클릭 실제 동작 (7개 stage_param 누수 fix) — folders/ontology/reranker 실 연동 |

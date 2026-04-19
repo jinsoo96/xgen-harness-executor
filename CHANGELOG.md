@@ -5,6 +5,15 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.36] — 2026-04-19
+
+### Fixed — s06_context variable shadow
+- `s06_context.execute` 의 `results` dict 가 RAG `for col in rag_collections:` 루프 안 `results = await doc_service.search(...)` 에 의해 **list 로 덮어씌워지던 regression** fix (v0.8.35 에서 ServiceProvider 우선 경로 추가하며 생김).
+- 증상: `'list' object has no attribute 'get'` — `rag_fetch_complete` substep emit 시점 또는 return 값 조합 시.
+- fix: 루프 내 변수 `search_hits` 로 분리.
+
+---
+
 ## [0.8.35] — 2026-04-19
 
 ### Changed — 어댑터 고결성 audit 결과 fix
