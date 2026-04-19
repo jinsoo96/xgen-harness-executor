@@ -80,6 +80,8 @@ class ContextStage(Stage):
                 query=state.user_input,
                 user_id=state.user_id or "0",
                 top_k=int(self.get_param("rag_top_k", state, 4)),
+                score_threshold=float(self.get_param("score_threshold", state, 0.2)),
+                use_model_prompt=bool(self.get_param("use_model_prompt", state, True)),
             )
             # rerank — DocumentService.rerank 위임 (선택된 reranker 가 있을 때만)
             reranker_name: str = self.get_param("reranker", state, "") or ""
@@ -205,10 +207,15 @@ class ContextStage(Stage):
                     estimated_tokens, budget_used * 100, len(rag_collections))
         return results
 
-    async def _fetch_rag(self, collections: list[str], query: str, user_id: str, top_k: int = 4) -> str:
+    async def _fetch_rag(
+        self, collections: list[str], query: str, user_id: str,
+        top_k: int = 4, score_threshold: float = 0.2, use_model_prompt: bool = True,
+    ) -> str:
         """xgen-documents API로 RAG 검색.
 
-        실행기가 직접 하드코딩하지 않고, stage_params에서 선택된 컬렉션만 검색.
+        파라미터는 모두 stage_params override 가능:
+          - top_k / score_threshold / use_model_prompt
+        임베딩 모델은 컬렉션 생성 시 박혀 있어 자동 사용.
         """
         import httpx
 
@@ -221,14 +228,16 @@ class ContextStage(Stage):
             async with httpx.AsyncClient(timeout=httpx.Timeout(15)) as client:
                 for col_name in collections:
                     try:
+                        body = {
+                            "collection_name": col_name,
+                            "query_text": query,
+                            "limit": top_k,
+                            "score_threshold": score_threshold,
+                            "use_model_prompt": use_model_prompt,
+                        }
                         resp = await client.post(
                             f"{docs_url}/api/retrieval/documents/search",
-                            json={
-                                "collection_name": col_name,
-                                "query_text": query,
-                                "limit": top_k,
-                                "score_threshold": 0.1,
-                            },
+                            json=body,
                             headers={
                                 "x-user-id": str(user_id),
                                 "x-user-name": "harness",
