@@ -5,6 +5,49 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-04-20
+
+### Added — 워크플로우 컴파일러 (MVP)
+
+하네스 워크플로우 하나를 `xgen.compile(wf)` 한 줄로 `pip install` 가능한 wheel 로 변환한다. 받는 쪽은 `pip install xgen-gallery-<name>` 후 `await gallery.run("입력")` 한 줄. 받는 패키지는 엔진(`xgen-harness`) 만으로 실행되어 이식 레이어(`xgen-workflow`) 와 독립.
+
+- **신규 모듈 `xgen_harness.compile`** — 4 서브모듈.
+  - `external_inputs.py` — 선언(A) + `${VAR}` 자동 스캔(B) 병행. `PROVIDER_API_KEY_MAP` 레지스트리 경유로 secret 타입 자동 확정. 키 suffix 힌트(`_URL/_ENDPOINT` → url)로 스캔 품질 보강.
+  - `snapshot.py` — `WorkflowSnapshot` 데이터클래스. `compile_version=1.0`, JSON 직렬화 + validate(PEP 503/440).
+  - `deps.py` — `DependencyResolver` + `register_dependency_rule()` 외부 확장 통로. 빌트인 룰 5종 (xgen-harness / provider SDK / MCP / RAG / capability extras) 전부 레지스트리 항목으로. 외부 패키지가 `register_dependency_rule("my_vendor", ...)` 한 줄로 자기 의존성 선언.
+  - `wheel.py` — 소스 트리 생성 + `python -m build --no-isolation` 호출. 순수 문자열 템플릿(Jinja 의존성 회피). `WheelBuildResult` 반환.
+- **`HarnessConfig.external_inputs` 필드 추가** — `to_dict`/`from_dict` 자동 순회로 직렬화 무료. `from_workflow` 에도 한 줄 통과.
+- **공개 API**: `xgen_harness.compile(...)` / `compile_workflow(...)` / `build_wheel(snapshot, ...)` / `load_snapshot(path)`.
+- **산출 wheel 구조**:
+  - `xgen_gallery_<name>/` 에 `snapshot.json` + `env.example` + `cli.py` + `__init__.py` 탑재.
+  - `[project.scripts]` 로 `xgen-gallery-<name>` CLI (`run` / `info` 서브커맨드) 제공.
+  - `[project.entry-points."xgen_harness.galleries"]` 로 설치 갤러리 자동 발견 — 단계 6 대비.
+
+### Verified — 로컬 + 폐쇄망 실전 검증
+
+- 단위/통합 테스트 17/17 PASS (`test_compile.py`).
+- 실제 워크플로우 컴파일 → 격리 venv `pip install` → `manifest()` / `arun()` import 확인.
+- `${OPENAI_API_KEY}` / `${MY_API_URL}` 자동 스캔 → secret/url 타입 확정 + env.example 자동 생성 확인.
+- RAG collections 있는 워크플로우에 `qdrant-client>=1.7` 자동 포함 확인.
+- **폐쇄망 시나리오**: `pip download` 로 transitive wheel 8개 확보 → `pip install --no-index --find-links wheelhouse/` 로 PyPI 완전 차단 상태에서 설치 + 실행 성공.
+
+### 고결한 구조 원칙 (설계 의도)
+
+- **노드/갤러리 변경 = 엔진 재배포 금지**. `pip install xgen-gallery-*` 한 줄로 즉시 추가/교체.
+- **3채널 배포** — 공개 PyPI + 사내 인덱스 + 로컬 wheel 모두 동일 산출물.
+- **엔진 독립 실행** — 컴파일 산출 wheel 은 `xgen-harness` 만 import 하면 돌아감 (이식 레이어 거치지 않음).
+- **하드코딩 제거**: provider/env/dep/capability 모두 레지스트리 기반. 외부 기여자가 엔진 소스 수정 없이 자기 리소스 주입.
+
+### Not Yet
+
+- 단계 5 (MCP stdio 서버 래퍼) — 다음 릴리스.
+- 단계 6 (`xgen-gallery` 중앙 메타 규약) — entry_points 채널만 선결 연결, 인덱스는 후속.
+- 단계 7 (UI `/harness/compile` 엔드포인트 + 프론트 Deploy 모달) — 이식측 작업.
+
+상세 설계: `docs/harness/2026-04-20-workflow-compiler.md`.
+
+---
+
 ## [0.9.3] — 2026-04-20
 
 ### Fixed — `__version__` 문자열 누락

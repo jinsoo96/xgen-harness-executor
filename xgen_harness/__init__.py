@@ -70,8 +70,27 @@ from .capabilities import (
     ParameterResolver,
     ResolveResult,
 )
+from .compile import (
+    compile_workflow as compile,
+    compile_workflow,
+    build_wheel,
+    WheelBuildResult,
+    WorkflowSnapshot,
+    SNAPSHOT_VERSION,
+    load_snapshot,
+    ExternalInputSpec,
+    InputType,
+    scan_placeholders,
+    merge_scanned,
+    collect_runtime_values,
+    MissingExternalInputError,
+    DependencyResolver,
+    resolve_dependencies,
+    register_dependency_rule,
+    DependencyRule,
+)
 
-__version__ = "0.9.3"
+__version__ = "0.10.0"
 
 __all__ = [
     # Core
@@ -155,4 +174,22 @@ __all__ = [
     "MaterializationReport",
     "ParameterResolver",
     "ResolveResult",
+    # Compiler (v0.10.0+)
+    "compile",
+    "compile_workflow",
+    "build_wheel",
+    "WheelBuildResult",
+    "WorkflowSnapshot",
+    "SNAPSHOT_VERSION",
+    "load_snapshot",
+    "ExternalInputSpec",
+    "InputType",
+    "scan_placeholders",
+    "merge_scanned",
+    "collect_runtime_values",
+    "MissingExternalInputError",
+    "DependencyResolver",
+    "resolve_dependencies",
+    "register_dependency_rule",
+    "DependencyRule",
 ]

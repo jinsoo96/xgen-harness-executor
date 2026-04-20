@@ -72,6 +72,15 @@ class HarnessConfig:
     capabilities: list = field(default_factory=list)       # ["retrieval.web_search", ...]
     capability_params: dict = field(default_factory=dict)  # capability_name → {param_id: value}
 
+    # --- 외부 입력 선언 (컴파일 타겟) ---
+    # 컴파일된 wheel 이 런타임에 요구하는 외부 값 계약. UI 가 이 선언을 보고
+    # 배포 전 입력 폼을 자동 렌더. 컴파일러(xgen_harness.compile) 가 auto-scan 으로
+    # ${VAR} 플레이스홀더를 발견하면 이 필드에 후보로 등록.
+    #
+    # 형식: {name: {"type": "secret"|"url"|"string"|"int"|"bool",
+    #              "required": bool, "default": Any, "description": str}}
+    external_inputs: dict = field(default_factory=dict)
+
     # --- 기타 ---
     cost_budget_usd: float = 10.0
     context_window: int = 200_000
@@ -226,6 +235,7 @@ class HarnessConfig:
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
             capabilities=list(harness_config.get("capabilities", []) or []),
             capability_params=dict(harness_config.get("capability_params", {}) or {}),
+            external_inputs=dict(harness_config.get("external_inputs", {}) or {}),
             preset=preset,
         )
 

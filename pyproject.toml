@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.9.3"
-description = "XGEN Harness Pipeline Library — 12-stage dual-abstraction agent pipeline"
+version = "0.10.0"
+description = "XGEN Harness Pipeline Library — 12-stage dual-abstraction agent pipeline + workflow compiler"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
@@ -73,5 +73,6 @@ build-backend = "setuptools.build_meta"
 include = ["xgen_harness*"]
 
 # v0.8.38+ 노드 파라미터 control policy JSON 을 휠에 포함
+# v0.10.0+ 컴파일러 템플릿은 순수 Python 문자열이라 package-data 불필요 (templates/__init__.py 에 내장)
 [tool.setuptools.package-data]
 "xgen_harness" = ["integrations/*.json"]
