@@ -344,7 +344,7 @@ class XgenMCPService:
 class XgenDocumentService:
     """xgen-documents Hybrid RAG / Ontology 검색.
 
-    s03_system_prompt, s06_context에서 문서 검색.
+    s03_prompt, s06_context에서 문서 검색.
     """
 
     def __init__(self, base_url: str, timeout: float = 30.0):

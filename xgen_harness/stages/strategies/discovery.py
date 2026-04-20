@@ -26,7 +26,7 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
              tool_index에는 name + short description만 저장
              full schemas는 tool_schemas에 캐시
     Level 2: discover_tools 빌트인으로 상세 스키마 조회 (LLM이 필요할 때 호출)
-    Level 3: 실제 도구 실행 (s08_execute에서 처리)
+    Level 3: 실제 도구 실행 (s08_act에서 처리)
     """
 
     @property
@@ -74,7 +74,7 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
             tool_index.append({
                 "name": search.name, "description": search.description[:_MAX_DESC_CHARS], "category": "system",
             })
-            # tool_registry 에 인스턴스 등록 (s08_execute 가 디스패치 시 찾음)
+            # tool_registry 에 인스턴스 등록 (s08_act 가 디스패치 시 찾음)
             if hasattr(state, "metadata"):
                 state.metadata.setdefault("tool_registry", {})["search_tools"] = search
 

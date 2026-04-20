@@ -6,7 +6,7 @@ CapabilityMatcher — intent → CapabilitySpec 매칭
   2. keyword    — 설명/태그 문자열 포함 (토큰 기반)
   3. llm        — LLM judge (Matcher는 llm_fn만 받고 구현은 외부 주입)
 
-라이브러리는 LLM 직접 호출하지 않음. 호출자(s05_plan 등)가 llm_fn을 넘김.
+라이브러리는 LLM 직접 호출하지 않음. 호출자(s05_strategy 등)가 llm_fn을 넘김.
 """
 
 from __future__ import annotations

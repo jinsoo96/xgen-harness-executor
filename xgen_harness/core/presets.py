@@ -6,7 +6,7 @@ geny-harness 패턴: minimal, chat, agent, evaluator, vtuber
 
 사용:
     config = HarnessConfig.from_preset("agent")
-    # → s02_memory ON, s04_tool_index ON, s05_plan ON, s09_validate ON
+    # → s02_history ON, s04_tool ON, s05_strategy ON, s09_judge ON
     # → s10_decide: "threshold", s09: "llm_judge"
 """
 
@@ -42,7 +42,7 @@ PRESETS: dict[str, Preset] = {
         name="minimal",
         description="Minimal chat — no tools, no RAG, no validation",
         description_ko="최소 채팅 — 도구/RAG/검증 없이 바로 대화",
-        disabled_stages={"s02_memory", "s04_tool_index", "s05_plan", "s06_context", "s08_execute", "s09_validate", "s11_save"},
+        disabled_stages={"s02_history", "s04_tool", "s05_strategy", "s06_context", "s08_act", "s09_judge", "s11_save"},
         active_strategies={"s10_decide": "always_pass"},
         temperature=0.7,
         max_iterations=1,
@@ -52,7 +52,7 @@ PRESETS: dict[str, Preset] = {
         name="chat",
         description="Chat with memory — conversation history maintained",
         description_ko="대화형 — 이전 대화 이력 유지, 멀티턴",
-        disabled_stages={"s04_tool_index", "s05_plan", "s06_context", "s08_execute", "s09_validate", "s11_save"},
+        disabled_stages={"s04_tool", "s05_strategy", "s06_context", "s08_act", "s09_judge", "s11_save"},
         active_strategies={"s10_decide": "always_pass"},
         temperature=0.7,
         max_iterations=1,
@@ -64,8 +64,8 @@ PRESETS: dict[str, Preset] = {
         description_ko="에이전트 — 도구 사용, RAG, 계획, 검증, 루프",
         disabled_stages=set(),  # 전체 활성
         active_strategies={
-            "s04_tool_index": "progressive_3level",
-            "s09_validate": "rule_based",
+            "s04_tool": "progressive_3level",
+            "s09_judge": "rule_based",
             "s10_decide": "threshold",
         },
         temperature=0.3,
@@ -78,12 +78,12 @@ PRESETS: dict[str, Preset] = {
         description_ko="평가형 — LLM Judge로 엄격한 품질 검증",
         disabled_stages=set(),
         active_strategies={
-            "s04_tool_index": "progressive_3level",
-            "s09_validate": "llm_judge",
+            "s04_tool": "progressive_3level",
+            "s09_judge": "llm_judge",
             "s10_decide": "threshold",
         },
         default_params={
-            "s09_validate": {"threshold": 0.8},
+            "s09_judge": {"threshold": 0.8},
         },
         temperature=0.2,
         max_iterations=15,
@@ -93,7 +93,7 @@ PRESETS: dict[str, Preset] = {
         name="rag",
         description="RAG-focused — document search, no tools",
         description_ko="RAG 전용 — 문서 검색 기반 답변, 도구 없음",
-        disabled_stages={"s04_tool_index", "s05_plan", "s08_execute", "s09_validate"},
+        disabled_stages={"s04_tool", "s05_strategy", "s08_act", "s09_judge"},
         active_strategies={"s10_decide": "always_pass"},
         temperature=0.3,
         max_iterations=1,

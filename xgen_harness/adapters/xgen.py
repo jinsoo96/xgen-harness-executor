@@ -239,9 +239,9 @@ class XgenAdapter:
         # stage_params, disabled_stages, active_strategies 등 전달
         stage_params = dict(hc.get("stage_params") or {})
 
-        # top-level rag_collections / mcp_sessions / rag_top_k 를 s04_tool_index.stage_params 로 자동 주입
+        # top-level rag_collections / mcp_sessions / rag_top_k 를 s04_tool.stage_params 로 자동 주입
         # (UI에서 top-level로 넣어도 s04가 읽을 수 있도록 호환성 유지)
-        s04_params = dict(stage_params.get("s04_tool_index") or {})
+        s04_params = dict(stage_params.get("s04_tool") or {})
         if hc.get("rag_collections") and "rag_collections" not in s04_params:
             s04_params["rag_collections"] = list(hc["rag_collections"])
         if hc.get("mcp_sessions") and "mcp_sessions" not in s04_params:
@@ -251,7 +251,7 @@ class XgenAdapter:
         if hc.get("rag_tool_mode") and "rag_tool_mode" not in s04_params:
             s04_params["rag_tool_mode"] = hc["rag_tool_mode"]
         if s04_params:
-            stage_params["s04_tool_index"] = s04_params
+            stage_params["s04_tool"] = s04_params
 
         # top-level db_connections 를 s06_context.stage_params 로 자동 주입
         # (UI/API가 top-level로 넣어도 s06가 읽을 수 있도록 — rag/mcp 패턴 동일)
@@ -328,7 +328,7 @@ class XgenAdapter:
             state.metadata["resource_registry"] = registry
 
             # 9.5. Capability 자동 발행 — 로드된 자산을 CapabilityRegistry에 등록
-            #      s04_tool_index / s05_plan의 capability 바인딩이 자동 동작하도록
+            #      s04_tool / s05_strategy의 capability 바인딩이 자동 동작하도록
             try:
                 published = registry.publish_capabilities()
                 if published:

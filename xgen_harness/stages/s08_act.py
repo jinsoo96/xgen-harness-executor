@@ -29,7 +29,7 @@ class ExecuteStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s08_execute"
+        return "s08_act"
 
     @property
     def order(self) -> int:

@@ -59,7 +59,7 @@ class HarnessSession:
             user_input=user_input,
             conversation_history=self.state.messages.copy(),
         )
-        # 이전 대화를 messages에 직접 주입 (s02_memory 비활성이어도 동작)
+        # 이전 대화를 messages에 직접 주입 (s02_history 비활성이어도 동작)
         for msg in self.state.messages:
             state.messages.append(msg)
 

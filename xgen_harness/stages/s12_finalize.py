@@ -20,7 +20,7 @@ class CompleteStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s12_complete"
+        return "s12_finalize"
 
     @property
     def order(self) -> int:

@@ -1,7 +1,7 @@
 """
 xgen-harness 도구 패키지 — Tool source registry for extensible tool dispatch.
 
-외부 패키지/코드에서 ToolSource를 등록하면 s08_execute가 자동으로 인식한다.
+외부 패키지/코드에서 ToolSource를 등록하면 s08_act가 자동으로 인식한다.
 
 Usage::
 

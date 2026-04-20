@@ -51,7 +51,7 @@ class ValidateStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s09_validate"
+        return "s09_judge"
 
     @property
     def order(self) -> int:

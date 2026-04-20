@@ -6,7 +6,7 @@ S07 LLM — LLM API 호출
 - 재시도 로직 (429: rate limit, 529: overload)
 - 모델 폴백 (Anthropic → OpenAI)
 - 내부 도구 루프: LLM → tool_use 감지 → Execute 스테이지 → 결과 → LLM 재호출
-  (도구 루프는 s08_execute와 협력)
+  (도구 루프는 s08_act와 협력)
 """
 
 import asyncio

@@ -169,12 +169,12 @@ async def execute_via_python_pipeline(
 
 # 스테이지 이름 정규화
 _STAGE_ALIASES = {
-    "input": "s01_input", "memory": "s02_memory",
-    "system_prompt": "s03_system_prompt", "tool_index": "s04_tool_index",
-    "plan": "s05_plan", "context": "s06_context",
-    "llm": "s07_llm", "execute": "s08_execute",
-    "validate": "s09_validate", "decide": "s10_decide",
-    "save": "s11_save", "complete": "s12_complete",
+    "input": "s01_input", "memory": "s02_history",
+    "system_prompt": "s03_prompt", "tool_index": "s04_tool",
+    "plan": "s05_strategy", "context": "s06_context",
+    "llm": "s07_llm", "execute": "s08_act",
+    "validate": "s09_judge", "decide": "s10_decide",
+    "save": "s11_save", "complete": "s12_finalize",
 }
 
 

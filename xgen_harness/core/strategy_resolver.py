@@ -103,9 +103,9 @@ def _register_defaults() -> None:
     )
     from ..stages.strategies.tool_executor import ParallelToolExecutor
 
-    # s04_tool_index — discovery
-    register_strategy("s04_tool_index", "discovery", "progressive_3level", ProgressiveDiscovery)
-    register_strategy("s04_tool_index", "discovery", "eager_load", EagerLoadDiscovery)
+    # s04_tool — discovery
+    register_strategy("s04_tool", "discovery", "progressive_3level", ProgressiveDiscovery)
+    register_strategy("s04_tool", "discovery", "eager_load", EagerLoadDiscovery)
 
     # s06_context — compactor
     register_strategy("s06_context", "compactor", "token_budget", TokenBudgetCompactor)
@@ -115,17 +115,17 @@ def _register_defaults() -> None:
     register_strategy("s07_llm", "retry", "exponential_backoff", ExponentialBackoffRetry)
     register_strategy("s07_llm", "retry", "no_retry", NoRetry)
 
-    # s08_execute — executor, router
-    register_strategy("s08_execute", "executor", "sequential", SequentialToolExecutor)
-    register_strategy("s08_execute", "executor", "parallel", ParallelToolExecutor)
-    register_strategy("s08_execute", "router", "composite", CompositeToolRouter)
-    register_strategy("s08_execute", "router", "mcp", MCPToolRouter)
-    register_strategy("s08_execute", "router", "builtin", BuiltinToolRouter)
+    # s08_act — executor, router
+    register_strategy("s08_act", "executor", "sequential", SequentialToolExecutor)
+    register_strategy("s08_act", "executor", "parallel", ParallelToolExecutor)
+    register_strategy("s08_act", "router", "composite", CompositeToolRouter)
+    register_strategy("s08_act", "router", "mcp", MCPToolRouter)
+    register_strategy("s08_act", "router", "builtin", BuiltinToolRouter)
 
-    # s09_validate — evaluation
-    register_strategy("s09_validate", "evaluation", "llm_judge", LLMJudgeEvaluation)
-    register_strategy("s09_validate", "evaluation", "rule_based", RuleBasedEvaluation)
-    register_strategy("s09_validate", "evaluation", "none", NoValidation)
+    # s09_judge — evaluation
+    register_strategy("s09_judge", "evaluation", "llm_judge", LLMJudgeEvaluation)
+    register_strategy("s09_judge", "evaluation", "rule_based", RuleBasedEvaluation)
+    register_strategy("s09_judge", "evaluation", "none", NoValidation)
 
     # s10_decide — decide (간단한 내장 Strategy)
     from ..stages.strategies._decide import ThresholdDecide, AlwaysPassDecide
@@ -134,8 +134,8 @@ def _register_defaults() -> None:
 
     # s03 — cache
     from ..stages.strategies.cache import AnthropicCacheStrategy, NoCacheStrategy
-    register_strategy("s03_system_prompt", "cache", "anthropic_cache", AnthropicCacheStrategy)
-    register_strategy("s03_system_prompt", "cache", "no_cache", NoCacheStrategy)
+    register_strategy("s03_prompt", "cache", "anthropic_cache", AnthropicCacheStrategy)
+    register_strategy("s03_prompt", "cache", "no_cache", NoCacheStrategy)
 
     # s07 — token tracker, thinking processor, response parser
     from ..stages.strategies.token_tracker import DefaultTokenTracker, ModelPricingCalculator

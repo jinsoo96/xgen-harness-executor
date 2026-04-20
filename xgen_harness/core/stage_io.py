@@ -77,7 +77,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s02_memory": {
+    "s02_history": {
         "input": StageInput(
             requires=[],
             optional=["previous_results", "conversation_history"],
@@ -87,7 +87,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s03_system_prompt": {
+    "s03_prompt": {
         "input": StageInput(
             requires=[],
             optional=["rag_context", "previous_results"],
@@ -97,7 +97,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s04_tool_index": {
+    "s04_tool": {
         "input": StageInput(
             requires=[],
             optional=["tool_definitions"],
@@ -108,7 +108,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s05_plan": {
+    "s05_strategy": {
         "input": StageInput(
             requires=["user_input"],
             optional=["tool_index"],
@@ -139,7 +139,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "MessageEvent", "ThinkingEvent"],
         ),
     },
-    "s08_execute": {
+    "s08_act": {
         "input": StageInput(
             requires=["pending_tool_calls"],
             optional=["provider"],
@@ -150,7 +150,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "ToolCallEvent", "ToolResultEvent"],
         ),
     },
-    "s09_validate": {
+    "s09_judge": {
         "input": StageInput(
             requires=["last_assistant_text"],
             optional=["provider", "user_input"],
@@ -179,7 +179,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s12_complete": {
+    "s12_finalize": {
         "input": StageInput(
             requires=[],
             optional=["final_output", "token_usage", "cost_usd"],

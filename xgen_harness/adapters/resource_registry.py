@@ -8,14 +8,14 @@ xgen-workflow에 있는 모든 자산(도구, MCP, RAG, DB, API, Gallery)을
     registry = ResourceRegistry(services)
     await registry.load_all(workflow_data, harness_config)
 
-    # s04_tool_index에서:
+    # s04_tool에서:
     state.tool_definitions = registry.get_tool_definitions()
     state.metadata["tool_registry"] = registry.get_tool_executors()
 
-    # s03_system_prompt에서:
+    # s03_prompt에서:
     rag_context = await registry.search_rag(query, collections)
 
-    # s08_execute에서:
+    # s08_act에서:
     result = await registry.execute_tool(tool_name, tool_input)
 """
 
@@ -115,11 +115,11 @@ class ResourceRegistry:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def get_tool_definitions(self) -> list[dict]:
-        """s04_tool_index / s07_llm에서 LLM에 전달할 도구 스키마."""
+        """s04_tool / s07_llm에서 LLM에 전달할 도구 스키마."""
         return list(self._tool_defs)
 
     def get_tool_executors(self) -> dict[str, Any]:
-        """s08_execute에서 도구 이름으로 실행할 객체 매핑."""
+        """s08_act에서 도구 이름으로 실행할 객체 매핑."""
         return dict(self._tool_executors)
 
     def get_resource_infos(self) -> list[ResourceInfo]:

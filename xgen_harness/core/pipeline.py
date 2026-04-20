@@ -189,7 +189,7 @@ class Pipeline:
                 stage_id=stage.stage_id,
                 stage_name=stage.display_name_ko,
                 output=result,
-                score=state.validation_score if stage.stage_id == "s09_validate" else None,
+                score=state.validation_score if stage.stage_id == "s09_judge" else None,
                 step=step,
                 total=self._total_stage_count,
             ))

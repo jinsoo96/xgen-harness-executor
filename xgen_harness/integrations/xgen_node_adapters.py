@@ -489,7 +489,7 @@ _XGEN_CATEGORY_ADAPTERS: dict[str, tuple[list[str], callable, str]] = {
     ),
     "xgen_memory_meta": (
         ["memory"], _build_generic_metadata_only,
-        "memory 노드 메타 (Stage s02_memory 자체 처리)",
+        "memory 노드 메타 (Stage s02_history 자체 처리)",
     ),
     "xgen_routers_meta": (
         ["routers"], _build_generic_metadata_only,

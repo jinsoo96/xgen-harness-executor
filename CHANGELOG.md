@@ -5,6 +5,40 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-04-20
+
+### ⚡ BREAKING + BACKWARDS COMPATIBLE — Stage ID 리네이밍
+
+Stage 내부 id 7개를 더 직관적인 이름으로 변경. display name 도 12개 전부 정리. 기존 저장된 워크플로우와 외부 갤러리 wheel 은 **alias 레이어**로 계속 동작 (v0.12+ 에서 구 id 제거 예정).
+
+**변경 매핑**:
+- `s02_memory` → `s02_history`
+- `s03_system_prompt` → `s03_prompt`
+- `s04_tool_index` → `s04_tool`
+- `s05_plan` → `s05_strategy`
+- `s08_execute` → `s08_act`
+- `s09_validate` → `s09_judge`
+- `s12_complete` → `s12_finalize`
+
+유지: `s01_input`, `s06_context`, `s07_llm`, `s10_decide`, `s11_save`
+
+**새 display name** (EN/KO):
+- Input/입력, History/이력, Prompt/프롬프트, Tool/도구, Strategy/전략, Context/컨텍스트,
+  LLM/LLM, Act/실행, Judge/판정, Decide/결정, Save/저장, Finalize/마무리
+
+**구현**:
+- `core/stage_config.py` — `STAGE_ID_ALIASES` dict + `canonical_stage_id(sid)` helper
+- `core/stage_config.py::get_stage_config` — 입력 sid 를 canonical 로 정규화
+- `core/config.py::HarnessConfig.from_workflow` — `disabled_stages` / `stage_params` /
+  `active_strategies` / `strategy_variants` 키를 전부 alias 해석 → 구 id 저장된
+  워크플로우도 자동으로 새 id 로 로드
+- `stages/` 7개 파일 rename + 각 클래스 `stage_id` property 갱신
+- `core/stage.py::STAGE_DISPLAY_NAMES` + `STAGE_DISPLAY_NAMES_KO` 새 이름
+
+**테스트**: `test_compile.py` 26/26 PASS + alias 하위호환 단위 PASS.
+
+---
+
 ## [0.10.4] — 2026-04-20
 
 ### Added — Strategy Variants (디폴트 건드리지 않고 복사해서 v2)

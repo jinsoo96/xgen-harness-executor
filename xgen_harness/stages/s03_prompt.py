@@ -37,7 +37,7 @@ class SystemPromptStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s03_system_prompt"
+        return "s03_prompt"
 
     @property
     def order(self) -> int:

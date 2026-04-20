@@ -1,4 +1,4 @@
-"""MultiAgentPlannerStage — 's05_plan' 슬롯의 'multi_agent' artifact.
+"""MultiAgentPlannerStage — 's05_strategy' 슬롯의 'multi_agent' artifact.
 
 흐름:
 1. ComplexityDetector 가 escalate 판정.
@@ -32,15 +32,15 @@ DEFAULT_SUB_PROMPT_TEMPLATE = (
 )
 
 # 하위 슬롯 stage_id 상수 — 문자열 리터럴 반복 제거.
-PLAN_SLOT = "s05_plan"
-TOOL_INDEX_SLOT = "s04_tool_index"
+PLAN_SLOT = "s05_strategy"
+TOOL_INDEX_SLOT = "s04_tool"
 CONTEXT_SLOT = "s06_context"
 
 logger = logging.getLogger("harness.orchestrator.planner")
 
 
 class MultiAgentPlannerStage(Stage):
-    """s05_plan 슬롯의 multi_agent artifact — 자동 분기 + 종합."""
+    """s05_strategy 슬롯의 multi_agent artifact — 자동 분기 + 종합."""
 
     @property
     def stage_id(self) -> str:
@@ -156,7 +156,7 @@ class MultiAgentPlannerStage(Stage):
         }
 
     def _collect_rag_collections(self, state: PipelineState) -> list[str]:
-        """RAG 컬렉션은 s04_tool_index 와 s06_context 두 곳의 stage_params 에 흩어짐.
+        """RAG 컬렉션은 s04_tool 와 s06_context 두 곳의 stage_params 에 흩어짐.
         둘 다 모아서 dedupe. dict/str 형태 모두 허용."""
         config = state.config
         seen: list[str] = []
@@ -235,7 +235,7 @@ def _clone_config_for_sub(
 ) -> HarnessConfig:
     """base_config 의 모든 필드를 복제 + sub-agent 용으로 일부만 override.
 
-    재진입 방지: artifacts[s05_plan] = 'default' 강제.
+    재진입 방지: artifacts[s05_strategy] = 'default' 강제.
     """
     base_dict = dataclasses.asdict(base_config)
     # disabled_stages 는 set 인데 asdict 가 list 로 변환 → 다시 set 화 필요

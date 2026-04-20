@@ -3,7 +3,7 @@ S04 Tool Index — Progressive 도구 디스커버리
 
 Level 1: 도구 메타데이터(이름+설명)를 시스템 프롬프트에 삽입
 Level 2: discover_tools 빌트인 도구로 상세 스키마 조회
-Level 3: 실제 도구 실행 (s08_execute에서 처리)
+Level 3: 실제 도구 실행 (s08_act에서 처리)
 
 UI에서 선택한 도구/MCP/RAG를 여기서 바인딩.
 stage_params에서 mcp_sessions, rag_collections, rag_top_k를 읽어
@@ -25,7 +25,7 @@ class ToolIndexStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s04_tool_index"
+        return "s04_tool"
 
     @property
     def order(self) -> int:
@@ -80,7 +80,7 @@ class ToolIndexStage(Stage):
         #   - custom_tools: 사용자가 등록한 API tool 의 function_id 목록
         #   - cli_skills: 로컬 CLI 스킬 식별자
         #   ResourceRegistry 가 워크플로 노드 변환 시 _tool_defs 에 이미 풀어놓는다 →
-        #   여기서는 metadata 로 노출만 (capability_bind / s08_execute 가 필요시 참조).
+        #   여기서는 metadata 로 노출만 (capability_bind / s08_act 가 필요시 참조).
         if selected_custom_tools and state.metadata.get("resource_registry"):
             registry = state.metadata["resource_registry"]
             available = registry.get_tool_definitions() if hasattr(registry, "get_tool_definitions") else []
@@ -118,7 +118,7 @@ class ToolIndexStage(Stage):
         state.tool_definitions = augmented_defs
         state.tool_index = tool_index
 
-        # 3. RAG 설정을 metadata에 저장 (s03_system_prompt에서 사용)
+        # 3. RAG 설정을 metadata에 저장 (s03_prompt에서 사용)
         if rag_collections:
             state.metadata["rag_collections"] = rag_collections
             state.metadata["rag_top_k"] = rag_top_k
@@ -135,7 +135,7 @@ class ToolIndexStage(Stage):
                 if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
                     state.tool_definitions.append(rag_tool.to_api_format())
                     tool_index.append(rag_tool.to_index_entry())
-                    # tool_registry에 인스턴스 등록 (s08_execute에서 실행용)
+                    # tool_registry에 인스턴스 등록 (s08_act에서 실행용)
                     if "tool_registry" not in state.metadata:
                         state.metadata["tool_registry"] = {}
                     state.metadata["tool_registry"]["rag_search"] = rag_tool

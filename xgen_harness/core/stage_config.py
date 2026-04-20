@@ -7,6 +7,43 @@
 - 기술적 동작 설명
 """
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Stage ID Alias — v0.11.0 리네이밍 하위호환 레이어
+# 구 저장 워크플로우 / 외부 갤러리 wheel 이 구 id 를 보내와도 내부에서 새 id 로 변환.
+# Phase 1 (v0.11.x): 양쪽 다 수용. Phase 2 (v0.12+): 구 id 경고 → 제거.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STAGE_ID_ALIASES: dict[str, str] = {
+    "s02_memory":        "s02_history",
+    "s03_system_prompt": "s03_prompt",
+    "s04_tool_index":    "s04_tool",
+    "s05_plan":          "s05_strategy",
+    "s08_execute":       "s08_act",
+    "s09_validate":      "s09_judge",
+    "s12_complete":      "s12_finalize",
+}
+
+
+def canonical_stage_id(sid: str) -> str:
+    """구 stage_id 가 들어와도 새 id 로 정규화. 이미 새 id 면 그대로."""
+    if not isinstance(sid, str):
+        return sid
+    return STAGE_ID_ALIASES.get(sid, sid)
+
+
+def canonical_stage_id_map(d: dict) -> dict:
+    """dict 의 key 를 stage_id 로 간주하고 canonical 로 정규화한 새 dict 반환.
+
+    구 id / 새 id 가 충돌하면 새 id 값이 유지 (나중 병합 승리).
+    """
+    if not isinstance(d, dict):
+        return d
+    out: dict = {}
+    for k, v in d.items():
+        canonical = canonical_stage_id(k) if isinstance(k, str) else k
+        out[canonical] = v
+    return out
+
+
 STAGE_CONFIGS: dict[str, dict] = {
     "s01_input": {
         # PHILOSOPHY §2 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
@@ -21,7 +58,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "첫 user 메시지를 파이프라인에 push (단일 책임)",
         ],
     },
-    "s02_memory": {
+    "s02_history": {
         "description_ko": "이전 대화 이력, 실행 결과, 관련 문서를 로드합니다.",
         "description_en": "Loads conversation history, results, and related documents.",
         "icon": "🧠",
@@ -50,7 +87,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "문서 소스: Documents 서비스 임베딩 검색 (선택 시)",
         ],
     },
-    "s03_system_prompt": {
+    "s03_prompt": {
         "description_ko": "시스템 프롬프트를 조립합니다. 에이전트의 역할과 행동 규칙을 정의합니다.",
         "description_en": "Assembles system prompt defining agent role and rules.",
         "icon": "📝",
@@ -74,7 +111,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "컨텍스트 압축 시 낮은 우선순위부터 제거",
         ],
     },
-    "s04_tool_index": {
+    "s04_tool": {
         "description_ko": "사용할 도구, MCP 세션, 문서 컬렉션을 선택합니다. Progressive Disclosure로 효율적으로 관리합니다.",
         "description_en": "Select tools, MCP sessions, and document collections.",
         "icon": "🔧",
@@ -114,12 +151,12 @@ STAGE_CONFIGS: dict[str, dict] = {
         "behavior": [
             "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",
             "Level 2: discover_tools로 상세 스키마 조회",
-            "Level 3: 실제 도구 실행 (s08_execute)",
+            "Level 3: 실제 도구 실행 (s08_act)",
             "RAG: Documents API로 벡터 검색 → 시스템 프롬프트에 주입",
             "MCP: MCP 서비스에서 도구 자동 디스커버리",
         ],
     },
-    "s05_plan": {
+    "s05_strategy": {
         "description_ko": "Chain-of-Thought 계획을 수립합니다. LLM이 단계별로 생각하도록 유도합니다.",
         "description_en": "Chain-of-Thought planning before execution.",
         "icon": "📋",
@@ -204,7 +241,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "Prompt Caching 활성화",
         ],
     },
-    "s08_execute": {
+    "s08_act": {
         "description_ko": "도구를 실행합니다. MCP 도구, 빌트인 도구를 호출하고 결과를 수집합니다.",
         "description_en": "Executes tool calls from LLM response.",
         "icon": "⚡",
@@ -234,7 +271,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "discover_tools 빌트인 (Progressive Disclosure L2)",
         ],
     },
-    "s09_validate": {
+    "s09_judge": {
         "description_ko": "독립 LLM 호출로 응답 품질을 평가합니다. 기준 미달 시 재시도합니다.",
         "description_en": "Evaluates response quality with independent LLM call.",
         "icon": "✅",
@@ -310,7 +347,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "DB 없으면 graceful skip",
         ],
     },
-    "s12_complete": {
+    "s12_finalize": {
         "description_ko": "최종 출력을 확정하고 메트릭스를 수집합니다.",
         "description_en": "Finalizes output and collects metrics.",
         "icon": "🏁",
@@ -391,12 +428,12 @@ def _inject_dynamic_options(cfg: dict) -> dict:
 def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
     """스테이지별 추가 메타 주입 — UI 배지/라이브 카운터용.
 
-    현재: s04_tool_index 에 progressive_threshold.
+    현재: s04_tool 에 progressive_threshold.
     외부 전략 교체 시에도 일관된 키로 노출되도록 단일 지점 관리.
     """
     if not cfg or not isinstance(cfg, dict):
         return cfg
-    if stage_id == "s04_tool_index":
+    if stage_id == "s04_tool":
         try:
             from ..stages.strategies.discovery import get_progressive_threshold
             cfg = {**cfg, "progressive_threshold": get_progressive_threshold()}
@@ -406,10 +443,14 @@ def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
 
 
 def get_stage_config(stage_id: str) -> dict:
-    """스테이지 설정 스키마 반환 — provider/model 옵션은 레지스트리에서 동적 주입."""
-    cfg = STAGE_CONFIGS.get(stage_id, {})
+    """스테이지 설정 스키마 반환 — provider/model 옵션은 레지스트리에서 동적 주입.
+
+    구 stage_id 가 들어와도 canonical 로 해석 (v0.11.0 alias 하위호환).
+    """
+    sid = canonical_stage_id(stage_id)
+    cfg = STAGE_CONFIGS.get(sid, {})
     cfg = _inject_dynamic_options(cfg)
-    cfg = _inject_stage_meta(stage_id, cfg)
+    cfg = _inject_stage_meta(sid, cfg)
     return cfg
 
 

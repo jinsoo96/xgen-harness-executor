@@ -1,7 +1,7 @@
 """
 Materializer — capability name 리스트를 실제 Tool 인스턴스로 변환
 
-s04_tool_index가 config.capabilities를 읽어 이 모듈로 전달하면
+s04_tool가 config.capabilities를 읽어 이 모듈로 전달하면
 Registry에서 spec 조회 → tool_factory 호출 → Tool 인스턴스 생성.
 
 라이브러리는 Tool 만드는 법을 모름 — 전적으로 tool_factory에 위임.

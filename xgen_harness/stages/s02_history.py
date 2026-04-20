@@ -20,7 +20,7 @@ class MemoryStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s02_memory"
+        return "s02_history"
 
     @property
     def order(self) -> int:
@@ -57,7 +57,7 @@ class MemoryStage(Stage):
                     injected += 1
 
         # 2. 이전 실행 결과를 previous_results로 system prompt에 전달
-        # (s03_system_prompt에서 처리 — 여기서는 state에 이미 있으므로 패스)
+        # (s03_prompt에서 처리 — 여기서는 state에 이미 있으므로 패스)
         prev_count = len(state.previous_results)
 
         logger.info("[Memory] injected=%d messages (max_history=%d), previous_results=%d", injected, max_history, prev_count)

@@ -28,7 +28,7 @@ class PlanStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s05_plan"
+        return "s05_strategy"
 
     @property
     def order(self) -> int:

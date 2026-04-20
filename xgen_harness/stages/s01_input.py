@@ -9,7 +9,7 @@ PHILOSOPHY §2 s01 "담당":
 
 PHILOSOPHY §2 s01 "비담당" (v0.9.0+):
   - LLM provider 생성 / API key / base_url 해석 → **s07_llm** 으로 이관
-  - MCP 도구 디스커버리 → **s04_tool_index** 로 이관
+  - MCP 도구 디스커버리 → **s04_tool** 로 이관
   - provider / model / temperature 값 조작 → **s01 은 읽지도 쓰지도 않는다**
     HarnessConfig top-level 에 기록된 값을 s07 이 직접 참조. s01 을 거치면
     하드코딩 연동이 돼서 자연스러운 설정 흐름이 끊김 (v0.9.3+).

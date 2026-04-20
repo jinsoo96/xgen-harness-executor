@@ -155,35 +155,35 @@ class ArtifactRegistry:
 def _register_default_stages(registry: ArtifactRegistry) -> None:
     """모든 기본 스테이지를 레지스트리에 등록"""
     from ..stages.s01_input import InputStage
-    from ..stages.s03_system_prompt import SystemPromptStage
+    from ..stages.s03_prompt import SystemPromptStage
     from ..stages.s07_llm import LLMStage
-    from ..stages.s08_execute import ExecuteStage
+    from ..stages.s08_act import ExecuteStage
     from ..stages.s10_decide import DecideStage
-    from ..stages.s12_complete import CompleteStage
+    from ..stages.s12_finalize import CompleteStage
 
     registry.register("s01_input", "default", InputStage)
-    registry.register("s03_system_prompt", "default", SystemPromptStage)
+    registry.register("s03_prompt", "default", SystemPromptStage)
     registry.register("s07_llm", "default", LLMStage)
-    registry.register("s08_execute", "default", ExecuteStage)
+    registry.register("s08_act", "default", ExecuteStage)
     registry.register("s10_decide", "default", DecideStage)
-    registry.register("s12_complete", "default", CompleteStage)
+    registry.register("s12_finalize", "default", CompleteStage)
 
     # Phase 2/3 스테이지 (구현되면 추가)
     try:
-        from ..stages.s02_memory import MemoryStage
-        registry.register("s02_memory", "default", MemoryStage)
+        from ..stages.s02_history import MemoryStage
+        registry.register("s02_history", "default", MemoryStage)
     except ImportError:
         pass
 
     try:
-        from ..stages.s04_tool_index import ToolIndexStage
-        registry.register("s04_tool_index", "default", ToolIndexStage)
+        from ..stages.s04_tool import ToolIndexStage
+        registry.register("s04_tool", "default", ToolIndexStage)
     except ImportError:
         pass
 
     try:
-        from ..stages.s05_plan import PlanStage
-        registry.register("s05_plan", "default", PlanStage)
+        from ..stages.s05_strategy import PlanStage
+        registry.register("s05_strategy", "default", PlanStage)
     except ImportError:
         pass
 
@@ -194,8 +194,8 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
         pass
 
     try:
-        from ..stages.s09_validate import ValidateStage
-        registry.register("s09_validate", "default", ValidateStage)
+        from ..stages.s09_judge import ValidateStage
+        registry.register("s09_judge", "default", ValidateStage)
     except ImportError:
         pass
 
@@ -205,11 +205,11 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
     except ImportError:
         pass
 
-    # 멀티에이전트 자동 분기 — s05_plan 의 second artifact ('multi_agent').
+    # 멀티에이전트 자동 분기 — s05_strategy 의 second artifact ('multi_agent').
     # 디폴트 PlanStage 와 동일 슬롯 swap 후보. UI 에서 1클릭으로 선택.
     try:
         from ..orchestrator.multi_agent_planner import MultiAgentPlannerStage
-        registry.register("s05_plan", "multi_agent", MultiAgentPlannerStage)
+        registry.register("s05_strategy", "multi_agent", MultiAgentPlannerStage)
     except ImportError:
         pass
 
@@ -231,8 +231,8 @@ def _discover_plugin_stages(registry: ArtifactRegistry) -> None:
             try:
                 stage_class = ep.load()
                 # ep.name 형식:
-                #   "s04_tool_index"          → (stage_id="s04_tool_index", artifact="default")
-                #   "s04_tool_index__lotte"   → (stage_id="s04_tool_index", artifact="lotte")
+                #   "s04_tool"          → (stage_id="s04_tool", artifact="default")
+                #   "s04_tool__lotte"   → (stage_id="s04_tool", artifact="lotte")
                 # __ 구분자로 같은 슬롯에 외부 artifact 를 swap-in 가능.
                 if "__" in ep.name:
                     stage_id, artifact_name = ep.name.split("__", 1)

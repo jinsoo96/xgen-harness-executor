@@ -99,7 +99,7 @@ class MCPService(Protocol):
     """MCP 도구 관리 프로토콜.
 
     xgen-mcp-station HTTP API 래핑.
-    s01_input(디스커버리), s08_execute(실행)에서 사용.
+    s01_input(디스커버리), s08_act(실행)에서 사용.
     """
 
     async def list_sessions(self) -> list[dict[str, Any]]:
@@ -126,7 +126,7 @@ class DocumentService(Protocol):
     """문서 검색 프로토콜.
 
     xgen-documents의 Hybrid RAG, Ontology GraphRAG.
-    s03_system_prompt(RAG 프롬프트), s06_context(컨텍스트 보강)에서 사용.
+    s03_prompt(RAG 프롬프트), s06_context(컨텍스트 보강)에서 사용.
     """
 
     async def search(

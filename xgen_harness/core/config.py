@@ -8,24 +8,27 @@ workflow_data.harness_config에서 로드.
 from dataclasses import dataclass, field, fields
 from typing import Any, Optional
 
+from .stage_config import canonical_stage_id as _canonical, canonical_stage_id_map as _alias_map
+
+
 # 전체 12 스테이지 (기본 전부 활성)
 ALL_STAGES = [
     "s01_input",
-    "s02_memory",
-    "s03_system_prompt",
-    "s04_tool_index",
-    "s05_plan",
+    "s02_history",
+    "s03_prompt",
+    "s04_tool",
+    "s05_strategy",
     "s06_context",
     "s07_llm",
-    "s08_execute",
-    "s09_validate",
+    "s08_act",
+    "s09_judge",
     "s10_decide",
     "s11_save",
-    "s12_complete",
+    "s12_finalize",
 ]
 
 # 비활성화 불가 스테이지
-REQUIRED_STAGES = {"s01_input", "s07_llm", "s10_decide", "s12_complete"}
+REQUIRED_STAGES = {"s01_input", "s07_llm", "s10_decide", "s12_finalize"}
 
 
 @dataclass
@@ -80,7 +83,7 @@ class HarnessConfig:
     #                   }]}
     strategy_variants: dict = field(default_factory=dict)
 
-    # --- Capability 선언 (capability name 리스트, s04_tool_index가 자동 바인딩) ---
+    # --- Capability 선언 (capability name 리스트, s04_tool가 자동 바인딩) ---
     capabilities: list = field(default_factory=list)       # ["retrieval.web_search", ...]
     capability_params: dict = field(default_factory=dict)  # capability_name → {param_id: value}
 
@@ -209,11 +212,11 @@ class HarnessConfig:
         """workflow_data에서 설정 생성"""
         agent_config = _extract_agent_config_from_nodes(workflow_data)
 
-        # 비활성 스테이지
+        # 비활성 스테이지 — 구 stage_id 도 canonical 로 정규화 (v0.11 alias)
         disabled = set()
         disabled_list = harness_config.get("disabled_stages", [])
         if isinstance(disabled_list, list):
-            disabled = set(disabled_list) - REQUIRED_STAGES
+            disabled = {_canonical(s) for s in disabled_list} - REQUIRED_STAGES
 
         # 레거시 preset 호환
         preset = harness_config.get("preset", "")
@@ -240,10 +243,10 @@ class HarnessConfig:
             max_retries=int(harness_config.get("max_retries", 3)),
             validation_threshold=float(harness_config.get("validation_threshold", 0.7)),
             disabled_stages=disabled,
-            artifacts=harness_config.get("artifacts", {}),
-            stage_params=harness_config.get("stage_params", {}),
-            active_strategies=harness_config.get("active_strategies", {}),
-            strategy_variants=dict(harness_config.get("strategy_variants", {}) or {}),
+            artifacts=_alias_map(harness_config.get("artifacts", {})),
+            stage_params=_alias_map(harness_config.get("stage_params", {})),
+            active_strategies=_alias_map(harness_config.get("active_strategies", {})),
+            strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
             capabilities=list(harness_config.get("capabilities", []) or []),
