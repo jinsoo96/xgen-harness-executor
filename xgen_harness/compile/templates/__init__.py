@@ -14,11 +14,14 @@ PYPROJECT_TOML = """\
 name = "{dist_name}"
 version = "{gallery_version}"
 description = {description_toml}
-requires-python = ">=3.10"
+requires-python = "{requires_python}"
 readme = "README.md"
 dependencies = [
 {dependencies_block}
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp>=0.9"]
 
 [project.scripts]
 {cli_name} = "{package_name}.cli:main"
@@ -170,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("info", help="갤러리 메타 출력")
 
+    p_mcp = sub.add_parser("serve-mcp", help="MCP stdio 서버로 기동 (mcp extra 필요)")
+    p_mcp.add_argument("--description", default="",
+                       help="run_workflow 도구 설명 override")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "info" or args.cmd is None:
@@ -192,6 +199,17 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(result.get("final_output", ""))
         return 0
+
+    if args.cmd == "serve-mcp":
+        from xgen_harness.compile.mcp_server import run_blocking
+        m = manifest()
+        desc = args.description or m.get("description") or f"Run {{GALLERY_NAME}} workflow"
+        return run_blocking(
+            server_name=GALLERY_NAME,
+            server_version=GALLERY_VERSION,
+            tool_description=desc,
+            arun=arun,
+        )
 
     parser.error(f"unknown command: {{args.cmd}}")
     return 1
@@ -250,6 +268,30 @@ asyncio.run(main())
 {cli_name} run --input "질문"
 {cli_name} info
 ```
+
+## MCP stdio 서버로 기동
+
+다른 에이전트(Claude Desktop / Claude Code / Cline 등)에서 이 갤러리를 MCP 서버로 호출하려면:
+
+```bash
+pip install '{dist_name}[mcp]'
+{cli_name} serve-mcp
+```
+
+MCP 클라이언트 설정 예시:
+
+```json
+{{
+  "mcpServers": {{
+    "{gallery_name}": {{
+      "command": "{cli_name}",
+      "args": ["serve-mcp"]
+    }}
+  }}
+}}
+```
+
+노출 도구 1개 — `run_workflow(input: string, overrides?: object)`.
 
 ## External Inputs
 

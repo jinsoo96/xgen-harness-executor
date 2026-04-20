@@ -18,6 +18,15 @@ from .snapshot import WorkflowSnapshot
 
 
 # ──────────────────────────────────────────────────────────────
+# 빌트인 버전 floor — 외부에서 import 해 override 가능.
+# 엔진 코드 박제 대신 상수로 노출하여 패키징 정책이 바뀌어도 한 곳만 수정.
+# ──────────────────────────────────────────────────────────────
+
+MCP_MIN_VERSION: str = ">=0.9"              # mcp 서버 SDK 최소 버전
+QDRANT_MIN_VERSION: str = ">=1.7"           # qdrant-client 최소 버전
+
+
+# ──────────────────────────────────────────────────────────────
 # Rule 레지스트리
 # ──────────────────────────────────────────────────────────────
 
@@ -171,11 +180,11 @@ def _rule_mcp(snapshot: WorkflowSnapshot) -> list[tuple[str, str]]:
     cfg = snapshot.harness_config or {}
     wf = snapshot.workflow_data or {}
     if cfg.get("mcp_sessions") or wf.get("mcp_sessions"):
-        return [("mcp", ">=0.9")]
+        return [("mcp", MCP_MIN_VERSION)]
     # capability_params 에 mcp 언급이 있어도 true.
     caps = cfg.get("capability_params") or {}
     if any("mcp" in str(k).lower() for k in caps):
-        return [("mcp", ">=0.9")]
+        return [("mcp", MCP_MIN_VERSION)]
     return []
 
 
@@ -183,7 +192,7 @@ def _rule_rag(snapshot: WorkflowSnapshot) -> list[tuple[str, str]]:
     cfg = snapshot.harness_config or {}
     wf = snapshot.workflow_data or {}
     if cfg.get("rag_collections") or wf.get("rag_collections"):
-        return [("qdrant-client", ">=1.7")]
+        return [("qdrant-client", QDRANT_MIN_VERSION)]
     return []
 
 

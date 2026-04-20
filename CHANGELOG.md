@@ -5,6 +5,37 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] — 2026-04-20
+
+### Added — 컴파일러 단계 5·6 + xgen-gallery 컨벤션 통합
+
+0.10.0 (MVP wheel) 위에 MCP stdio 서버 래퍼, 갤러리 discover, PlateerLab/xgen-gallery React 컴포넌트 규약 자동 생성 3개를 한 번에 얹었다. 고결한 구조의 다른 축들 — MCP 불러오기, 설치 갤러리 자동 발견, UI 호환성 — 이 다 닫힌다.
+
+- **단계 5 — MCP stdio 서버 래퍼** (`xgen_harness/compile/mcp_server.py`)
+  - 컴파일 wheel 의 CLI 에 `serve-mcp` 서브커맨드 추가. `pip install 'xgen-gallery-<name>[mcp]'` 한 줄로 MCP 모드 활성화.
+  - 노출 tool 1개 — `run_workflow(input: string, overrides?: object)`. input schema 는 external_inputs 덮어쓰기 지원.
+  - `mcp` 패키지 없을 땐 친절한 `MCPNotInstalledError` 메시지 (optional extra 기반).
+  - Claude Desktop/Code/Cline 의 MCP 서버로 `{"command": "xgen-gallery-foo", "args": ["serve-mcp"]}` 한 줄 연결 가능.
+- **단계 6 — 갤러리 discover** (`xgen_harness/compile/gallery.py`)
+  - `discover_galleries()` — `entry_points("xgen_harness.galleries")` 스캔해 설치된 갤러리 카탈로그 즉시 반환.
+  - `get_gallery(name)` 로 단건 조회. PyPI / 사내 인덱스 / 로컬 wheel 어느 채널로 설치됐든 동일 발견 — 3채널 불가지론.
+  - 개별 갤러리 로드 실패는 skip + 경고 콜백(`on_error`) — 하나가 깨져도 카탈로그는 살아있음.
+- **xgen-gallery 컨벤션 자동 생성** — compile 시 소스 트리 루트에 `.xgen-gallery/demo.json` + `examples/quickstart.py` 자동 생성 (`include_gallery_hints=True` 기본). PlateerLab/xgen-gallery React 컴포넌트가 이 규약으로 데모 탭 자동 렌더 — 별도 설정 없이 GitHub push 만으로 UI 노출.
+- **하드코딩 제거 — 유동성 확보**:
+  - `deps.py` 의 빌트인 버전 핀을 모듈 상수로 노출: `MCP_MIN_VERSION = ">=0.9"`, `QDRANT_MIN_VERSION = ">=1.7"`. 외부에서 `xgen_harness.compile.deps.MCP_MIN_VERSION = ">=1.0"` 한 줄 override.
+  - `wheel.py` 의 `requires-python` 을 엔진 자신의 `pyproject.toml` 에서 **동적으로 읽어서** 상속. 엔진이 Python 버전 올리면 컴파일 산출물도 자동 반영. `compile_workflow(..., requires_python=">=3.11")` 로 명시적 override 가능.
+  - `snapshot.py` 의 stale `">=0.9.3"` 하드코딩 fallback 제거. 엔진 `__version__` 못 읽을 때 unbounded("") 반환.
+
+### Added — 이식측 `/harness/galleries`
+
+`controller/workflow/endpoints/harness.py` 에 `GET /harness/galleries` 추가. `xgen_harness.discover_galleries(on_error=...)` 위임 — 프론트 "설치된 갤러리 카드 뷰" / capability "Gallery" 카테고리 렌더 소스.
+
+### Tests
+
+- `test_compile.py` 17 → 26 PASS (+9). MCP 래퍼 3, 갤러리 discover 2, requires_python 2, xgen-gallery 규약 2.
+
+---
+
 ## [0.10.0] — 2026-04-20
 
 ### Added — 워크플로우 컴파일러 (MVP)

@@ -32,6 +32,10 @@ from .snapshot import WorkflowSnapshot
 GALLERY_DIST_PREFIX = "xgen-gallery-"
 GALLERY_PKG_PREFIX = "xgen_gallery_"
 
+# 컴파일된 wheel 의 기본 Python requirement — 엔진 자신의 pyproject 에서 동적으로 읽음.
+# 엔진 requires-python 이 bump 되면 동시에 자동 반영.
+DEFAULT_REQUIRES_PYTHON_FALLBACK = ">=3.10"
+
 
 @dataclass
 class WheelBuildResult:
@@ -41,6 +45,36 @@ class WheelBuildResult:
     dist_name: str
     package_name: str
     snapshot: WorkflowSnapshot
+
+
+def _engine_requires_python() -> str:
+    """엔진 자신의 pyproject.toml 에서 requires-python 추출.
+
+    설치된 엔진 메타데이터에서 찾고, 실패하면 패키지 루트의 pyproject.toml 파일.
+    전부 실패하면 ``DEFAULT_REQUIRES_PYTHON_FALLBACK``.
+    """
+    try:
+        from importlib import metadata as _md
+        meta = _md.metadata("xgen-harness")
+        req = meta.get("Requires-Python")
+        if req:
+            return str(req).strip()
+    except Exception:
+        pass
+    # 소스 체크아웃에서 실행 중인 경우 (테스트/개발).
+    try:
+        root = Path(__file__).resolve().parents[2]
+        pyproject = root / "pyproject.toml"
+        if pyproject.exists():
+            text = pyproject.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                line = line.strip()
+                if line.startswith("requires-python") and "=" in line:
+                    val = line.split("=", 1)[1].strip()
+                    return val.strip('"').strip("'")
+    except Exception:
+        pass
+    return DEFAULT_REQUIRES_PYTHON_FALLBACK
 
 
 # ──────────────────────────────────────────────────────────────
@@ -57,6 +91,8 @@ def compile_workflow(
     out_dir: str | os.PathLike[str] = "./dist",
     keep_source: bool = False,
     extra_metadata: Optional[dict[str, Any]] = None,
+    include_gallery_hints: bool = True,
+    requires_python: Optional[str] = None,
 ) -> WheelBuildResult:
     """하네스 워크플로우 → wheel (한 줄 API).
 
@@ -69,6 +105,11 @@ def compile_workflow(
         out_dir: wheel 이 떨어질 디렉토리.
         keep_source: True 면 빌드용 소스 트리를 out_dir 에 유지.
         extra_metadata: snapshot.metadata 에 추가 기록.
+        include_gallery_hints: True (기본) 이면 PlateerLab/xgen-gallery React 컴포넌트
+            규약인 ``.xgen-gallery/demo.json`` 과 ``examples/quickstart.py`` 를 함께 생성.
+            소스 트리를 github 에 push 하면 별도 설정 없이 Demo 탭 자동 노출.
+        requires_python: 산출 wheel 의 Python 요구 버전 스펙. None 이면 엔진 자신의
+            ``requires-python`` 을 그대로 상속 — bump 되면 자동 반영되어 drift 방지.
 
     Returns:
         WheelBuildResult — wheel_path / sdist_path / source_dir.
@@ -83,7 +124,13 @@ def compile_workflow(
             "description": description,
         },
     )
-    return build_wheel(snapshot, out_dir=out_dir, keep_source=keep_source)
+    return build_wheel(
+        snapshot,
+        out_dir=out_dir,
+        keep_source=keep_source,
+        include_gallery_hints=include_gallery_hints,
+        requires_python=requires_python,
+    )
 
 
 def build_wheel(
@@ -91,6 +138,8 @@ def build_wheel(
     *,
     out_dir: str | os.PathLike[str] = "./dist",
     keep_source: bool = False,
+    include_gallery_hints: bool = True,
+    requires_python: Optional[str] = None,
 ) -> WheelBuildResult:
     """스냅샷 → wheel 생성. `python -m build --wheel --sdist` 호출."""
     out_path = Path(out_dir).resolve()
@@ -121,6 +170,8 @@ def build_wheel(
             dist_name=dist_name,
             package_name=package_name,
             snapshot=snapshot,
+            include_gallery_hints=include_gallery_hints,
+            requires_python=requires_python or _engine_requires_python(),
         )
         wheel_path, sdist_path = _invoke_build(src_root, out_path)
         return WheelBuildResult(
@@ -205,6 +256,8 @@ def _write_source_tree(
     dist_name: str,
     package_name: str,
     snapshot: WorkflowSnapshot,
+    include_gallery_hints: bool = True,
+    requires_python: str = DEFAULT_REQUIRES_PYTHON_FALLBACK,
 ) -> None:
     """src_root 아래 빌드 가능한 소스 트리 생성."""
     pkg_dir = src_root / package_name
@@ -220,6 +273,7 @@ def _write_source_tree(
         description_toml=_quote_toml_str(
             snapshot.metadata.get("description") or f"{snapshot.gallery_name} (xgen-harness compiled)"
         ),
+        requires_python=requires_python,
         dependencies_block=_render_dependencies_block(snapshot.dependencies or {}),
         cli_name=cli_name,
         package_name=package_name,
@@ -252,6 +306,80 @@ def _write_source_tree(
 
     # package/env.example
     (pkg_dir / "env.example").write_text(_render_env_example(snapshot), encoding="utf-8")
+
+    # PlateerLab/xgen-gallery React 컴포넌트 자동 인식 규약 (우선순위: demo.json > examples/*.py > README).
+    # github push 만으로 Demo 탭에 샘플 스니펫 자동 노출.
+    if include_gallery_hints:
+        _write_gallery_hints(src_root, snapshot=snapshot, package_name=package_name, cli_name=cli_name)
+
+
+def _write_gallery_hints(
+    src_root: Path,
+    *,
+    snapshot: WorkflowSnapshot,
+    package_name: str,
+    cli_name: str,
+) -> None:
+    """xgen-gallery React 컴포넌트 규약 파일 생성."""
+    # .xgen-gallery/demo.json — 최우선 데모 소스.
+    xg_dir = src_root / ".xgen-gallery"
+    xg_dir.mkdir(exist_ok=True)
+
+    snippets: list[dict[str, str]] = [
+        {
+            "label": "Python: pip install + arun",
+            "language": "python",
+            "code": (
+                f"# pip install {cli_name}\n"
+                "import asyncio\n"
+                f"from {package_name} import arun\n\n"
+                "async def main():\n"
+                "    result = await arun(\"안녕\")\n"
+                "    print(result[\"final_output\"])\n\n"
+                "asyncio.run(main())\n"
+            ),
+        },
+        {
+            "label": "CLI: run",
+            "language": "bash",
+            "code": f"{cli_name} run --input \"안녕\"\n",
+        },
+        {
+            "label": "CLI: MCP stdio 서버",
+            "language": "bash",
+            "code": (
+                f"pip install '{cli_name}[mcp]'\n"
+                f"{cli_name} serve-mcp\n"
+            ),
+        },
+    ]
+    demo = {
+        "name": snapshot.gallery_name,
+        "version": snapshot.gallery_version,
+        "description": snapshot.metadata.get("description", ""),
+        "harness_version": snapshot.harness_version,
+        "external_inputs": snapshot.external_inputs,
+        "snippets": snippets,
+    }
+    (xg_dir / "demo.json").write_text(
+        json.dumps(demo, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # examples/quickstart.py — 2차 폴백.
+    examples_dir = src_root / "examples"
+    examples_dir.mkdir(exist_ok=True)
+    (examples_dir / "quickstart.py").write_text(
+        "\"\"\"Quickstart — pip install 후 바로 실행.\"\"\"\n"
+        "import asyncio\n"
+        f"from {package_name} import arun\n\n\n"
+        "async def main() -> None:\n"
+        "    result = await arun(\"안녕\")\n"
+        "    print(result[\"final_output\"])\n\n\n"
+        "if __name__ == \"__main__\":\n"
+        "    asyncio.run(main())\n",
+        encoding="utf-8",
+    )
 
 
 def _invoke_build(src_root: Path, out_dir: Path) -> tuple[Path, Optional[Path]]:

@@ -43,6 +43,17 @@ from .wheel import (
     build_wheel,
     compile_workflow,
 )
+from .gallery import (
+    InstalledGallery,
+    discover_galleries,
+    get_gallery,
+    ENTRY_POINT_GROUP,
+)
+from .mcp_server import (
+    serve as serve_mcp,
+    run_blocking as run_mcp_blocking,
+    MCPNotInstalledError,
+)
 
 __all__ = [
     # external_inputs
@@ -66,4 +77,13 @@ __all__ = [
     "WheelBuildResult",
     "build_wheel",
     "compile_workflow",
+    # gallery (단계 6)
+    "InstalledGallery",
+    "discover_galleries",
+    "get_gallery",
+    "ENTRY_POINT_GROUP",
+    # mcp (단계 5)
+    "serve_mcp",
+    "run_mcp_blocking",
+    "MCPNotInstalledError",
 ]

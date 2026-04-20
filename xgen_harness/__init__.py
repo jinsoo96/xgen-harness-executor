@@ -88,9 +88,17 @@ from .compile import (
     resolve_dependencies,
     register_dependency_rule,
     DependencyRule,
+    # 단계 5 — MCP 래퍼
+    serve_mcp,
+    run_mcp_blocking,
+    MCPNotInstalledError,
+    # 단계 6 — 갤러리 discover
+    InstalledGallery,
+    discover_galleries,
+    get_gallery,
 )
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 __all__ = [
     # Core
@@ -192,4 +200,10 @@ __all__ = [
     "resolve_dependencies",
     "register_dependency_rule",
     "DependencyRule",
+    "serve_mcp",
+    "run_mcp_blocking",
+    "MCPNotInstalledError",
+    "InstalledGallery",
+    "discover_galleries",
+    "get_gallery",
 ]

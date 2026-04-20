@@ -190,10 +190,15 @@ def _as_dict(config: Any) -> dict[str, Any]:
 
 
 def _current_harness_spec() -> str:
+    """컴파일 시점 엔진 버전을 기준으로 wheel 이 요구할 xgen-harness 버전 스펙 생성.
+
+    엔진 버전 import 실패 시 unbounded 스펙("") 반환 — 어떤 엔진 버전과도 호환.
+    하드코딩된 버전 fallback 은 stale 방지를 위해 쓰지 않는다.
+    """
     try:
         from .. import __version__
     except Exception:
-        return ">=0.9.3"
+        return ""
     return f">={__version__}"
 
 
