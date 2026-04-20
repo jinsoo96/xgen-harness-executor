@@ -5,6 +5,24 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] — 2026-04-20
+
+### Changed — drift-free 연동 (프리픽스 재조합 제거)
+
+0.10.1 까지는 이식측/프론트가 `xgen-gallery-<name>` / `xgen_gallery_<name>` 프리픽스를 스스로 재조합했다. 엔진 규약(`GALLERY_DIST_PREFIX`)이 바뀌면 드리프트 — 이식측과 프론트가 따라올 수 없음. 엔진이 확정값을 내려주는 방향으로 전환.
+
+- **compile 산출 wheel 의 `manifest()` 반환값에 `dist_name` / `package_name` 추가** — UI 가 재조합할 필요 없이 엔진이 확정한 이름 그대로 사용.
+- **`InstalledGallery` 데이터클래스에 `dist_name` / `package_name` 필드 추가** — manifest 가 확정값을 내려줬다면 우선, 없으면 `module_name` 에서 파생. `discover_galleries()` 결과가 그대로 "pip install 명령 렌더" 에 쓸 수 있음.
+- **`GALLERY_DIST_PREFIX` / `GALLERY_PKG_PREFIX` public export** — 외부 소비자가 정말 필요하면 상수로 import, 하드코딩 금지.
+
+결과: 이식측/프론트 코드에서 `"xgen-gallery-" + name` 같은 문자열 조합이 사라진다. 엔진이 명명 규약을 바꿔도 양쪽이 자동 반영.
+
+### Tests
+
+- 17/17 → 26/26 확장 유지. 설치·discover 테스트 2개에 `dist_name`/`package_name` 검증 assertion 추가.
+
+---
+
 ## [0.10.1] — 2026-04-20
 
 ### Added — 컴파일러 단계 5·6 + xgen-gallery 컨벤션 통합

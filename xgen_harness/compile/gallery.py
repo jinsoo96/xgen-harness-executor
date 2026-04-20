@@ -31,11 +31,16 @@ class InstalledGallery:
         entry_point_name: entry_points 에 등록된 이름 (일반적으로 gallery_name).
         manifest: 갤러리의 `manifest()` 호출 결과 (name/version/external_inputs/description 등).
         module_name: manifest 제공 모듈 경로 (e.g. "xgen_gallery_foo").
+        dist_name: pip 배포 이름 (e.g. "xgen-gallery-foo"). manifest 에 있으면 우선,
+                   없으면 module_name 에서 파생. UI 가 재조합할 필요 없이 그대로 사용.
+        package_name: 임포트 가능한 Python 패키지 이름 (e.g. "xgen_gallery_foo").
     """
 
     entry_point_name: str
     manifest: dict[str, Any]
     module_name: str
+    dist_name: str = ""
+    package_name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -104,10 +109,17 @@ def discover_galleries(*, on_error: Optional[Callable[[str, Exception], None]] =
             continue
 
         module_name = getattr(ep, "module", "") or getattr(ep, "value", "").split(":")[0]
+        manifest_dict = manifest if isinstance(manifest, dict) else {}
+        # manifest 가 확정값을 내려줬다면 우선 사용 — 엔진이 컴파일 시점 계산한 규약.
+        # 없으면 module_name 에서 파생 (예: xgen_gallery_foo → xgen-gallery-foo).
+        pkg_name = manifest_dict.get("package_name") or module_name
+        dist_name = manifest_dict.get("dist_name") or (pkg_name.replace("_", "-") if pkg_name else "")
         out.append(InstalledGallery(
             entry_point_name=ep.name,
-            manifest=manifest if isinstance(manifest, dict) else {},
+            manifest=manifest_dict,
             module_name=module_name,
+            package_name=pkg_name,
+            dist_name=dist_name,
         ))
     return out
 

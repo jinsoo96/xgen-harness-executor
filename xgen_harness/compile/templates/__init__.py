@@ -68,7 +68,11 @@ from xgen_harness.compile.external_inputs import (
     MissingExternalInputError,
 )
 
-__all__ = ["arun", "run", "manifest", "SNAPSHOT_PATH", "GALLERY_NAME", "GALLERY_VERSION"]
+__all__ = [
+    "arun", "run", "manifest",
+    "SNAPSHOT_PATH", "GALLERY_NAME", "GALLERY_VERSION",
+    "DIST_NAME", "PACKAGE_NAME",
+]
 
 _PKG_DIR = Path(__file__).resolve().parent
 SNAPSHOT_PATH = _PKG_DIR / "snapshot.json"
@@ -77,6 +81,9 @@ _snapshot = load_snapshot(str(SNAPSHOT_PATH))
 
 GALLERY_NAME = _snapshot.gallery_name
 GALLERY_VERSION = _snapshot.gallery_version
+# wheel 빌드 시점에 엔진이 계산한 값이 __name__ 에 그대로 반영됨 — 프리픽스 재조합 금지.
+PACKAGE_NAME = __name__
+DIST_NAME = PACKAGE_NAME.replace("_", "-")
 
 
 def _apply_external_inputs(overrides: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -141,6 +148,9 @@ def manifest() -> dict[str, Any]:
         "description": _snapshot.metadata.get("description", ""),
         "external_inputs": _snapshot.external_inputs,
         "created_at": _snapshot.metadata.get("created_at_iso", ""),
+        # 설치/사용 명령을 UI 가 재조합하지 않도록 엔진 규약대로 확정값을 포함.
+        "dist_name": DIST_NAME,
+        "package_name": PACKAGE_NAME,
     }}
 '''
 

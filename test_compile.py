@@ -356,9 +356,11 @@ m = g.manifest()
 print(m['name'])
 print(m['version'])
 print('OPENAI_API_KEY' in m['external_inputs'])
+print(m['dist_name'])
+print(m['package_name'])
 """
         out = subprocess.check_output([str(py), "-c", script], text=True).strip().splitlines()
-        assert out == ["installable", "0.1.0", "True"]
+        assert out == ["installable", "0.1.0", "True", "xgen-gallery-installable", "xgen_gallery_installable"]
 
 
 # ──────────────────────────────────────────────
@@ -465,8 +467,12 @@ for g in galleries:
     if g.entry_point_name == 'discoverable':
         print(g.manifest.get('name'))
         print(g.manifest.get('version'))
+        print(g.dist_name)
+        print(g.package_name)
 """
         out = subprocess.check_output([str(py), "-c", script], text=True).strip().splitlines()
         assert out[0] == "True"
         assert out[1] == "discoverable"
         assert out[2] == "0.1.0"
+        assert out[3] == "xgen-gallery-discoverable"
+        assert out[4] == "xgen_gallery_discoverable"

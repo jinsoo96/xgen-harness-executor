@@ -42,6 +42,8 @@ from .wheel import (
     WheelBuildResult,
     build_wheel,
     compile_workflow,
+    GALLERY_DIST_PREFIX,
+    GALLERY_PKG_PREFIX,
 )
 from .gallery import (
     InstalledGallery,
@@ -77,6 +79,8 @@ __all__ = [
     "WheelBuildResult",
     "build_wheel",
     "compile_workflow",
+    "GALLERY_DIST_PREFIX",
+    "GALLERY_PKG_PREFIX",
     # gallery (단계 6)
     "InstalledGallery",
     "discover_galleries",
