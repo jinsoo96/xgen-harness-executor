@@ -5,6 +5,36 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-04-20
+
+### Changed — Stage 책임 재정의 (철학 바로잡기)
+
+각 Stage 의 책임/비책임이 선언된 문서가 없어 `s01_input` 이 LLM provider 생성까지 떠안고 `s03_system_prompt` 가 RAG 검색을 직접 호출하는 등 책임 경계가 오염돼 있던 문제 정리.
+
+- **`docs/harness/00-PHILOSOPHY.md` 신설** — 12 Stage 의 "한 줄 정의 / 담당 / 비담당 / 의심되면 여기로" 를 단일 기준 문서로 선언. 상위 4 원칙(SRP, 책임 침범 금지, Artifact 전달, Strategy 분기) + 결정 트리 포함. 새 Stage/Strategy 제안 전 필독.
+- **`s03_system_prompt` — RAG 검색 코드 전면 제거**. `_fetch_rag_via_service()` / `_fetch_rag_context()` 삭제. 이제 `state.rag_context` 를 **읽기만** 하고 섹션 조립 책임만 유지. 실행은 `s06_context` 단독.
+- **`s07_llm` — provider lazy init 추가**. `state.provider` 가 없으면 `_lazy_init_provider()` 가 API key / base_url 해석 후 생성. `s01_input` 이 먼저 생성해두면 재사용(backward compat). 향후 `s01` 축소 시 `s07` 단독 담당.
+- **중복 실행 제거** — 이전에는 사용자 입력 1건에 대해 s03 와 s06 가 각각 RAG 검색을 실행해 Documents API 를 2번 호출. v0.9.0 부터 s06 한 번만 호출.
+
+### Backward compatibility
+
+- `harness_config.provider / model / temperature / system_prompt` 포맷 변경 없음.
+- 기존 저장된 워크플로우 JSON 영향 없음.
+- `s01_input` 내부 provider 생성 로직은 그대로 유지 (deprecated but functional). v1.0 에서 제거 예정.
+
+### Audit
+
+- **Strategy 43개 전수 감사**: 41개 실제 구현 확인. 2개 marker (`ThresholdDecide` / `AlwaysPassDecide`) 는 Stage 내부 로직이 strategy 이름으로 분기하는 의도된 디자인.
+- **`s03` / `s06` RAG 중복 경로** 제거.
+
+### 후속 예정 (v0.9.x)
+
+- `s01_input` provider 생성 / MCP discovery 제거 → `s07_llm` / `s04_tool_index` 전담 (v0.9.2 목표).
+- `s04_tool_index` vs `s05_plan` 의 declared / discovery capability 책임 분할 명문화.
+- Stage ID 문자열 하드코딩 재감사 (레지스트리 조회로 전환).
+
+---
+
 ## [0.8.38] — 2026-04-20
 
 ### Added — 캔버스 노드 파라미터 manual/auto 토글 (dispatch 단절 해결)

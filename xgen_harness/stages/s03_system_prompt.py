@@ -5,20 +5,18 @@ S03 System Prompt — 시스템 프롬프트 조립
 1. Identity (역할/페르소나)
 2. Rules (행동 규칙)
 3. Tool Index (도구 메타데이터 — progressive disclosure Level 1)
-4. RAG Context (검색된 문서)
+4. RAG Context (검색된 문서) — 읽기만, 실행은 s06_context 담당
 5. History Summary (이전 대화 요약)
 6. Custom Sections (사용자 정의)
 
-s04_tool_index가 metadata에 저장한 rag_collections가 있으면
-Documents API를 호출해 RAG 컨텍스트를 가져온다.
+v0.9.0: RAG 검색은 s06_context 가 단독 담당 — 이 Stage 는 state.rag_context 를 읽기만.
+(docs/harness/00-PHILOSOPHY.md §2 s03 "비담당" 참조)
 """
 
 import logging
-from typing import Optional
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
-from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.stage.system_prompt")
 
@@ -76,27 +74,9 @@ class SystemPromptStage(Stage):
             tool_section = self._build_tool_index_section(state.tool_index)
             sections.append((SECTION_PRIORITIES["tools"], "tools", tool_section))
 
-        # 4. RAG Context — ServiceProvider.documents 우선, httpx 직접 호출 폴백
-        rag_collections: list[str] = state.metadata.get("rag_collections", [])
-        rag_top_k: int = state.metadata.get("rag_top_k", 4)
-        if rag_collections and state.user_input:
-            # ResourceRegistry 우선 → ServiceProvider → httpx 직접 호출
-            registry = state.metadata.get("resource_registry")
-            if registry:
-                rag_text = await registry.search_rag(state.user_input, rag_collections, rag_top_k)
-            else:
-                services = state.metadata.get("services")
-                if services and services.documents:
-                    rag_text = await self._fetch_rag_via_service(
-                        services.documents, state.user_input, rag_collections, rag_top_k,
-                    )
-                else:
-                    rag_text = await self._fetch_rag_context(
-                        query=state.user_input, collections=rag_collections, top_k=rag_top_k,
-                    )
-            if rag_text:
-                state.rag_context = rag_text
-
+        # 4. RAG Context — v0.9.0+: 실행은 s06_context 가 단독 담당.
+        # 여기서는 이미 채워진 state.rag_context 를 읽기만 한다.
+        # (PHILOSOPHY §2 s03 "비담당" — Documents API 호출 금지)
         if state.rag_context:
             rag_section = f"<reference_documents>\n{state.rag_context}\n</reference_documents>"
             sections.append((SECTION_PRIORITIES["rag"], "rag", rag_section))
@@ -132,102 +112,10 @@ class SystemPromptStage(Stage):
             "prompt_chars": len(assembled),
             "sections": [name for _, name, _ in sections],
             "message_count": len(state.messages),
-            "rag_collections_used": len(rag_collections),
+            "rag_included": bool(state.rag_context),
         }
         logger.info("[System Prompt] %d chars, sections=%s", len(assembled), result["sections"])
         return result
-
-    async def _fetch_rag_via_service(
-        self, doc_service, query: str, collections: list[str], top_k: int,
-    ) -> str:
-        """ServiceProvider.documents를 통한 RAG 검색"""
-        all_chunks = []
-        for collection in collections:
-            try:
-                results = await doc_service.search(query, collection, limit=top_k)
-                from ..utils.docs import extract_source, extract_text
-                for i, doc in enumerate(results, 1):
-                    if isinstance(doc, dict):
-                        content = extract_text(doc)
-                        source = extract_source(doc)
-                        if content:
-                            header = f"[{len(all_chunks) + 1}]"
-                            if source:
-                                header += f" ({source})"
-                            all_chunks.append(f"{header}\n{content}")
-            except Exception as e:
-                logger.warning("[System Prompt] RAG search via service failed: %s", e)
-
-        return "\n\n".join(all_chunks) if all_chunks else ""
-
-    async def _fetch_rag_context(
-        self,
-        query: str,
-        collections: list[str],
-        top_k: int = 4,
-    ) -> str:
-        """Documents API로 벡터 검색하여 RAG 컨텍스트 텍스트 반환"""
-        import httpx
-
-        docs_url = get_service_url('documents')
-        if not docs_url:
-            logger.info("documents service not registered, skipping RAG")
-            return ""
-        url = f"{docs_url}/api/retrieval/documents/search"
-        payload = {
-            "query": query,
-            "collection_names": collections,
-            "top_k": top_k,
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "x-user-admin": "true",
-            "x-user-superuser": "true",
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    logger.warning(
-                        "[System Prompt] RAG search failed: %d %s",
-                        resp.status_code, resp.text[:200],
-                    )
-                    return ""
-
-                data = resp.json()
-                results = data.get("results", data.get("documents", []))
-                if not results:
-                    logger.info("[System Prompt] RAG search returned 0 results")
-                    return ""
-
-                # 결과를 텍스트로 조립
-                from ..utils.docs import extract_source, extract_text, extract_score
-                chunks = []
-                for i, doc in enumerate(results, 1):
-                    if isinstance(doc, dict):
-                        content = extract_text(doc)
-                        source = extract_source(doc)
-                        score = extract_score(doc)
-                        header = f"[{i}]"
-                        if source:
-                            header += f" ({source})"
-                        if score:
-                            header += f" score={score:.3f}"
-                        chunks.append(f"{header}\n{content}")
-                    elif isinstance(doc, str):
-                        chunks.append(f"[{i}]\n{doc}")
-
-                rag_text = "\n\n".join(chunks)
-                logger.info(
-                    "[System Prompt] RAG: %d results from %s (%d chars)",
-                    len(results), collections, len(rag_text),
-                )
-                return rag_text
-
-        except Exception as e:
-            logger.warning("[System Prompt] RAG fetch error: %s", e)
-            return ""
 
     def _default_identity(self) -> str:
         return (
