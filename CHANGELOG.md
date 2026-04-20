@@ -5,6 +5,14 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] — 2026-04-20
+
+### Fixed — `__version__` 문자열 누락
+
+`pyproject.toml` 은 0.9.2 로 올라갔지만 `xgen_harness/__init__.py` 의 `__version__` 이 0.8.38 에 머물러 있어 `import xgen_harness; xgen_harness.__version__` 가 구 버전을 반환하던 문제. v0.9.2 이전 릴리스(0.8.38~0.9.1)에서도 동일하게 놓쳤던 이슈를 여기서 잡음. 기능 변경 없음 — 0.9.2 와 동일한 엔진 + 버전 메타데이터만 정상화.
+
+---
+
 ## [0.9.2] — 2026-04-20
 
 ### Changed — Stage 책임 재정의 Phase 2 (v0.9.0 후속)

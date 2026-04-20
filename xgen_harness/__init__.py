@@ -71,7 +71,7 @@ from .capabilities import (
     ResolveResult,
 )
 
-__version__ = "0.8.38"
+__version__ = "0.9.3"
 
 __all__ = [
     # Core
