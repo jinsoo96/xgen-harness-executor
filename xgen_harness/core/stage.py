@@ -208,7 +208,10 @@ class Stage(ABC):
         2. state.config.stage_params[stage_id]["strategy"]
         3. default_impl 인자
 
-        geny-harness의 Stage×Strategy 이중 추상화와 동일 패턴.
+        **Strategy Variants (v0.10.4+)**:
+        active_strategies 값이 config.strategy_variants[stage_id] 에 선언된
+        variant 이름이면, variant.base 로 resolver 를 태우고 variant.params 를
+        configure 에 병합. "디폴트 건드리지 않고 복사해서 v2 쓰기" 지원.
         """
         from .strategy_resolver import StrategyResolver
 
@@ -231,11 +234,21 @@ class Stage(ABC):
             return None
 
         resolver = StrategyResolver.default()
-        strategy_config = {}
+        strategy_config: dict = {}
         if hasattr(state, "config") and state.config:
-            strategy_config = state.config.stage_params.get(self.stage_id, {})
+            strategy_config = dict(state.config.stage_params.get(self.stage_id, {}))
 
-        return resolver.resolve(self.stage_id, slot_name, impl_name, strategy_config)
+        # variants 해결: impl_name 이 variant 이면 base 로 바꾸고 params 병합
+        resolve_impl = impl_name
+        if hasattr(state, "config") and state.config:
+            variants = getattr(state.config, "strategy_variants", {}) or {}
+            for v in variants.get(self.stage_id, []) or []:
+                if v.get("name") == impl_name and v.get("base"):
+                    resolve_impl = v["base"]
+                    strategy_config.update(v.get("params") or {})
+                    break
+
+        return resolver.resolve(self.stage_id, slot_name, resolve_impl, strategy_config)
 
     def list_strategies(self) -> list[StrategyInfo]:
         return []

@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] — 2026-04-20
+
+### Added — Strategy Variants (디폴트 건드리지 않고 복사해서 v2)
+
+외부 작업자·사용자가 기본 Strategy 를 수정하지 않고 "이름만 다른 복사본" 을 만들어 쓸 수 있게. 기존 `register_strategy` 는 파이썬 패키지 레벨 등록이라 런타임/워크플로우별 커스터마이즈가 불가능했음. variants 는 **HarnessConfig 필드** 로 선언되며 실행 시 `resolve_strategy` 가 base impl 로 태우고 params 를 configure 에 병합.
+
+- `core/config.py::HarnessConfig.strategy_variants` 필드 추가
+  - 형식: `{stage_id: [{"name": "progressive_v2", "base": "progressive_3level", "params": {...}, "label": "내 커스텀"}]}`
+  - `from_workflow` 가 harness_config dict 에서 직접 파싱, 미선언 시 빈 dict (하위호환)
+- `core/stage.py::Stage.resolve_strategy` — `active_strategies[stage_id]` 값이 variant 이름이면:
+  1) `variant.base` 로 Strategy 클래스 조회 (기본 레지스트리 재사용)
+  2) `strategy_config` 에 `variant.params` 병합 → `cls.configure(config)` 호출
+  3) variant 가 없으면 기존 경로 그대로 (완전한 하위호환)
+- 엔드포인트/라이브러리 API 변경 없음. 이식측·프론트는 payload 에 `strategy_variants` 키만 추가하면 됨.
+
+### Added — DAG Orchestrator 외부 노출 (이식측 관점)
+
+엔진 `orchestrator/dag.py::DAGOrchestrator` 는 v0.8.x 에 이미 있었지만 s05 multi_agent 내부에서만 쓰였음. 이식측 `/harness/dag/execute/stream` 엔드포인트가 이걸 외부에 노출해 **여러 하네스를 DAG 로 엮어 실행** 가능. 엔진 자체 변경은 없고 **외부 사용 패턴을 문서화**하는 의미.
+
+기존 v0.10.3 아키텍처 계승 (s01 축소, provider lazy-init, 컴파일러 drift-free).
+
+---
+
 ## [0.10.3] — 2026-04-20
 
 ### Changed — s01 입력 스테이지 철학 재정립 (하드코딩 연동 제거)

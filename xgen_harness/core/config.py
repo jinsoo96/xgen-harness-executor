@@ -68,6 +68,18 @@ class HarnessConfig:
     # --- Strategy 선택 (UI에서 클릭, stage_id → strategy impl_name) ---
     active_strategies: dict = field(default_factory=dict)  # stage_id → impl_name
 
+    # --- Strategy 커스텀 변형 (디폴트 건드리지 않고 파라미터만 덮어쓴 복사본) ---
+    # 외부 작업자가 "progressive_3level" 을 건드리지 않고 "progressive_v2" 라는
+    # 복사본을 만들어 쓸 수 있게. active_strategies[stage_id] 가 variant 이름이면
+    # base impl 의 클래스로 인스턴스 생성 후 params 를 configure 에 병합.
+    #
+    # 형식: {stage_id: [{"name": "progressive_v2",       # active_strategies 에서 참조할 이름
+    #                    "base": "progressive_3level",    # 복제 원본 impl_name
+    #                    "params": {"threshold": 20},     # configure 에 주입할 오버라이드
+    #                    "label": "내 커스텀"              # UI 표시용 (옵션)
+    #                   }]}
+    strategy_variants: dict = field(default_factory=dict)
+
     # --- Capability 선언 (capability name 리스트, s04_tool_index가 자동 바인딩) ---
     capabilities: list = field(default_factory=list)       # ["retrieval.web_search", ...]
     capability_params: dict = field(default_factory=dict)  # capability_name → {param_id: value}
@@ -231,6 +243,7 @@ class HarnessConfig:
             artifacts=harness_config.get("artifacts", {}),
             stage_params=harness_config.get("stage_params", {}),
             active_strategies=harness_config.get("active_strategies", {}),
+            strategy_variants=dict(harness_config.get("strategy_variants", {}) or {}),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
             capabilities=list(harness_config.get("capabilities", []) or []),
