@@ -9,42 +9,16 @@
 
 STAGE_CONFIGS: dict[str, dict] = {
     "s01_input": {
-        "description_ko": "사용자 입력을 검증하고 LLM 프로바이더를 초기화합니다.",
-        "description_en": "Validates user input and initializes LLM provider.",
+        # PHILOSOPHY §2 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
+        # 선택은 하네스 상단 설정 또는 s07 관할 — s01 에서 필드로 노출하지 않음.
+        "description_ko": "사용자 입력을 검증하고 첨부 파일을 content block 으로 정규화합니다.",
+        "description_en": "Validates user input and normalizes attached files to content blocks.",
         "icon": "📥",
-        "fields": [
-            {
-                "id": "provider",
-                "label": "LLM 프로바이더",
-                "type": "select",
-                # options / default 는 _inject_dynamic_options() 가 list_providers() 로
-                # 런타임 주입. 새 provider register 하면 UI 자동 반영.
-                "options": [],
-                "default": "",
-            },
-            {
-                "id": "model",
-                "label": "모델",
-                "type": "select",
-                # options / default 는 _inject_dynamic_options() 가 providers 레지스트리에서
-                # 동적 주입. 여기 static 배열 두면 잔여 하드코딩 위험.
-                "options": [],
-                "default": "",
-            },
-            {
-                "id": "temperature",
-                "label": "Temperature",
-                "type": "slider",
-                "min": 0,
-                "max": 1,
-                "step": 0.1,
-                "default": 0.7,
-            },
-        ],
+        "fields": [],
         "behavior": [
-            "API 키 해석: 환경변수 → Config 서비스 → 폴백",
-            "MCP 도구 자동 수집 (워크플로우 MCP 노드에서)",
-            "멀티모달 입력 지원 (텍스트 + 이미지 + 파일)",
+            "빈 입력 거부",
+            "파일 첨부: base64 이미지 · 텍스트 블록 변환",
+            "첫 user 메시지를 파이프라인에 push (단일 책임)",
         ],
     },
     "s02_memory": {

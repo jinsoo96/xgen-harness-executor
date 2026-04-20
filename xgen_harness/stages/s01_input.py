@@ -10,8 +10,9 @@ PHILOSOPHY §2 s01 "담당":
 PHILOSOPHY §2 s01 "비담당" (v0.9.0+):
   - LLM provider 생성 / API key / base_url 해석 → **s07_llm** 으로 이관
   - MCP 도구 디스커버리 → **s04_tool_index** 로 이관
-
-provider / model / temperature 는 config 에만 기록 — 해석 시점은 s07.
+  - provider / model / temperature 값 조작 → **s01 은 읽지도 쓰지도 않는다**
+    HarnessConfig top-level 에 기록된 값을 s07 이 직접 참조. s01 을 거치면
+    하드코딩 연동이 돼서 자연스러운 설정 흐름이 끊김 (v0.9.3+).
 """
 
 import logging
@@ -36,17 +37,16 @@ class InputStage(Stage):
         return 1
 
     async def execute(self, state: PipelineState) -> dict:
+        # PHILOSOPHY §2 s01 "담당": 입력 검증 / 파일 정규화 / 첫 user 메시지 push.
+        # provider / model / temperature 는 **만지지 않는다** — HarnessConfig top-level
+        # 에 이미 기록돼 있고 s07 이 그 값을 직접 읽어 해석. s01 이 중간에 끼면
+        # 하드코딩 연동이 돼서 "자연스러운 연동" 이 깨짐.
         config = state.config
         if not config:
             raise PipelineAbortError("Config not set", self.stage_id)
 
         if not state.user_input and not state.attached_files:
             raise ConfigError("입력이 비어있습니다", self.stage_id)
-
-        # stage_params → config 반영만. provider 생성은 s07 이 담당.
-        config.provider = self.get_param("provider", state, config.provider)
-        config.model = self.get_param("model", state, config.model)
-        config.temperature = float(self.get_param("temperature", state, config.temperature))
 
         # 사용자 메시지 push
         state.add_message("user", self._build_user_content(state))
@@ -60,9 +60,6 @@ class InputStage(Stage):
             logger.info("[Input] complexity=%s", input_complexity)
 
         result: dict[str, Any] = {
-            "provider": config.provider,
-            "model": config.model,
-            "temperature": config.temperature,
             "input_length": len(state.user_input),
             "files_count": len(state.attached_files),
         }
@@ -70,9 +67,8 @@ class InputStage(Stage):
             result["input_complexity"] = input_complexity
 
         logger.info(
-            "[Input] provider=%s, model=%s, temp=%.1f, input=%d chars, files=%d",
-            config.provider, config.model, config.temperature,
-            len(state.user_input), len(state.attached_files),
+            "[Input] input=%d chars, files=%d, complexity=%s",
+            len(state.user_input), len(state.attached_files), input_complexity or "-",
         )
         return result
 

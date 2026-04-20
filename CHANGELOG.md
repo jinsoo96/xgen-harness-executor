@@ -5,6 +5,20 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] — 2026-04-20
+
+### Changed — s01 입력 스테이지 철학 재정립 (하드코딩 연동 제거)
+
+0.9.x 이후 s01 에서 provider / model / temperature 를 아직 stage_param 필드로 노출하고 있었다. 철학은 "s01 = 사용자 입력 정규화 전용, LLM 설정은 s07 또는 HarnessConfig top-level" 인데 UI 가 s01 을 클릭해서 Provider 를 고르도록 유도하고 있었음 — 사용자가 지적한 **하드코딩 연동**.
+
+- `core/stage_config.py::STAGE_CONFIGS["s01_input"]` — `fields` 에서 `provider` / `model` / `temperature` 3개 제거. description/behavior 도 "LLM 프로바이더 초기화" → "사용자 입력 정규화" 로 재표기.
+- `stages/s01_input.py::InputStage.execute` — `config.provider = self.get_param(...)` / `model` / `temperature` 재대입 라인 제거. 결과 dict 에서도 provider/model/temperature 기록 제거. s01 은 이제 해당 값을 **읽지도 쓰지도 않는다**.
+- HarnessConfig top-level 의 provider/model/temperature 가 단일 진실 소스. s07 이 lazy-init 시 직접 참조.
+
+결과: 사용자 관점에서 "s01 = 입력만", "provider/model = 전역 Harness Config 드로어" 로 자연스러운 위치. 이식측 프론트는 `config-panel.tsx` 에 Provider/Model/Temperature 입력 UI 를 새로 올리고 `stage-detail-panel.tsx` 의 s01 하드코딩 리다이렉트를 제거.
+
+---
+
 ## [0.10.2] — 2026-04-20
 
 ### Changed — drift-free 연동 (프리픽스 재조합 제거)
