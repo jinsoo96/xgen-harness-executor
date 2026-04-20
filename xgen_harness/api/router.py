@@ -35,7 +35,9 @@ try:
 
     class ExecuteRequest(BaseModel):
         text: str
-        provider: str = "anthropic"
+        # provider 미지정 시 providers.get_default_provider() 가 런타임 해석
+        # (env XGEN_HARNESS_DEFAULT_PROVIDER → openai → anthropic → registry[0]).
+        provider: str = ""
         # model 미지정 시 provider 의 PROVIDER_DEFAULT_MODEL 조회 (빈 문자열이면 adapter/stage 에서 해석).
         model: str = ""
         temperature: float = 0.7
@@ -176,9 +178,9 @@ try:
                 if data.get("type") != "execute":
                     continue
 
-                from ..providers import PROVIDER_DEFAULT_MODEL
+                from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
                 user_input = data.get("input", "")
-                provider = data.get("provider", "anthropic")
+                provider = data.get("provider") or get_default_provider()
                 model = data.get("model") or PROVIDER_DEFAULT_MODEL.get(provider, "")
                 disabled = set(data.get("disabled_stages", []))
 
@@ -212,7 +214,8 @@ try:
     class OrchestratorRequest(BaseModel):
         text: str
         workflow_data: dict
-        provider: str = "anthropic"
+        # sentinel "" — providers.get_default_provider() 가 런타임 해석
+        provider: str = ""
         # sentinel "" — 비어있으면 MultiAgentExecutor 가 PROVIDER_DEFAULT_MODEL 에서 해석
         model: str = ""
 

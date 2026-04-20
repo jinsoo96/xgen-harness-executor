@@ -33,9 +33,11 @@ class HarnessConfig:
     """하네스 파이프라인 설정 — 프리셋 없음, 스테이지 개별 토글"""
 
     # --- LLM ---
+    # provider 기본값은 providers.get_default_provider() 가 런타임에 해석.
+    # ("" / None / 누락 → XGEN_HARNESS_DEFAULT_PROVIDER env → openai → anthropic → 레지스트리 첫 항목)
     # model 기본값은 providers.PROVIDER_DEFAULT_MODEL[provider] 에서 런타임 해석.
     # "" 로 들어오면 어댑터/s01_input 이 Redis → env → PROVIDER_DEFAULT_MODEL 순으로 결정.
-    provider: str = "anthropic"
+    provider: str = ""
     model: str = ""
     temperature: float = 0.7
     max_tokens: int = 8192
@@ -83,6 +85,16 @@ class HarnessConfig:
 
     # 레거시 호환
     preset: str = ""
+
+    def __post_init__(self) -> None:
+        """빈 provider 는 레지스트리 기반 기본값으로 해석.
+
+        하드코딩 "anthropic" fallback 을 제거한 자리에 런타임 해석을 건다.
+        env/레지스트리 순서는 providers.get_default_provider() 참조.
+        """
+        if not self.provider:
+            from ..providers import get_default_provider
+            self.provider = get_default_provider()
 
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록"""
@@ -188,8 +200,13 @@ class HarnessConfig:
             # 프리셋이 있으면 무시 (전부 활성)
             pass
 
+        from ..providers import get_default_provider
         return cls(
-            provider=harness_config.get("provider") or agent_config.get("provider", "anthropic"),
+            provider=(
+                harness_config.get("provider")
+                or agent_config.get("provider")
+                or get_default_provider()
+            ),
             # model 은 sentinel "" 로 받음 — 어댑터/s01_input 이 런타임에 PROVIDER_DEFAULT_MODEL 참조.
             model=harness_config.get("model") or agent_config.get("model", ""),
             temperature=float(harness_config.get("temperature", agent_config.get("temperature", 0.7))),

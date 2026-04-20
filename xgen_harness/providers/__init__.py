@@ -40,6 +40,20 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "google": "gemini-2.0-flash",
 }
 
+# 프로바이더별 컨텍스트 한도 (문자 수 기준, ~4 chars/token 추정).
+# s07_llm 의 중간축약 기준. 외부 프로바이더는 register_provider(..., context_limit=…) 로 등록.
+PROVIDER_CONTEXT_LIMITS: dict[str, int] = {
+    "anthropic": 500_000,
+    "openai": 500_000,
+    "google": 500_000,
+    "bedrock": 500_000,
+    "vllm": 50_000,
+}
+
+# 컨텍스트 한도 미등록 프로바이더용 공통 기본값.
+# 외부에서 os.environ["XGEN_HARNESS_DEFAULT_CONTEXT_LIMIT"] 로 override 가능.
+DEFAULT_CONTEXT_LIMIT_CHARS = 500_000
+
 # 프로바이더별 추가 모델 목록 — UI 드롭다운 동적 렌더용.
 # 기본 모델(PROVIDER_DEFAULT_MODEL)은 자동으로 맨 앞에 포함됨.
 # 새 provider 등록 시 이 dict 에 append → stage_config / harness.py 가 자동 반영.
@@ -80,10 +94,59 @@ def get_provider_models(provider: str) -> list[str]:
     return models
 
 
-def register_provider(name: str, cls: Type[LLMProvider]) -> None:
-    """프로바이더 등록. 기존 이름이면 덮어씀."""
-    _REGISTRY[name.lower()] = cls
+def register_provider(
+    name: str,
+    cls: Type[LLMProvider],
+    *,
+    default_model: Optional[str] = None,
+    models: Optional[list[str]] = None,
+    api_key_env: Optional[str] = None,
+    context_limit: Optional[int] = None,
+) -> None:
+    """프로바이더 등록. 기존 이름이면 덮어씀.
+
+    외부 패키지(예: xgen-bedrock-provider) 는 단 한번의 호출로 UI 드롭다운 /
+    API key 탐색 / 컨텍스트 한도까지 선언할 수 있다. 레지스트리만 건드리므로
+    엔진 소스 수정 0.
+
+    Args:
+        name: 프로바이더 식별자 (소문자 권장).
+        cls: LLMProvider 서브클래스.
+        default_model: UI/하네스 기본값. None 이면 기존 매핑 유지.
+        models: UI 드롭다운에 표시할 추가 모델 목록.
+        api_key_env: API 키 환경변수명 (예: ``MY_PROVIDER_API_KEY``).
+        context_limit: 문자 수 기준 컨텍스트 한도 (s07 중간축약 기준).
+    """
+    key = name.lower()
+    _REGISTRY[key] = cls
+    if default_model is not None:
+        PROVIDER_DEFAULT_MODEL[key] = default_model
+    if models is not None:
+        PROVIDER_MODELS[key] = list(models)
+    if api_key_env is not None:
+        PROVIDER_API_KEY_MAP[key] = api_key_env
+    if context_limit is not None:
+        PROVIDER_CONTEXT_LIMITS[key] = int(context_limit)
     logger.debug("Provider registered: %s → %s", name, cls.__name__)
+
+
+def get_context_limit(provider: str) -> int:
+    """프로바이더의 컨텍스트 한도(문자 수) 조회.
+
+    우선순위:
+      1) PROVIDER_CONTEXT_LIMITS 에 등록된 값
+      2) XGEN_HARNESS_DEFAULT_CONTEXT_LIMIT env
+      3) DEFAULT_CONTEXT_LIMIT_CHARS
+
+    엔진은 이 헬퍼만 사용 — 하드코딩 딕셔너리에 직접 접근 금지 (PHILOSOPHY §2 s07).
+    """
+    key = (provider or "").lower()
+    if key in PROVIDER_CONTEXT_LIMITS:
+        return int(PROVIDER_CONTEXT_LIMITS[key])
+    env_default = os.environ.get("XGEN_HARNESS_DEFAULT_CONTEXT_LIMIT", "").strip()
+    if env_default.isdigit():
+        return int(env_default)
+    return DEFAULT_CONTEXT_LIMIT_CHARS
 
 
 def create_provider(
@@ -222,6 +285,8 @@ __all__ = [
     "get_api_key_env", "get_default_model", "list_providers",
     "get_default_provider",
     "get_provider_models",
+    "get_context_limit",
     "resolve_api_key_from_file",
     "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL", "PROVIDER_MODELS",
+    "PROVIDER_CONTEXT_LIMITS", "DEFAULT_CONTEXT_LIMIT_CHARS",
 ]

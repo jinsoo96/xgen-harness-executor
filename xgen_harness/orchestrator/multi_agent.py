@@ -37,14 +37,14 @@ class MultiAgentExecutor:
         self,
         workflow_data: dict[str, Any],
         event_emitter: Optional[EventEmitter] = None,
-        default_provider: str = "anthropic",
+        default_provider: str = "",  # "" → providers.get_default_provider() 로 해석
         default_model: str = "",  # 비어있으면 PROVIDER_DEFAULT_MODEL 에서 해석
     ):
-        from ..providers import PROVIDER_DEFAULT_MODEL
+        from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
         self._workflow_data = workflow_data
         self._emitter = event_emitter or EventEmitter()
-        self._default_provider = default_provider
-        self._default_model = default_model or PROVIDER_DEFAULT_MODEL.get(default_provider, "")
+        self._default_provider = default_provider or get_default_provider()
+        self._default_model = default_model or PROVIDER_DEFAULT_MODEL.get(self._default_provider, "")
 
     async def run(self, initial_input: str) -> DAGResult:
         """워크플로우에서 에이전트 DAG 구성 → 실행"""

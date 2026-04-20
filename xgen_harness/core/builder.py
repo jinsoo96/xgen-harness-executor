@@ -3,7 +3,8 @@ PipelineBuilder — Fluent API로 파이프라인 구성
 
 체이닝으로 파이프라인 구성:
     pipeline = (PipelineBuilder()
-        .with_provider("anthropic", "claude-sonnet-4-20250514", api_key)
+        # with_provider 생략 → providers.get_default_provider() 로 해석 (env/레지스트리 기반).
+        # .with_provider("openai", "gpt-4o-mini", api_key)  # 명시 예시
         .with_system("You are a helpful assistant.")
         .with_tools([weather_tool, search_tool])
         .with_mcp_sessions(["session-abc"])
@@ -29,8 +30,8 @@ class PipelineBuilder:
     """Fluent builder로 파이프라인 구성"""
 
     def __init__(self):
-        from ..providers import PROVIDER_DEFAULT_MODEL
-        self._provider = "anthropic"
+        from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
+        self._provider = get_default_provider()
         self._model = PROVIDER_DEFAULT_MODEL.get(self._provider, "")
         self._api_key = ""
         self._temperature = 0.7

@@ -29,15 +29,6 @@ RETRY_DELAYS = {
 }
 DEFAULT_MAX_RETRIES = 3
 
-# 프로바이더별 컨텍스트 한도 (문자 수 기준, ~4 chars/token 추정)
-PROVIDER_CONTEXT_LIMITS = {
-    "anthropic": 500_000,
-    "openai": 500_000,
-    "google": 500_000,
-    "bedrock": 500_000,
-    "vllm": 50_000,
-}
-
 
 class LLMStage(Stage):
     """LLM API 호출 스테이지"""
@@ -240,11 +231,12 @@ class LLMStage(Stage):
         if thinking_enabled and provider.supports_thinking():
             thinking = {"type": "enabled", "budget_tokens": thinking_budget}
 
-        # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약
+        # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약.
+        # 레지스트리(providers.get_context_limit) 단일 조회 — 하드코딩 금지.
+        from ..providers import get_context_limit
         provider_name = getattr(provider, "provider_name", "") or (state.config.provider if state.config else "")
         context_limit = int(self.get_param(
-            "context_limit", state,
-            PROVIDER_CONTEXT_LIMITS.get(provider_name, 500_000),
+            "context_limit", state, get_context_limit(provider_name),
         ))
         state.messages = self._truncate_messages_if_needed(state.messages, context_limit)
 

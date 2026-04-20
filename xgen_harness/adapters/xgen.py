@@ -161,7 +161,12 @@ class XgenAdapter:
 
         agent_config = self._extract_agent_config(workflow_data)
 
-        provider = hc.get("provider") or (agent_config or {}).get("provider") or "anthropic"
+        from ..providers import get_default_provider
+        provider = (
+            hc.get("provider")
+            or (agent_config or {}).get("provider")
+            or get_default_provider()
+        )
 
         # 설정 기본값 해석 — UI 입력 없으면 Redis(persistent_configs) → env → 코드 기본 순.
         # 정책: xgen-core Redis 가 부팅 고정 .env 보다 우선. 관리자 UI 런타임 변경 반영.

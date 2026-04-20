@@ -7,7 +7,9 @@ xgen 생태계 전용 Pure Python 하네스 파이프라인.
 Usage:
     from xgen_harness import Pipeline, PipelineState, HarnessConfig
 
-    config = HarnessConfig(preset="standard", provider="anthropic")
+    # provider 생략 → providers.get_default_provider() 가 런타임 해석
+    # (XGEN_HARNESS_DEFAULT_PROVIDER env → openai → anthropic → 레지스트리 첫 항목)
+    config = HarnessConfig()
     pipeline = Pipeline.from_config(config)
     state = PipelineState(user_input="Hello")
     result = await pipeline.run(state)

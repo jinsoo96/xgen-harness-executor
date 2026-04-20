@@ -5,6 +5,47 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-04-20
+
+### Changed — Stage 책임 재정의 Phase 2 (v0.9.0 후속)
+
+v0.9.0 에서 선언한 철학을 실제 코드까지 관철. `s01_input` 의 backward-compat 로직을 완전히 제거하고, `PROVIDER_CONTEXT_LIMITS` 같은 stage-level 하드코딩 딕셔너리를 providers 레지스트리로 이관.
+
+- **`s01_input` 축소 완료** — PHILOSOPHY §2 선언대로 "입력 정규화" 단일 책임.
+  - 제거: provider 생성 / API key 해석 / base_url 해석 / MCP 디스커버리 / workflow_data 스캔.
+  - 유지: 입력 검증 / 첨부 파일 → content block / 첫 user 메시지 push / 복잡도 분류.
+  - `provider / model / temperature` 는 `config` 에만 기록 — 실제 해석은 `s07_llm._lazy_init_provider()`.
+- **`s04_tool_index` — MCP workflow_data fallback 흡수**. `stage_params.mcp_sessions` 가 비어 있으면 `_collect_mcp_sessions_from_workflow(workflow_data)` 로 `mcp/*` 노드를 자동 스캔. (이전엔 s01 이 하던 일). `should_bypass` 도 동일 로직으로 업데이트.
+- **`PROVIDER_CONTEXT_LIMITS` → providers 레지스트리**. 하드코딩 딕셔너리를 `s07_llm.py` 에서 제거하고 `providers/__init__.py` 로 이동. 외부 provider 플러그인이 `register_provider(name, cls, context_limit=…)` 한 번으로 UI 드롭다운 / API key env / 컨텍스트 한도까지 선언 가능.
+  - 신설 헬퍼: `get_context_limit(provider)` — 레지스트리 → `XGEN_HARNESS_DEFAULT_CONTEXT_LIMIT` env → `DEFAULT_CONTEXT_LIMIT_CHARS(500_000)` 순 조회.
+  - `register_provider` 시그니처 확장: `default_model`, `models`, `api_key_env`, `context_limit` 선언형 인자 (모두 optional). 엔진 소스 수정 0 으로 새 provider 통합.
+
+### Docs
+
+- **`docs/harness/EXTENSION_POINTS.md` §1 Stage** — `register_stage` 시그니처 + Stage 클래스 계약(order/phase/execute/list_strategies) + 런타임 등록 예제 정리. 외부 기여자가 entry_points 와 런타임 API 중 선택 가능.
+- **`docs/harness/EXECUTOR-ENDPOINTS.md` 상단 고지** — "엔진은 이 URL 을 강제하지 않는다. `/api/agentflow/harness/...` 는 xgen-workflow 이식 레이어의 현재 규약일 뿐. 외부 이식측은 자사 규약으로 자유롭게 마운트 가능." 엔진 / 이식측 분리 명문화.
+- **`docs/harness/NODE-WRAPPING.md` 신설** — 캔버스 노드가 `_XgenNodeRef` 디스패치 타입으로 말려서 LLM 도구가 되는 전체 알고리즘 (bootstrap / 6-step build / 3 invariants / 실제 예제 / 외부 확장 경로).
+
+### PHILOSOPHY 정합성
+
+- v0.9.0 문서 §2 "s01 비담당" 항목이 이제 실제 코드와 일치. "deprecated but functional" 상태 해소.
+- "Stage 내부의 프로바이더별 상수 딕셔너리" 패턴을 providers 레지스트리로 일원화. 앞으로 Stage 에 `PROVIDER_*` prefix 의 dict 추가 금지.
+
+### Changed — 하드코딩된 `"anthropic"` 기본값 전면 제거
+
+엔진 곳곳에 박혀있던 `provider="anthropic"` 기본값을 `providers.get_default_provider()` 런타임 해석으로 교체. 외부 기여자가 OpenAI / Bedrock / vLLM 기반 환경을 기본으로 쓸 때 엔진 소스 수정 없이 `XGEN_HARNESS_DEFAULT_PROVIDER` env 한 줄로 전역 기본값 변경 가능.
+
+- 영향 파일: `core/config.HarnessConfig` (`__post_init__` 에서 런타임 해석), `core/session.HarnessSession.from_dict`, `core/builder.PipelineBuilder`, `adapters/xgen.XgenAdapter`, `api/router` (ExecuteRequest / OrchestratorRequest / SSE 분기), `orchestrator/multi_agent.MultiAgentExecutor`.
+- 해석 순서: `XGEN_HARNESS_DEFAULT_PROVIDER` env → `openai` → `anthropic` → 레지스트리 첫 항목 → `"openai"`.
+
+### Backward compatibility
+
+- `harness_config` 포맷 / 저장된 워크플로우 JSON / UI 계약 변경 없음.
+- MCP 세션이 UI 선택 없이 workflow_data 에만 존재하는 기존 워크플로우도 그대로 동작 — 수집 주체만 s01 → s04 로 이동.
+- `provider` 를 명시 전달해온 호출자 영향 없음. 빈 문자열 / 누락일 때만 런타임 해석이 돈다.
+
+---
+
 ## [0.9.1] — 2026-04-20
 
 ### Fixed — 엔진 내 하드코딩 경로 제거 (연동성·확장성 원칙 위배 해소)

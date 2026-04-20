@@ -34,6 +34,10 @@ class ToolIndexStage(Stage):
     async def execute(self, state: PipelineState) -> dict:
         # 0. stage_params에서 설정 읽기 (3-level fallback)
         selected_mcp_sessions: list[str] = self.get_param("mcp_sessions", state, [])
+        # 선택 없음이면 workflow_data 에서 MCP 노드를 스캔 (PHILOSOPHY §2 s04 담당).
+        # v0.9.0 이전 s01 이 하던 일을 여기서 흡수 — backward compat.
+        if not selected_mcp_sessions and state.workflow_data:
+            selected_mcp_sessions = self._collect_mcp_sessions_from_workflow(state.workflow_data)
         rag_collections: list[str] = self.get_param("rag_collections", state, [])
         rag_top_k: int = self.get_param("rag_top_k", state, 4)
         # 추가 선택값 — 이전엔 UI 만 저장하고 stage 가 무시하던 항목들. metadata 로 노출.
@@ -198,6 +202,25 @@ class ToolIndexStage(Stage):
             ],
         }
 
+    def _collect_mcp_sessions_from_workflow(self, workflow_data: dict) -> list[str]:
+        """워크플로우 노드에서 MCP 세션 ID 수집 (fallback).
+
+        stage_params.mcp_sessions 가 비어 있을 때만 사용. UI 에서 명시 선택이 있으면
+        그쪽이 우선이라 여기는 호출되지 않음. 엔진은 ``mcp/`` prefix 만 의존 —
+        노드 ID 가 ``mcp/<server>/<name>`` 형식이면 자동 인식.
+        """
+        sessions: list[str] = []
+        for node in workflow_data.get("nodes", []) or []:
+            data = node.get("data", {}) or {}
+            if not str(data.get("id", "")).startswith("mcp/"):
+                continue
+            for p in data.get("parameters", []) or []:
+                if p.get("id") == "session_id":
+                    sid = p.get("value")
+                    if sid and sid != "Select Session" and sid not in sessions:
+                        sessions.append(sid)
+        return sessions
+
     async def _discover_selected_mcp_tools(
         self, session_ids: list[str], state: PipelineState
     ) -> None:
@@ -225,10 +248,13 @@ class ToolIndexStage(Stage):
             logger.warning("[Tool Index] MCP discovery failed: %s", e)
 
     def should_bypass(self, state: PipelineState) -> bool:
-        # 도구/RAG/MCP/capability/builtin 중 하나라도 있으면 실행
+        # 도구/RAG/MCP/capability/builtin 중 하나라도 있으면 실행.
+        # mcp_sessions 는 workflow_data 의 mcp/ 노드 존재로도 성립 (s01 이 아닌 s04 가 담당).
         has_tools = bool(state.tool_definitions)
         has_rag = bool(self.get_param("rag_collections", state, []))
         has_mcp = bool(self.get_param("mcp_sessions", state, []))
+        if not has_mcp and state.workflow_data:
+            has_mcp = bool(self._collect_mcp_sessions_from_workflow(state.workflow_data))
         has_caps = bool(state.config and getattr(state.config, "capabilities", None))
         has_builtins = bool(self.get_param("builtin_tools", state, []))
         return not (has_tools or has_rag or has_mcp or has_caps or has_builtins)
