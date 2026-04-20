@@ -5,6 +5,23 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-04-20
+
+### Fixed — 엔진 내 하드코딩 경로 제거 (연동성·확장성 원칙 위배 해소)
+
+v0.9.0 이관 과정에서 기존 `s01_input` 의 API key 파일 폴백 경로 `/app/config/{env_var}.txt` 를 `s07_llm` 에도 복제해 **두 Stage 에 동일 경로 하드코딩**이 박힘. 엔진 "하드코딩 금지 / 연동성 최우선" 원칙 위배. 단일 진실 소스로 이관:
+
+- **`providers.resolve_api_key_from_file(provider)` 신설** — API key 파일 폴백 경로를 **providers 레지스트리** 가 소유. Stage 는 경로를 모른다.
+- **env override**: `XGEN_HARNESS_API_KEY_FILE_DIR` 로 파일 디렉터리 override 가능. 미설정 시 `/app/config` 기본 (backward compat).
+- **`s01_input._resolve_api_key`** / **`s07_llm._lazy_init_provider`** — 둘 다 경로 직접 구성 코드 제거하고 `resolve_api_key_from_file()` 호출로 통일.
+- 결과: 엔진 코드에서 `/app/config` 출현은 **providers/__init__.py 의 기본값 한 곳만** (docstring + fallback). Stage 코드에는 0.
+
+### PHILOSOPHY §1 "책임 침범 금지" 강화
+
+API key 해석 경로를 Stage 가 소유하지 않고 providers 레지스트리가 소유 — "외부 provider 플러그인이 추가될 때 각 Stage 에 경로 로직이 박혀있으면 매번 같이 수정해야 하는" 확장성 문제 해결.
+
+---
+
 ## [0.9.0] — 2026-04-20
 
 ### Changed — Stage 책임 재정의 (철학 바로잡기)

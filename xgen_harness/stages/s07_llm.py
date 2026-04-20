@@ -123,7 +123,10 @@ class LLMStage(Stage):
         """
         import os
         from ..core.execution_context import get_api_key as ctx_get_api_key
-        from ..providers import create_provider, get_api_key_env, PROVIDER_DEFAULT_MODEL
+        from ..providers import (
+            create_provider, get_api_key_env, resolve_api_key_from_file,
+            PROVIDER_DEFAULT_MODEL,
+        )
 
         config = state.config
         if not config:
@@ -150,10 +153,9 @@ class LLMStage(Stage):
             env_var = get_api_key_env(provider_name)
             api_key = os.environ.get(env_var, "")
             if not api_key:
-                filepath = f"/app/config/{env_var.lower()}.txt"
-                if os.path.exists(filepath):
-                    with open(filepath) as f:
-                        api_key = f.read().strip()
+                # 파일 폴백 — providers 레지스트리 헬퍼 위임
+                # (경로 고정 금지: XGEN_HARNESS_API_KEY_FILE_DIR 로 override 가능)
+                api_key = resolve_api_key_from_file(provider_name)
         if not api_key:
             raise PipelineAbortError(
                 f"{provider_name} API key not configured", self.stage_id,

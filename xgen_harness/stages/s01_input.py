@@ -16,7 +16,7 @@ from ..core.execution_context import get_api_key as ctx_get_api_key
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
 from ..errors import ConfigError, PipelineAbortError
-from ..providers import create_provider, get_api_key_env, PROVIDER_API_KEY_MAP
+from ..providers import create_provider, get_api_key_env, resolve_api_key_from_file, PROVIDER_API_KEY_MAP
 
 logger = logging.getLogger("harness.stage.input")
 
@@ -231,11 +231,11 @@ class InputStage(Stage):
         if key:
             return key
 
-        # 4. 파일 기반 폴백 (Docker 환경)
-        filepath = f"/app/config/{env_var.lower()}.txt"
-        if os.path.exists(filepath):
-            with open(filepath) as f:
-                return f.read().strip()
+        # 4. 파일 기반 폴백 — providers 레지스트리 헬퍼 위임
+        # (경로는 XGEN_HARNESS_API_KEY_FILE_DIR env 로 override 가능)
+        file_key = resolve_api_key_from_file(provider)
+        if file_key:
+            return file_key
 
         return None
 

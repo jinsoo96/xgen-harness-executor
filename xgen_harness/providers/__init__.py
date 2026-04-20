@@ -116,6 +116,28 @@ def get_api_key_env(provider: str) -> str:
     return PROVIDER_API_KEY_MAP.get(provider.lower(), f"{provider.upper()}_API_KEY")
 
 
+def resolve_api_key_from_file(provider: str) -> Optional[str]:
+    """파일 기반 API 키 폴백 (Docker 환경 등 env 주입이 어려울 때).
+
+    기본 경로: ``/app/config/{env_var.lower()}.txt``.
+    ``XGEN_HARNESS_API_KEY_FILE_DIR`` 환경변수로 override 가능 — 이식 측(Docker 외)이
+    다른 경로를 쓸 때 엔진 코드 수정 없이 재지정. 파일 없으면 None.
+
+    Stage 에서 직접 경로를 박지 않고 이 레지스트리 헬퍼를 호출하는 단일 경로를 둠
+    (PHILOSOPHY §1 "책임 침범 금지" — API key 해석 경로는 providers 레지스트리가 소유).
+    """
+    env_var = get_api_key_env(provider)
+    base_dir = os.environ.get("XGEN_HARNESS_API_KEY_FILE_DIR", "/app/config").rstrip("/")
+    filepath = f"{base_dir}/{env_var.lower()}.txt"
+    try:
+        if os.path.exists(filepath):
+            with open(filepath) as f:
+                return f.read().strip() or None
+    except OSError as e:
+        logger.debug("[providers] API key file read failed (%s): %s", filepath, e)
+    return None
+
+
 def get_default_model(provider: str) -> str:
     """프로바이더의 기본 모델명 반환."""
     return PROVIDER_DEFAULT_MODEL.get(provider.lower(), "")
@@ -125,6 +147,34 @@ def list_providers() -> list[str]:
     """등록된 프로바이더 이름 목록."""
     _register_defaults()
     return list(_REGISTRY.keys())
+
+
+def get_default_provider() -> str:
+    """하네스 런타임 기본 프로바이더 해석.
+
+    우선순위:
+      1) ``XGEN_HARNESS_DEFAULT_PROVIDER`` env (등록된 프로바이더일 때만)
+      2) 선호 목록(openai → anthropic) 중 등록된 첫 항목
+      3) 레지스트리 첫 항목
+      4) 최종 fallback ``"openai"``
+
+    사용자 선호(2026-04-20): 기본값은 열린 상태로 유지하되,
+    명시 설정이 없을 때 openai 를 우선한다. 선택권은 UI 에서 항상 열려있음.
+    """
+    _register_defaults()
+
+    env = os.environ.get("XGEN_HARNESS_DEFAULT_PROVIDER", "").strip().lower()
+    if env and env in _REGISTRY:
+        return env
+
+    for preferred in ("openai", "anthropic"):
+        if preferred in _REGISTRY:
+            return preferred
+
+    if _REGISTRY:
+        return next(iter(_REGISTRY.keys()))
+
+    return "openai"
 
 
 def _register_defaults() -> None:
@@ -170,6 +220,8 @@ __all__ = [
     "LLMProvider", "ProviderEvent", "ProviderEventType",
     "register_provider", "create_provider", "wrap_langchain",
     "get_api_key_env", "get_default_model", "list_providers",
+    "get_default_provider",
     "get_provider_models",
+    "resolve_api_key_from_file",
     "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL", "PROVIDER_MODELS",
 ]
