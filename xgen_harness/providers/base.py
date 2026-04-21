@@ -60,6 +60,7 @@ class LLMProvider(ABC):
         max_tokens: int = 8192,
         stream: bool = True,
         thinking: Optional[dict] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncGenerator[ProviderEvent, None]:
         """
         LLM API 호출. ProviderEvent를 스트리밍으로 yield.

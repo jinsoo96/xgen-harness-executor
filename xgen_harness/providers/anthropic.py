@@ -52,6 +52,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 8192,
         stream: bool = True,
         thinking: Optional[dict] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncGenerator[ProviderEvent, None]:
         body: dict[str, Any] = {
             "model": self._model,
@@ -71,6 +72,16 @@ class AnthropicProvider(LLMProvider):
 
         if tools:
             body["tools"] = tools
+            # v0.11.19 — Anthropic tool_choice: {"type": "auto"|"any"|"tool", "name": "..."}
+            if tool_choice:
+                if tool_choice == "required":
+                    body["tool_choice"] = {"type": "any"}
+                elif tool_choice == "auto":
+                    body["tool_choice"] = {"type": "auto"}
+                elif tool_choice == "none":
+                    body["tool_choice"] = {"type": "none"}
+                else:
+                    body["tool_choice"] = {"type": "tool", "name": tool_choice}
 
         headers = {
             "x-api-key": self._api_key,

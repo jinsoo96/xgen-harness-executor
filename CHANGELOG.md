@@ -5,6 +5,36 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.19] — 2026-04-22
+
+### 🎯 벤치 사이클 #18 — tool_choice API (L3 Microcompact 실전 완결)
+
+Iter#21 에서 `rag_ingestion_mode=tool_only` 로 system prompt RAG 주입 93% 축소 성공했으나, LLM 이 `tool_choice="auto"` 로 여전히 도구 호출 거부 (gpt-4o-mini 가 "정보 없음" 답변).
+
+**해결**: Provider layer 에 `tool_choice` 파라미터 추가 + s04 에 `force_tool_use` 옵션.
+
+**변경 (Provider 3종 동기화)**:
+- `providers/base.py::chat()` 시그니처에 `tool_choice: Optional[str] = None` 추가
+- `providers/openai.py`: body 에 `tool_choice` 전달 (auto/required/none/{name})
+- `providers/anthropic.py`: Anthropic 형식 변환 (`{"type":"any"}` = required)
+- `providers/langchain_adapter.py`: 시그니처 호환
+
+**변경 (Stage / Config)**:
+- `stages/s04_tool.py`: `force_tool_use` 파라미터 → `state.metadata["force_tool_choice"]="required"` 세팅
+- `stages/s07_llm.py`: `state.metadata["force_tool_choice"]` 읽어 `provider.chat(tool_choice=...)` 전달
+- `core/stage_config.py`: `force_tool_use` toggle 필드 등록
+
+**L3 실전 활로 조합**:
+```python
+stage_params = {
+    "s04_tool": {"rag_tool_mode": "tool", "force_tool_use": True},
+    "s06_context": {"rag_ingestion_mode": "tool_only", "strategy": "microcompact",
+                    "microcompact_threshold": 60, "microcompact_keep_recent": 3},
+}
+```
+
+**무침범**: 기본값 모두 False/None → 기존 프로젝트 영향 없음. 이식/프론트 무변경 (stage_config 자동 렌더).
+
 ## [0.11.18] — 2026-04-22
 
 ### 🎯 벤치 사이클 #17 — rag_ingestion_mode (L3 Microcompact 실전 활로)

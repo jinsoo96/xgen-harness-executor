@@ -156,6 +156,13 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "options": ["discover_tools", "calculator", "web_search"],
                 "default": ["discover_tools"],
             },
+            {
+                "id": "force_tool_use",
+                "label": "도구 호출 강제 (v0.11.19+)",
+                "type": "toggle",
+                "default": False,
+                "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건. rag_tool_mode=tool + rag_ingestion_mode=tool_only 조합 필수.",
+            },
         ],
         "behavior": [
             "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",

@@ -52,6 +52,7 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 8192,
         stream: bool = True,
         thinking: Optional[dict] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncGenerator[ProviderEvent, None]:
         # Anthropic 메시지 포맷 → OpenAI 포맷 변환
         oai_messages = _convert_messages(messages, system)
@@ -66,6 +67,13 @@ class OpenAIProvider(LLMProvider):
         }
         if oai_tools:
             body["tools"] = oai_tools
+            # v0.11.19 — tool_choice 전달 (auto/required/none 또는 {"type":"function","function":{"name":...}})
+            if tool_choice:
+                tc = tool_choice
+                if tc in ("auto", "required", "none"):
+                    body["tool_choice"] = tc
+                elif isinstance(tc, str) and tc not in ("auto", "required", "none"):
+                    body["tool_choice"] = {"type": "function", "function": {"name": tc}}
 
         if stream:
             body["stream_options"] = {"include_usage": True}

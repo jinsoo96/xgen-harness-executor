@@ -141,6 +141,13 @@ class ToolIndexStage(Stage):
                     state.metadata["tool_registry"]["rag_search"] = rag_tool
                     logger.info("[Tool Index] rag_search tool registered (mode=%s)", rag_tool_mode)
 
+        # v0.11.19 — force_tool_use: LLM 이 반드시 tool 을 호출하도록 tool_choice="required" 세팅.
+        # rag_tool_mode=tool 과 결합하면 LLM 이 system prompt 로 우회할 수 없어 tool_result 누적 → L3 microcompact 발동 조건 충족.
+        force_tool_use = bool(self.get_param("force_tool_use", state, False))
+        if force_tool_use and state.tool_definitions:
+            state.metadata["force_tool_choice"] = "required"
+            logger.info("[Tool Index] force_tool_use=True → tool_choice=required (L3 활로)")
+
         logger.info("[Tool Index] %d tools indexed, %d definitions bound",
                      len(tool_index), len(state.tool_definitions))
         return {
@@ -151,6 +158,7 @@ class ToolIndexStage(Stage):
             "capabilities_declared": cap_result.get("declared", 0),
             "capabilities_resolved": cap_result.get("resolved", 0),
             "capabilities_unknown": cap_result.get("unknown", 0),
+            "force_tool_use": force_tool_use,
         }
 
     def _bind_capabilities(self, state: PipelineState) -> dict:

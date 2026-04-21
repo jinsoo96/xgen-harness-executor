@@ -255,6 +255,11 @@ class LLMStage(Stage):
                   "tools_count": len(state.tool_definitions or [])},
         ))
 
+        # v0.11.19 — tool_choice: s04 가 state.metadata["force_tool_choice"] 에 세팅
+        # 가능 값: "auto" (기본), "required" (반드시 tool 하나 호출), "none", 또는 특정 tool 이름
+        _tool_choice = None
+        if state.tool_definitions:
+            _tool_choice = (state.metadata or {}).get("force_tool_choice")
         async for event in provider.chat(
             messages=state.messages,
             system=state.system_prompt or None,
@@ -263,6 +268,7 @@ class LLMStage(Stage):
             max_tokens=max_tokens,
             stream=True,
             thinking=thinking,
+            tool_choice=_tool_choice,
         ):
             if event.type == ProviderEventType.TEXT_DELTA:
                 text_parts.append(event.text)

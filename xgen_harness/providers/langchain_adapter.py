@@ -81,6 +81,7 @@ class LangChainAdapter(LLMProvider):
         max_tokens: int = 8192,
         stream: bool = True,
         thinking: Optional[dict] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncGenerator[ProviderEvent, None]:
         """LangChain astream_events를 ProviderEvent로 변환."""
 
