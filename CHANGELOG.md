@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.8] — 2026-04-21
+
+### 🎯 벤치 사이클 #7 — RR1: `metadata_filter` + 서버 단 rerank 요청 전파
+
+Pilot #1/#2 분석에서 "정답 파일이 top-5 에 0%" 라는 구조적 병목이 드러났습니다. 이는 상위-k 후처리 도구 (score_threshold/rerank) 로는 해결 불가능하며, **검색 범위 자체를 좁혀야** 합니다. xgen-documents `DocumentSearchRequest` 를 재확인한 결과 `filter` / `rerank` / `rerank_top_k` 3 필드를 이미 request 단위로 지원하고 있었습니다 (하네스 엔진만 이를 모르고 있던 상태).
+
+**변경**:
+- `core/services.py`: `DocumentService.search` Protocol 에 `filter`, `rerank`, `rerank_top_k` 3 파라미터 추가. 기본값 유지로 회귀 안전.
+- `integrations/xgen_services.py`: `XgenServiceProvider.search` payload 에 filter / rerank / rerank_top_k 조건부 포함 (None/False 면 생략).
+- `stages/s06_context.py`: s06 이 `stage_params.s06_context.metadata_filter` 를 읽어 전달. dict 또는 JSON 문자열 (UI textarea) 모두 허용. reranker / rerank_top_k 는 이제 서버 단 rerank 요청으로 합류 (Cycle #2 의 client-side rerank 블록은 서버 미지원 구현체를 위한 폴백으로 유지).
+- `core/stage_config.py`: s06_context 에 `metadata_filter` (textarea) UI 필드 추가. ConfigPanel 자동 노출. behavior 문구 갱신.
+
+**영향**:
+- `stage_params.s06_context.metadata_filter = {"file_name": "products.csv"}` 같은 필터로 검색 범위 제한 가능.
+- 쿼리 의도를 미리 분류해 적절한 파일로 범위 좁히면 Pilot #1/#2 가 드러낸 "정답 파일 부재" 병목 해결 경로 확보.
+- 기존 client-side rerank 는 폴백으로 보존 → ServiceProvider 구현체가 request-level rerank 미지원인 경우 대비.
+
+**출처**: `bench/reports/2026-04-21-pilot-assort.md` 의 RR1 제안 + `bench/reports/2026-04-21-pilot-v2-and-infra.md` 의 expected_file_in_top5=0% 관찰.
+
 ## [0.11.7] — 2026-04-21
 
 ### 🎯 벤치 사이클 #6 — UI 노출 (ConfigPanel 자동 반영)

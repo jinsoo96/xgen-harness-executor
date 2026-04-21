@@ -376,15 +376,30 @@ class XgenDocumentService:
         limit: int = 5,
         user_id: str = "",
         score_threshold: float = 0.0,
+        filter: dict[str, Any] | None = None,
+        rerank: bool = False,
+        rerank_top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        """xgen-documents: POST /api/retrieval/documents/search (collection_name + query_text)"""
+        """xgen-documents: POST /api/retrieval/documents/search (collection_name + query_text)
+
+        DocumentSearchRequest(controller/retrieval/retrieval/document.py) 는
+        {query_text, collection_name, limit, score_threshold, filter, rerank, rerank_top_k}
+        를 지원합니다. 서버가 rerank=True 를 받으면 자체 reranker 로 재정렬해 반환하므로
+        Stage 쪽에서 별도 rerank 호출이 필요 없습니다.
+        """
         url = f"{self._base_url}/api/retrieval/documents/search"
-        payload = {
+        payload: dict[str, Any] = {
             "query_text": query,
             "collection_name": collection_id,
             "limit": limit,
             "score_threshold": float(score_threshold),
         }
+        if filter:
+            payload["filter"] = filter
+        if rerank:
+            payload["rerank"] = True
+            if rerank_top_k is not None:
+                payload["rerank_top_k"] = int(rerank_top_k)
         headers = self._auth_headers(user_id)
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:

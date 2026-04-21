@@ -136,10 +136,16 @@ class DocumentService(Protocol):
         limit: int = 5,
         user_id: str = "",
         score_threshold: float = 0.0,
+        filter: dict[str, Any] | None = None,
+        rerank: bool = False,
+        rerank_top_k: int | None = None,
     ) -> list[dict[str, Any]]:
         """문서 검색. 각 항목: {content, source, score, ...}
 
         score_threshold: 결과에 포함시킬 최소 유사도. 0.0 이면 필터링 없음.
+        filter: 메타데이터 필터. 예: {"file_name": "products.csv"}. None 이면 비적용.
+        rerank: True 면 서버에서 재순위 수행. (구현체가 지원하는 경우)
+        rerank_top_k: rerank=True 일 때 유지할 상위 k 개. None 이면 서버 기본값.
         """
         ...
 

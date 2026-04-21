@@ -85,11 +85,35 @@ class ContextStage(Stage):
                 parts: list[str] = []
                 from ..utils.docs import extract_source, extract_text, extract_score
                 score_threshold = float(self.get_param("score_threshold", state, 0.0))
+                # metadata_filter — xgen-documents DocumentSearchRequest.filter 로 전달.
+                # 예: {"file_name": "products.csv"} 를 주면 해당 파일 청크만 반환.
+                # dict 또는 JSON 문자열(UI textarea) 모두 허용, 파싱 실패 시 무시.
+                raw_filter = self.get_param("metadata_filter", state, None)
+                metadata_filter: dict | None = None
+                if isinstance(raw_filter, dict) and raw_filter:
+                    metadata_filter = raw_filter
+                elif isinstance(raw_filter, str) and raw_filter.strip():
+                    try:
+                        import json as _json
+                        parsed = _json.loads(raw_filter)
+                        if isinstance(parsed, dict) and parsed:
+                            metadata_filter = parsed
+                    except Exception as e:
+                        logger.debug("[Context] metadata_filter JSON 파싱 실패: %s", e)
+                # 서버 단 rerank — 요청 단위로 활성 가능 (xgen-documents 지원).
+                # reranker 파라미터가 truthy 이면 서버 rerank 를 켜고, rerank_top_k 도 전달.
+                reranker_enabled = bool(str(self.get_param("reranker", state, "") or "").strip())
+                rerank_top_k_param = self.get_param("rerank_top_k", state, None)
+                try:
+                    rerank_top_k_int = int(rerank_top_k_param) if rerank_top_k_param is not None else None
+                except (TypeError, ValueError):
+                    rerank_top_k_int = None
                 for col in rag_collections:
                     try:
                         # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
                         search_hits = await doc_service.search(
                             state.user_input, col, limit=top_k, score_threshold=score_threshold,
+                            filter=metadata_filter, rerank=reranker_enabled, rerank_top_k=rerank_top_k_int,
                         ) or []
                         if search_hits:
                             part = f"## {col} ({len(search_hits)}건)\n\n"
