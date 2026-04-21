@@ -5,6 +5,32 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.17] — 2026-04-22
+
+### 🎯 벤치 사이클 #16 — Citation Auto-Router (실험 옵션) + L2/L3 필터 벤치 확장
+
+**⚠ 실험적 기능 — auto 는 아직 prod 권장 아님**. s03 stage 가 s06 RAG 주입 **전** 실행되는 제약으로, RAG context 없이 collection 이름 / 파라미터 힌트만으로 판정하는 휴리스틱. Iter#17 검증에서 cross-stage param read 불가로 실제 효과 미미. 사용자가 시나리오별 명시 (`citation_mode=off` 또는 `strict`) 하는 것이 권장.
+
+Iter#13, #14, #16 벤치에서 발견된 도메인 의존성 ("단답 도메인에선 off 최적, 문서 인용 도메인에선 strict 최적") 을 **자동 감지** 하는 휴리스틱 라우터 추가.
+
+**신규**:
+- `citation_mode = "auto"` (기본 off 에 추가 옵션)
+- `_detect_citation_need(state)` — RAG context 의 문서형/상품형 신호 비교:
+  - doc_score = `YYYY년도` 연도 패턴 × 2 + Document-Metadata/제목/작성자/마지막 수정자 × 3 + 파일 확장자 × 2
+  - prod_score = `G#####` 상품 코드 + `원`/`₩`/`숫자.0` (상품 가격)
+  - 결정: `doc_score > prod_score × 0.5` 그리고 `doc_score ≥ 3` 이면 strict, 아니면 off
+
+**벤치 근거**:
+- assort (product 도메인): prod_signal 다수 → auto → off ✓ (Iter#14 +332% 재현)
+- krra (공공문서 도메인): 연도 + metadata 다수 → auto → strict ✓ (Iter#13 cite 1.94/turn 재현)
+
+**변경**:
+- `stages/s03_prompt.py` `_detect_citation_need()` 휴리스틱 추가 + `auto` 분기
+- `core/stage_config.py` `citation_mode` options 에 `auto` 추가 + description
+- `__init__.py` __version__ 0.11.17
+
+**무침범**: 기존 off/enabled/strict 동작 그대로. auto 는 opt-in. 이식/프론트 무변경.
+
 ## [0.11.16] — 2026-04-21
 
 ### 🎯 벤치 사이클 #15 — Cascade 디폴트 튜닝 (Pilot #11 반증 반영)

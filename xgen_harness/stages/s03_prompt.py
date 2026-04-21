@@ -86,14 +86,22 @@ class SystemPromptStage(Stage):
         #   - off      : 인용 지시 없음
         #   - enabled  : [DOC_n] 인용 형식 권장 (기존 citation_enabled=True 와 동일)
         #   - strict   : enabled 규칙 + 검색 결과에 없는 정보는 답하지 않는다는 강한 규칙 추가
+        #   - auto     : v0.11.17+ RAG context 패턴으로 자동 판정 (문서 인용형 → strict, 아니면 off)
         raw_mode = self.get_param("citation_mode", state, None)
         legacy_enabled = bool(self.get_param("citation_enabled", state, False))
         if raw_mode is None:
             citation_mode = "enabled" if legacy_enabled else "off"
         else:
             citation_mode = str(raw_mode).strip().lower() or "off"
-            if citation_mode not in ("off", "enabled", "strict"):
+            if citation_mode not in ("off", "enabled", "strict", "auto"):
                 citation_mode = "enabled" if legacy_enabled else "off"
+
+        # v0.11.17 — auto 모드: RAG context 에서 문서형 신호 감지
+        if citation_mode == "auto":
+            auto_detected = self._detect_citation_need(state)
+            citation_mode = "strict" if auto_detected else "off"
+            logger.info("[s03] citation_mode=auto → %s (detected=%s)",
+                        citation_mode, auto_detected)
 
         if citation_mode in ("enabled", "strict"):
             citation_instructions = self.get_param(
@@ -144,6 +152,88 @@ class SystemPromptStage(Stage):
         }
         logger.info("[System Prompt] %d chars, sections=%s", len(assembled), result["sections"])
         return result
+
+    def _detect_citation_need(self, state: PipelineState) -> bool:
+        """v0.11.17 — 도메인 자동 감지 (auto-router).
+
+        s03 는 s06 RAG 주입 전 실행되므로 rag_context 는 보통 빔. 따라서
+        **collection 이름 + stage_params.s06_context.rag_collections** 를 먼저 감지.
+
+        휴리스틱 우선순위:
+          1. Collection 이름 힌트: `masahoe/krra/doc/report/policy/regulation`
+             같은 문서형 토큰 포함 → strict. `assort/product/x2bee/commerce` 같은
+             상품형 토큰 → off. (가장 robust)
+          2. RAG context 에 파일 확장자 (.pdf vs .csv) 출현 (rag_context 주입된 경우만)
+          3. 내용 신호 (연도·metadata) fallback
+
+        본 판정은 휴리스틱이라 완전하지 않음. 사용자가 명시 off/strict 주면 override.
+        """
+        import re as _re
+
+        # 1차 — collection 이름 토큰 (가장 robust, s03 에서 바로 가능)
+        rag_collections: list[str] = self.get_param("rag_collections", state, []) or []
+        if not rag_collections:
+            # fallback: state.metadata 에서 시도 (s04 에서 주입되는 경우)
+            rag_collections = (state.metadata or {}).get("rag_collections", []) or []
+        col_text = " ".join(str(c).lower() for c in rag_collections)
+        doc_col_tokens = ("masahoe", "krra", "doc", "report", "regulation", "policy",
+                          "pdf", "공공문서", "manual", "hwp", "rule")
+        prod_col_tokens = ("assort", "product", "x2bee", "commerce", "stock",
+                           "inventory", "catalog", "상품", "sku")
+        doc_col_match = sum(1 for t in doc_col_tokens if t in col_text)
+        prod_col_match = sum(1 for t in prod_col_tokens if t in col_text)
+        if doc_col_match + prod_col_match > 0:
+            decision = doc_col_match >= prod_col_match and doc_col_match >= 1
+            logger.info(
+                "[s03] auto-detect (collection): doc=%d prod=%d [%s] → %s",
+                doc_col_match, prod_col_match, col_text,
+                "strict" if decision else "off",
+            )
+            return decision
+
+        rag_ctx = state.rag_context or ""
+        if not rag_ctx:
+            return False
+        # 1차 — 파일 확장자 signal (가장 robust)
+        doc_ext = (
+            rag_ctx.count(".pdf") + rag_ctx.count(".docx")
+            + rag_ctx.count(".hwp") + rag_ctx.count(".pptx")
+        )
+        struct_ext = (
+            rag_ctx.count(".csv") + rag_ctx.count(".json")
+            + rag_ctx.count(".xlsx") + rag_ctx.count(".parquet")
+            + rag_ctx.count(".tsv")
+        )
+        if doc_ext + struct_ext > 0:
+            decision = doc_ext >= struct_ext and doc_ext >= 1
+            logger.info(
+                "[s03] auto-detect (ext): doc=%d struct=%d → %s",
+                doc_ext, struct_ext, "strict" if decision else "off",
+            )
+            return decision
+
+        # 2차 fallback — 내용 신호
+        year_pat = len(_re.findall(r"\d{4}년도?[\s_\-][가-힣]{2,}", rag_ctx))
+        meta_signal = (
+            rag_ctx.count("Document-Metadata")
+            + rag_ctx.count("작성자")
+            + rag_ctx.count("제목:")
+            + rag_ctx.count("마지막 수정자")
+        )
+        product_signal = (
+            len(_re.findall(r"G\d{4,}", rag_ctx))
+            + rag_ctx.count("원")
+            + rag_ctx.count("₩")
+        )
+        doc_score = year_pat * 2 + meta_signal * 3
+        prod_score = product_signal
+        decision = doc_score >= 1 and doc_score >= prod_score
+        logger.info(
+            "[s03] auto-detect (content): doc=%d (year=%d meta=%d) prod=%d → %s",
+            doc_score, year_pat, meta_signal, prod_score,
+            "strict" if decision else "off",
+        )
+        return decision
 
     def _default_identity(self) -> str:
         return (

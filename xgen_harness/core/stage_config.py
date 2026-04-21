@@ -109,9 +109,9 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "citation_mode",
                 "label": "인용 모드",
                 "type": "select",
-                "options": ["off", "enabled", "strict"],
+                "options": ["off", "enabled", "strict", "auto"],
                 "default": "off",
-                "description": "off: 인용 지시 없음 / enabled: [DOC_n] 인용 권장 / strict: 참조 문서 밖 정보 답변 금지 (환각 방지)",
+                "description": "off: 인용 지시 없음 / enabled: [DOC_n] 인용 권장 / strict: 참조 문서 밖 정보 답변 금지 (환각 방지) / auto: RAG context 패턴 감지 후 자동 strict/off (v0.11.17+)",
             },
         ],
         "behavior": [
