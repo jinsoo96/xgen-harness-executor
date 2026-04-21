@@ -13,6 +13,7 @@ geny-harness s04_guard 차용:
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -175,15 +176,106 @@ class IterationGuard(Guard):
 
 
 class ContentGuard(Guard):
-    """콘텐츠 필터링 (확장용)"""
+    """콘텐츠 필터 — 금지 패턴 매칭 + 선택적 PII 감지.
+
+    기본값은 패턴 없음 + PII 감지 off → 항상 통과 (하위 호환).
+    configure() 로 활성화하거나 생성자에 패턴을 넘겨서 사용.
+
+    params:
+      blocked_patterns: 정규식 문자열 리스트 (대소문자 무시)
+      detect_pii: True 면 _PII_PATTERNS 로 이메일/휴대폰/주민번호/카드번호 감지
+      check_target: 'input' | 'output' | 'both' (기본 'both')
+                     — input 은 마지막 user 메시지, output 은 last_assistant_text
+    """
+
+    # 한국 맥락 포함 기본 PII 패턴
+    _PII_PATTERNS: dict[str, re.Pattern] = {
+        "email":       re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+        "phone_kr":    re.compile(r"\b01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}\b"),
+        "resident_id": re.compile(r"\b\d{6}[-\s]?[1-4]\d{6}\b"),
+        "credit_card": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),
+    }
+
+    def __init__(
+        self,
+        blocked_patterns: list[str] | None = None,
+        detect_pii: bool = False,
+        check_target: str = "both",
+    ):
+        self._patterns: list[re.Pattern] = [
+            re.compile(p, re.IGNORECASE) for p in (blocked_patterns or [])
+        ]
+        self._detect_pii = detect_pii
+        self._check_target = check_target if check_target in ("input", "output", "both") else "both"
 
     @property
     def name(self) -> str:
         return "content"
 
+    def configure(self, config: dict[str, Any]) -> None:
+        if "blocked_patterns" in config:
+            raw = config.get("blocked_patterns") or []
+            self._patterns = [re.compile(str(p), re.IGNORECASE) for p in raw]
+        if "detect_pii" in config:
+            self._detect_pii = bool(config["detect_pii"])
+        if "check_target" in config:
+            target = str(config["check_target"])
+            if target in ("input", "output", "both"):
+                self._check_target = target
+
     def check(self, state: Any) -> GuardResult:
-        # 확장 포인트 — 입력/출력 콘텐츠 검사
-        # 예: PII 감지, 금지어 필터, 토픽 제한 등
+        # 활성화 요소가 하나도 없으면 즉시 통과 — 기본 설정에서 과도한 차단 방지
+        if not self._patterns and not self._detect_pii:
+            return GuardResult(passed=True, guard_name=self.name)
+
+        targets: list[tuple[str, str]] = []
+
+        if self._check_target in ("output", "both"):
+            text = getattr(state, "last_assistant_text", "") or ""
+            if text:
+                targets.append(("output", text))
+
+        if self._check_target in ("input", "both"):
+            msgs = getattr(state, "messages", None) or []
+            for m in reversed(msgs):
+                if isinstance(m, dict) and m.get("role") == "user":
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        # Anthropic multi-block content
+                        content = " ".join(
+                            b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    if isinstance(content, str) and content:
+                        targets.append(("input", content))
+                    break
+
+        if not targets:
+            return GuardResult(passed=True, guard_name=self.name)
+
+        for target, text in targets:
+            # 사용자 정의 금지 패턴
+            for p in self._patterns:
+                m = p.search(text)
+                if m:
+                    snippet = m.group(0)[:20]
+                    return GuardResult(
+                        passed=False,
+                        guard_name=self.name,
+                        reason=f"금지 패턴 감지 ({target}): {snippet!r}",
+                        severity="block",
+                    )
+            # PII
+            if self._detect_pii:
+                for pii_type, p in self._PII_PATTERNS.items():
+                    if p.search(text):
+                        return GuardResult(
+                            passed=False,
+                            guard_name=self.name,
+                            reason=f"PII 감지 ({target}/{pii_type})",
+                            severity="block",
+                        )
+
         return GuardResult(passed=True, guard_name=self.name)
 
 
@@ -202,6 +294,9 @@ def create_guard_chain(
     guards: list[str] | None = None,
     cost_budget_usd: float = 0.0,
     token_budget: int = 0,
+    content_blocked_patterns: list[str] | None = None,
+    content_detect_pii: bool = False,
+    content_check_target: str = "both",
 ) -> GuardChain:
     """설정 가능한 가드 체인 생성.
 
@@ -210,6 +305,9 @@ def create_guard_chain(
                 사용 가능: "iteration", "cost_budget", "token_budget", "content"
         cost_budget_usd: CostBudgetGuard 임계값 (0이면 config/기본값 사용)
         token_budget: TokenBudgetGuard 임계값 (0이면 config/기본값 사용)
+        content_blocked_patterns: ContentGuard 금지 정규식 리스트
+        content_detect_pii: ContentGuard PII 감지 on/off
+        content_check_target: ContentGuard 검사 대상 ('input' | 'output' | 'both')
     """
     enabled = guards if guards is not None else ALL_GUARD_NAMES
 
@@ -223,6 +321,12 @@ def create_guard_chain(
             chain.add(CostBudgetGuard(cost_budget_usd=cost_budget_usd))
         elif name == "token_budget":
             chain.add(TokenBudgetGuard(token_budget=token_budget))
+        elif name == "content":
+            chain.add(ContentGuard(
+                blocked_patterns=content_blocked_patterns,
+                detect_pii=content_detect_pii,
+                check_target=content_check_target,
+            ))
         else:
             chain.add(_GUARD_REGISTRY[name]())
 

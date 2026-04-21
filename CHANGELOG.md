@@ -5,6 +5,34 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] — 2026-04-21
+
+### 🧹 Strategy 품격 — 하드코딩 제거 / 진짜 구현체 / 공개 API 일관성
+
+v0.11.0 까지 `ThresholdDecide`/`AlwaysPassDecide` 는 이름표만 있고 실제 판단은 `DecideStage.execute()` 안에 if/else 로 박혀있었다. `ContentGuard` 는 `return True` 만 하는 빈 껍데기. `ParallelToolExecutor` 는 `__all__` 에 없어 외부 import 시 실패.
+
+**수정**:
+
+1. **DecideStrategy 인터페이스 신설** (`stages/interfaces.py`) — `async def decide(state, params) -> dict` 계약
+2. **ThresholdDecide 진짜 구현** — Guard 체인 / pending_tool_calls / validation_score / last_assistant_text 판단 전부 Strategy 내부로 이관. 루프 상수(LOOP_COMPLETE 등) 는 `strategies/_decide.py` 가 원본, `s10_decide.py` 는 re-export.
+3. **AlwaysPassDecide 도 진짜 `decide()` 메서드** — 이름 문자열 비교로 분기하지 않음
+4. **ContentGuard 진짜 구현** — 사용자 정의 정규식 매칭 + 옵션 PII 감지 (이메일/한국 휴대폰/주민번호/카드번호) + 검사 대상 선택 (input/output/both). 기본값(패턴 없음 + PII off) 에서는 항상 통과 → 하위 호환.
+5. **create_guard_chain 확장** — `content_blocked_patterns` / `content_detect_pii` / `content_check_target` 3개 옵션 전달
+6. **DecideStage.execute() 완전 위임** — Strategy resolve → params 수집 → `await strategy.decide(state, params)` 반환. 내부 분기 0줄. 예외 시 `LOOP_ERROR` 로 좀비 방지.
+7. **ParallelToolExecutor 공개 API 승격** — `__all__` 에 추가, `ThresholdDecide` / `AlwaysPassDecide` 도 최상위 export
+
+**영향**:
+- 기존 `threshold` / `always_pass` 선택은 자동으로 새 구현체 사용 (slot/impl 이름 동일)
+- `from xgen_harness.stages.s10_decide import LOOP_COMPLETE` 하던 외부 코드 계속 동작 (re-export)
+- 사용자가 stage_params 에 content_* 설정 안 하면 ContentGuard 항상 통과 → 행동 변화 없음
+
+**검증**:
+- `test_compile.py` 12/12 PASS
+- `test_capabilities.py` 33/34 PASS (나머지 1건은 pytest-asyncio 설정 이슈, 기존부터 실패)
+- 새 smoke: ThresholdDecide 가 텍스트 응답 / pending tool / 점수 미달 / 재시도 한도 4 케이스 전부 올바른 decision 반환
+
+---
+
 ## [0.11.0] — 2026-04-20
 
 ### ⚡ BREAKING + BACKWARDS COMPATIBLE — Stage ID 리네이밍

@@ -208,3 +208,33 @@ class ContextCompactor(Strategy):
     ) -> tuple[list[dict], str, bool]:
         """(compacted_messages, compacted_system_prompt, was_compacted) 반환"""
         ...
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  S10 Decide — 루프 판단
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class DecideStrategy(Strategy):
+    """루프 계속/완료 판단 전략 인터페이스.
+
+    Stage.execute() 는 이 메서드로 전적으로 위임한다 — Stage 내부 분기 로직 금지.
+    각 구현체가 자기만의 판단 규칙을 전부 들고 있어야 한다.
+
+    구현체:
+    - Threshold: Guard 체인 + 도구 호출/점수/텍스트 기반 판단 (기본)
+    - AlwaysPass: 1회 실행 후 즉시 complete (루프 없음)
+    """
+
+    @abstractmethod
+    async def decide(self, state: Any, params: dict[str, Any]) -> dict[str, Any]:
+        """판단 결과 dict 반환.
+
+        필드:
+          decision: "continue" | "complete" | "retry" | "error" | "escalate"
+          reason: 사람이 읽는 이유
+          guard: (optional) 차단된 guard 이름
+
+        params 는 Stage 가 수집한 stage_params — guards / cost_budget_usd /
+        token_budget / max_retries 등 Strategy 가 직접 가져올 필요 없게 미리 전달.
+        """
+        ...

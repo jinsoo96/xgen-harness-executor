@@ -1,36 +1,43 @@
 """
 S10 Decide — 루프 계속/완료 판단
 
-geny-harness s13_loop 차용:
-  LoopController: continue / complete / error / escalate
-  Guard 체인으로 가드레일 체크 (하드코딩 제거)
+Strategy 에 전적 위임 — Stage 내부에 분기 로직 없음.
+각 DecideStrategy 구현체가 자기 판단 규칙을 전부 들고 있다.
 
-판단 흐름:
-1. Guard 체인 실행 (비용/반복/토큰 예산)
-   → 차단되면 complete (강제 종료)
-2. 도구 호출 대기 → continue
-3. 검증 점수 미달 → retry
-4. 텍스트 응답 있음 → complete
-5. 기본 → continue
+기본 Strategy:
+  threshold (ThresholdDecide): Guard 체인 + 도구 호출 + 점수 + 응답 기반
+  always_pass (AlwaysPassDecide): 항상 complete
+
+v0.11.1 리팩토링: 기존 execute() 안 if/else 하드코딩을 ThresholdDecide.decide() 로 이관.
 """
 
 import logging
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
+from .strategies._decide import (
+    LOOP_CONTINUE,
+    LOOP_COMPLETE,
+    LOOP_RETRY,
+    LOOP_ERROR,
+    LOOP_ESCALATE,
+)
 
 logger = logging.getLogger("harness.stage.decide")
 
-# geny 패턴: loop decision 상수
-LOOP_CONTINUE = "continue"
-LOOP_COMPLETE = "complete"
-LOOP_RETRY = "retry"
-LOOP_ERROR = "error"
-LOOP_ESCALATE = "escalate"  # geny 차용 — 상위 오케스트레이터에 에스컬레이션
+# geny 패턴: loop decision 상수 재노출 (하위 호환 — 외부 import 하는 코드 보호)
+__all__ = [
+    "DecideStage",
+    "LOOP_CONTINUE",
+    "LOOP_COMPLETE",
+    "LOOP_RETRY",
+    "LOOP_ERROR",
+    "LOOP_ESCALATE",
+]
 
 
 class DecideStage(Stage):
-    """루프 계속/완료 판단 — Guard 체인 + Loop Controller"""
+    """루프 계속/완료 판단 — 전적으로 DecideStrategy 에 위임."""
 
     @property
     def stage_id(self) -> str:
@@ -41,66 +48,34 @@ class DecideStage(Stage):
         return 10
 
     async def execute(self, state: PipelineState) -> dict:
-        # ── Strategy 디스패치 ──
         strategy = self.resolve_strategy("decide", state, "threshold")
-        if strategy and strategy.name == "always_pass":
-            state.loop_decision = LOOP_COMPLETE
-            return {"decision": LOOP_COMPLETE, "reason": "always_pass strategy"}
+        if strategy is None:
+            state.loop_decision = LOOP_ERROR
+            reason = "Decide strategy 미등록 — threshold 를 찾지 못함"
+            logger.error("[Decide] %s", reason)
+            return {"decision": LOOP_ERROR, "reason": reason}
 
-        # ── 1. Guard 체인 실행 (설정 가능) ──
-        from .strategies.guard import create_guard_chain
-        enabled_guards: list[str] | None = self.get_param("guards", state, None)
-        cost_budget_usd: float = self.get_param("cost_budget_usd", state, 0.0)
-        token_budget: int = self.get_param("token_budget", state, 0)
-        guard_chain = create_guard_chain(
-            guards=enabled_guards,
-            cost_budget_usd=cost_budget_usd,
-            token_budget=token_budget,
-        )
-        guard_results = guard_chain.check_all(state)
+        params = {
+            "guards": self.get_param("guards", state, None),
+            "cost_budget_usd": self.get_param("cost_budget_usd", state, 0.0),
+            "token_budget": self.get_param("token_budget", state, 0),
+            "max_retries": self.get_param("max_retries", state, 3),
+            # ContentGuard 설정 — 패턴/PII/대상
+            "content_blocked_patterns": self.get_param("content_blocked_patterns", state, None),
+            "content_detect_pii": self.get_param("content_detect_pii", state, False),
+            "content_check_target": self.get_param("content_check_target", state, "both"),
+        }
 
-        blocked = [r for r in guard_results if not r.passed and r.severity == "block"]
-        warnings = [r for r in guard_results if r.passed and r.severity == "warn"]
+        try:
+            result = await strategy.decide(state, params)
+        except Exception as e:
+            logger.exception("[Decide] Strategy '%s' 실행 실패", strategy.name)
+            state.loop_decision = LOOP_ERROR
+            return {"decision": LOOP_ERROR, "reason": f"{strategy.name} 실패: {e}"}
 
-        if blocked:
-            state.loop_decision = LOOP_COMPLETE
-            reason = f"Guard 차단: {blocked[0].guard_name} — {blocked[0].reason}"
-            logger.warning("[Decide] %s", reason)
-            return {"decision": LOOP_COMPLETE, "reason": reason, "guard": blocked[0].guard_name}
-
-        for w in warnings:
-            logger.info("[Decide] Guard 경고: %s — %s", w.guard_name, w.reason)
-
-        # ── 2. 도구 호출 대기 → continue ──
-        if state.pending_tool_calls:
-            state.loop_decision = LOOP_CONTINUE
-            reason = f"도구 호출 {len(state.pending_tool_calls)}건 대기"
-            return {"decision": LOOP_CONTINUE, "reason": reason}
-
-        # ── 3. 검증 점수 미달 → retry ──
-        config = state.config
-        max_retries = int(self.get_param("max_retries", state, 3))
-        if state.validation_score is not None:
-            threshold = config.validation_threshold if config else 0.7
-            if state.validation_score < threshold:
-                if state.retry_count < max_retries:
-                    state.loop_decision = LOOP_RETRY
-                    reason = f"검증 점수 미달 ({state.validation_score:.2f} < {threshold})"
-                    logger.info("[Decide] %s → retry", reason)
-                    return {"decision": LOOP_RETRY, "reason": reason}
-                else:
-                    state.loop_decision = LOOP_COMPLETE
-                    reason = f"재시도 한도 도달 ({state.retry_count}/{max_retries}, 점수 {state.validation_score:.2f})"
-                    return {"decision": LOOP_COMPLETE, "reason": reason}
-
-        # ── 4. 텍스트 응답 있음 → complete ──
-        if state.last_assistant_text:
-            state.loop_decision = LOOP_COMPLETE
-            return {"decision": LOOP_COMPLETE, "reason": "응답 생성 완료"}
-
-        # ── 5. 기본 → continue ──
-        state.loop_decision = LOOP_CONTINUE
-        return {"decision": LOOP_CONTINUE, "reason": "추가 처리 필요"}
+        decision = result.get("decision", LOOP_CONTINUE)
+        state.loop_decision = decision
+        return result
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [
