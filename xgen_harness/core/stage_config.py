@@ -266,6 +266,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "description": "eager: 청크 본문 전체를 system_prompt 에 주입 (기존). progressive: 인덱스 한 줄 + snippet 만 주입, 본문은 pd_stores 에 보관 — LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 것만 pull (Claude Code 패턴)",
             },
             {
+                "id": "rag_ingestion_mode",
+                "label": "RAG 주입 방식 (v0.11.18+)",
+                "type": "select",
+                "options": ["system_prompt", "tool_only", "both"],
+                "default": "system_prompt",
+                "description": "system_prompt (기본): RAG 를 system prompt 에 즉시 주입 / tool_only: system prompt 주입 skip, LLM 은 rag_search 도구로만 접근 → tool_result 누적 → L3 microcompact 발동 조건 / both: 둘 다. rag_tool_mode=tool 이면 자동 tool_only 전환.",
+            },
+            {
                 "id": "rag_pd_snippet_size",
                 "label": "RAG PD snippet 크기 (자)",
                 "type": "number",

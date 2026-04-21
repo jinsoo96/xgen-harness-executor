@@ -216,20 +216,43 @@ class ContextStage(Stage):
                     except Exception as e:
                         logger.warning("[Context] rerank failed: %s", e)
             if rag_context:
-                # system_prompt에 RAG 컨텍스트 추가
-                state.system_prompt = f"{state.system_prompt}\n\n{rag_context}"
-                # enhance_prompt — RAG 컨텍스트 뒤에 사용자 지정 "응답 향상" 지시를 붙입니다.
-                # 레거시 document_loaders.enhance_prompt 에 대응. 빈 문자열이면 생략.
-                enhance_prompt = str(self.get_param("enhance_prompt", state, "") or "").strip()
-                if enhance_prompt:
-                    state.system_prompt = (
-                        f"{state.system_prompt}\n\n"
-                        f"<enhance_prompt>\n{enhance_prompt}\n</enhance_prompt>"
-                    )
-                    results["enhance_prompt_applied"] = True
-                results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
-                results["rag_collections"] = len(rag_collections)
-                logger.info("[Context] RAG: %d collections, added to system prompt", len(rag_collections))
+                # v0.11.18 — rag_ingestion_mode 로 system prompt 주입 여부 제어.
+                #   system_prompt (기본): 현재 동작 — RAG 를 system prompt 에 주입 (LLM 이 즉시 활용)
+                #   tool_only: system prompt 주입 skip. LLM 은 rag_search 도구 호출로만 RAG 접근.
+                #              → tool_result 누적 → L3 microcompact 발동 조건 충족.
+                #   both: 현재 `rag_tool_mode=both` 와 정합. system prompt 에도 있고 도구로도 접근.
+                rag_ing_mode = str(self.get_param("rag_ingestion_mode", state, "system_prompt") or "system_prompt").strip().lower()
+                if rag_ing_mode not in ("system_prompt", "tool_only", "both"):
+                    rag_ing_mode = "system_prompt"
+                # rag_tool_mode 가 'tool' 이면 ingestion mode 가 system_prompt 라도 tool_only 로 정정
+                # (사용자 의도: RAG 를 도구로만 쓰겠다).
+                rag_tool_mode_val = str(self.get_param("rag_tool_mode", state, "both") or "both").strip().lower()
+                if rag_tool_mode_val == "tool" and rag_ing_mode == "system_prompt":
+                    rag_ing_mode = "tool_only"
+                    logger.info("[Context] rag_tool_mode=tool → rag_ingestion_mode auto-corrected to tool_only")
+
+                if rag_ing_mode in ("system_prompt", "both"):
+                    state.system_prompt = f"{state.system_prompt}\n\n{rag_context}"
+                    # enhance_prompt — RAG 컨텍스트 뒤에 사용자 지정 "응답 향상" 지시를 붙입니다.
+                    enhance_prompt = str(self.get_param("enhance_prompt", state, "") or "").strip()
+                    if enhance_prompt:
+                        state.system_prompt = (
+                            f"{state.system_prompt}\n\n"
+                            f"<enhance_prompt>\n{enhance_prompt}\n</enhance_prompt>"
+                        )
+                        results["enhance_prompt_applied"] = True
+                    results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
+                    results["rag_collections"] = len(rag_collections)
+                    logger.info("[Context] RAG: %d collections, added to system prompt (mode=%s)",
+                                len(rag_collections), rag_ing_mode)
+                else:
+                    # tool_only — system prompt 주입 skip. state.rag_context 는 남겨둬 s04 RAGSearchTool 이 참조.
+                    # 결과 카운트 표시는 유지 (추적용).
+                    results["rag_chunks"] = rag_context.count("[")
+                    results["rag_collections"] = len(rag_collections)
+                    results["rag_ingestion_mode"] = "tool_only"
+                    logger.info("[Context] RAG: %d collections, tool_only mode (system prompt skip)",
+                                len(rag_collections))
             from ..events.types import StageSubstepEvent as _Sub2
             await state.emit_verbose(_Sub2(
                 stage_id=self.stage_id, substep="rag_fetch_complete",

@@ -5,6 +5,26 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.18] — 2026-04-22
+
+### 🎯 벤치 사이클 #17 — rag_ingestion_mode (L3 Microcompact 실전 활로)
+
+**문제**: Iter#20 에서 `rag_tool_mode=tool` 설정에도 LLM 이 rag_search 도구 호출 0회. 원인: s06 가 RAG 를 system prompt 에 여전히 주입 → LLM 이 prompt 만으로 답변 가능 → 도구 호출 불필요 판단.
+
+**해결**: s06 에 `rag_ingestion_mode` 옵션 추가:
+- `system_prompt` (기본, 하위 호환) — 기존 동작
+- `tool_only` — system prompt 주입 skip. LLM 은 도구 호출로만 RAG 접근 → tool_result 누적 → L3 microcompact 발동 조건 충족
+- `both` — 둘 다 (s07 에서 기존 `rag_tool_mode=both` 와 동등)
+
+**자동 전환**: `rag_tool_mode=tool` 설정 시 `rag_ingestion_mode` 자동 `tool_only` 로 정정 (사용자 의도 존중).
+
+**변경 파일**:
+- `stages/s06_context.py`: 3-way 분기 + 자동 전환 로직
+- `core/stage_config.py`: `rag_ingestion_mode` select 필드 등록
+- `__init__.py`: `__version__` 0.11.18
+
+**무침범**: 기본값이 `system_prompt` 라 기존 프로젝트 무수정. 이식/프론트 0 변경.
+
 ## [0.11.17] — 2026-04-22
 
 ### 🎯 벤치 사이클 #16 — Citation Auto-Router (실험 옵션) + L2/L3 필터 벤치 확장
