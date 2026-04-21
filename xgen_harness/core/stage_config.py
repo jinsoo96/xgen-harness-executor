@@ -290,8 +290,8 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 90,
                 "step": 5,
-                "default": 70,
-                "description": "cascade 전략에서 이 비율 이상이면 L3 microcompact 먼저 시도 (tool_result 교체, 경량)",
+                "default": 80,
+                "description": "cascade 전략에서 이 비율 이상이면 L3 microcompact 먼저 시도 (tool_result 교체, 경량). v0.11.16 이후 기본 80 — Pilot #11 에서 조기 발동(70) 의 -19% 품질 악화 관측",
             },
             {
                 "id": "cascade_l4_threshold",
@@ -300,8 +300,8 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 60,
                 "max": 95,
                 "step": 5,
-                "default": 85,
-                "description": "cascade 전략에서 이 비율 이상이면 L4 context_collapse_overlay 추가 발동 (비파괴 overlay, 중량)",
+                "default": 90,
+                "description": "cascade 전략에서 이 비율 이상이면 L4 context_collapse_overlay 추가 발동 (비파괴 overlay, 중량). v0.11.16 기본 90",
             },
             {
                 "id": "cascade_l5_threshold",
@@ -310,8 +310,8 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 70,
                 "max": 99,
                 "step": 1,
-                "default": 95,
-                "description": "cascade 전략에서 이 비율 이상이면 최후 수단 L5 autocompact_llm 발동 (child LLM 요약, 가장 비쌈)",
+                "default": 97,
+                "description": "cascade 전략에서 이 비율 이상이면 최후 수단 L5 autocompact_llm 발동 (child LLM 요약). v0.11.16 기본 97",
             },
             {
                 "id": "context_collapse_threshold",

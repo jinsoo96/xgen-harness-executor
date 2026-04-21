@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.16] — 2026-04-21
+
+### 🎯 벤치 사이클 #15 — Cascade 디폴트 튜닝 (Pilot #11 반증 반영)
+
+Pilot #11 (tool-heavy, context_window=2400) 에서 **cascade 조기 발동(L3=70) 이 baseline 대비 답변 품질 -19% 악화**를 관측. 원인은 압력 낮은 상황에서도 L4/L5 가 메시지를 overlay/summary 로 교체 → LLM 이 원본 맥락 직접 접근 불가.
+
+**수정**:
+- `cascade_l3_threshold` 기본 70 → **80** (baseline token_budget 의 `compaction_threshold=80` 과 동기. 자연 compact 시점 이후에만 cascade 개입)
+- `cascade_l4_threshold` 기본 85 → **90**
+- `cascade_l5_threshold` 기본 95 → **97**
+- 임계는 여전히 override 가능 (stage_params).
+
+**의미**: cascade 는 "baseline 이 포기하는 지점부터 구원" 역할을 명시. 압력 낮을 때 간섭 금지.
+
+**변경 파일**:
+- `stages/s06_context.py` (디폴트 3 임계 + 근거 주석)
+- `core/stage_config.py` (슬라이더 default + description)
+- `__init__.py` (__version__ 0.11.16)
+
 ## [0.11.15] — 2026-04-21
 
 ### 🎯 벤치 사이클 #14 — Strategy Cascade (Claude Code Cascade 이식)

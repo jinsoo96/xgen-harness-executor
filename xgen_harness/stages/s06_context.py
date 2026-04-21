@@ -341,9 +341,12 @@ class ContextStage(Stage):
             #   >= l4_th: L4 context_collapse_overlay (중량)
             #   >= l5_th: L5 autocompact_llm (중량, 실패 시 회로 차단)
             # 기본 임계는 Claude Code 권장값에서 차용.
-            l3_th = self.get_param("cascade_l3_threshold", state, 70) / 100.0
-            l4_th = self.get_param("cascade_l4_threshold", state, 85) / 100.0
-            l5_th = self.get_param("cascade_l5_threshold", state, 95) / 100.0
+            # v0.11.16 — L3 기본 70 → 80 (baseline token_budget 의 compaction_threshold 와 동기).
+            # 이전 Pilot #11 에서 ctx 여유 시 조기 발동이 오히려 -19% 품질 악화 관측 → baseline 이
+            # 자연 compact 할 시점 이후에만 cascade 가 개입하는 게 정답. 사용자는 여전히 override 가능.
+            l3_th = self.get_param("cascade_l3_threshold", state, 80) / 100.0
+            l4_th = self.get_param("cascade_l4_threshold", state, 90) / 100.0
+            l5_th = self.get_param("cascade_l5_threshold", state, 97) / 100.0
             # 가장 무거운 전략부터 역순 체크 → 한 턴 한 전략 규칙 유지.
             # 단 L3 는 tool_result 가 있을 때만 효과적이므로 L4/L5 와 별도 차원.
             #   먼저 L3 로 tool_result 축소 시도 (있다면 즉시 효과).
