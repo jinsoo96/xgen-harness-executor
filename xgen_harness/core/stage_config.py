@@ -177,10 +177,19 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "options": ["cot", "react", "none"],
                 "default": "cot",
             },
+            {
+                "id": "intent_rules",
+                "label": "Intent Routing 규칙 (JSON)",
+                "type": "textarea",
+                "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
+                "default": "",
+                "description": "쿼리 키워드 → metadata_filter 자동 매핑 규칙. 매칭되면 s06 이 auto_metadata_filter 로 사용 (명시 filter 없을 때). JSON 배열 문자열",
+            },
         ],
         "behavior": [
             "첫 번째 루프에서만 실행",
             "시스템 프롬프트에 계획 지시 추가",
+            "Intent Routing: 쿼리 의도 → auto_metadata_filter 자동 생성 (s06 에 전달)",
         ],
     },
     "s06_context": {

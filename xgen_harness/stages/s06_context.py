@@ -86,7 +86,7 @@ class ContextStage(Stage):
                 from ..utils.docs import extract_source, extract_text, extract_score
                 score_threshold = float(self.get_param("score_threshold", state, 0.0))
                 # metadata_filter — xgen-documents DocumentSearchRequest.filter 로 전달.
-                # 예: {"file_name": "products.csv"} 를 주면 해당 파일 청크만 반환.
+                # 우선순위: stage_params.metadata_filter (명시) > state.metadata.auto_metadata_filter (RR2 intent routing).
                 # dict 또는 JSON 문자열(UI textarea) 모두 허용, 파싱 실패 시 무시.
                 raw_filter = self.get_param("metadata_filter", state, None)
                 metadata_filter: dict | None = None
@@ -100,6 +100,12 @@ class ContextStage(Stage):
                             metadata_filter = parsed
                     except Exception as e:
                         logger.debug("[Context] metadata_filter JSON 파싱 실패: %s", e)
+                if metadata_filter is None:
+                    # RR2 intent routing 이 s05 에서 세팅했을 수 있음 (fallback)
+                    auto = state.metadata.get("auto_metadata_filter") if hasattr(state, "metadata") else None
+                    if isinstance(auto, dict) and auto:
+                        metadata_filter = auto
+                        logger.info("[Context] using auto_metadata_filter from intent routing: %s", auto)
                 # 서버 단 rerank — 요청 단위로 활성 가능 (xgen-documents 지원).
                 # reranker 파라미터가 truthy 이면 서버 rerank 를 켜고, rerank_top_k 도 전달.
                 reranker_enabled = bool(str(self.get_param("reranker", state, "") or "").strip())

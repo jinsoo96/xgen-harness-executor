@@ -39,6 +39,16 @@ class PlanStage(Stage):
         return state.loop_iteration > 1
 
     async def execute(self, state: PipelineState) -> dict:
+        # ── Intent Routing (RR2) ──
+        # 쿼리 의도를 경량 키워드 규칙으로 분류해 s06 이 쓸 metadata_filter 자동 생성.
+        # 규칙 선언: stage_params.s05_strategy.intent_rules = [
+        #   {"keywords": ["상품", "product"], "filter": {"file_name": "products.csv"}},
+        #   {"keywords": ["리뷰", "review"],  "filter": {"file_name": "reviews.csv"}},
+        # ]
+        # 매칭되면 state.metadata["auto_metadata_filter"] 에 저장. s06 이 stage_params 의
+        # metadata_filter 가 비어있을 때만 이 값을 fallback 으로 사용 (명시 설정 우선).
+        await self._apply_intent_routing(state)
+
         mode = self.get_param("planning_mode", state, "auto")
 
         # "auto" 모드: input_complexity에 따라 planning depth 결정
@@ -100,6 +110,46 @@ class PlanStage(Stage):
             "planning_mode": mode,
             **(cap_result or {}),
         }
+
+    # ---------- Intent Routing (RR2) ----------
+
+    async def _apply_intent_routing(self, state: PipelineState) -> None:
+        """stage_params.s05_strategy.intent_rules 로 쿼리 의도 분류 → auto_metadata_filter.
+
+        rules: list[dict] 구조
+          [{"keywords": [...], "filter": {...}}, ...]
+        첫 매칭 rule 의 filter 를 state.metadata["auto_metadata_filter"] 에 저장.
+        s06 이 stage_params 의 metadata_filter 우선 + 없으면 이 값 fallback.
+        """
+        rules = self.get_param("intent_rules", state, None)
+        # UI textarea 로 오면 JSON 문자열. 파싱.
+        if isinstance(rules, str) and rules.strip():
+            try:
+                import json as _json
+                rules = _json.loads(rules)
+            except Exception as e:
+                logger.debug("[Plan] intent_rules JSON 파싱 실패: %s", e)
+                rules = None
+        if not rules or not isinstance(rules, list):
+            return
+        user_input = (state.user_input or "").lower()
+        if not user_input:
+            return
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            keywords = rule.get("keywords") or []
+            if not isinstance(keywords, list) or not keywords:
+                continue
+            if any(str(k).lower() in user_input for k in keywords):
+                filt = rule.get("filter")
+                if isinstance(filt, dict) and filt:
+                    state.metadata["auto_metadata_filter"] = filt
+                    logger.info(
+                        "[Plan] intent_routing matched keywords=%s → auto_metadata_filter=%s",
+                        keywords, filt,
+                    )
+                    return
 
     # ---------- Capability 모드 ----------
 

@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.12] — 2026-04-21
+
+### 🎯 벤치 사이클 #11 — RR2 Intent Routing (자동 metadata_filter)
+
+Pilot #8 에서 **metadata_filter 가 하네스 tuned 를 legacy 수준으로 끌어올린 핵심 메커니즘** 임이 증명됨. 그러나 현재는 엔지니어가 수동으로 filter 값을 설정해야 함. 이 사이클은 쿼리에서 의도를 자동 분류해 filter 를 생성하는 경량 규칙 엔진을 s05 에 도입.
+
+**변경**:
+- `stages/s05_strategy.py`:
+  - `execute()` 진입 시 `_apply_intent_routing(state)` 호출.
+  - `stage_params.s05_strategy.intent_rules` = `[{"keywords":[...], "filter":{...}}, ...]` 선언 (dict 또는 JSON 문자열).
+  - 매칭된 첫 rule 의 filter 를 `state.metadata["auto_metadata_filter"]` 에 저장.
+- `stages/s06_context.py`:
+  - metadata_filter 결정 우선순위 확장 — 기존 `stage_params.s06_context.metadata_filter` (명시) 우선, 없으면 `state.metadata["auto_metadata_filter"]` (intent routing) fallback.
+- `core/stage_config.py`: s05 에 `intent_rules` (textarea) 필드 추가.
+
+**영향**:
+- 엔지니어가 사전에 규칙을 선언하면 쿼리마다 metadata_filter 수동 지정 불필요.
+- LLM 기반 자동 분류는 후속 (비용 · 지연 고려). 현재 MVP 는 키워드 매칭.
+- 명시 filter 가 항상 우선 → 회귀 안전.
+
+**측정 계획 (Pilot #9)**: Pilot #8 의 `harness_tuned` 에서 metadata_filter 를 **intent_rules 자동 생성** 으로 바꿨을 때 동일 정답률 재현 여부.
+
 ## [0.11.11] — 2026-04-21
 
 ### 🎯 벤치 사이클 #10 — L4 Context Collapse Overlay (비파괴 압축)
