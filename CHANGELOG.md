@@ -5,6 +5,115 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.7] — 2026-04-21
+
+### 🎯 벤치 사이클 #6 — UI 노출 (ConfigPanel 자동 반영)
+
+사이클 #1 ~ #5 에서 흡수한 엔진 파라미터가 실제 하네스 프론트 ConfigPanel 에서 보이도록 `stage_config.py` 필드 선언을 확장했습니다. 프론트는 이 엔진 메타데이터를 `/api/agentflow/harness/stages` 로 받아 자동 렌더링하므로, 프론트 레포 변경 없이 노출됩니다.
+
+**변경 — `core/stage_config.py`**:
+
+**s03_prompt** 에 필드 1 종 추가.
+- `citation_mode` (select, `off/enabled/strict`). 기본 `off`. strict 모드 설명 명시.
+
+**s06_context** 에 필드 4 종 추가.
+- `score_threshold` (slider 0~1, 기본 0.0). precision 도구 성격 표기.
+- `rerank_top_k` (number 1~20, 기본 4). 미설정 시 rag_top_k 사용.
+- `reranker` (toggle, 기본 off). xgen-documents 리랭커 활성 스위치.
+- `enhance_prompt` (textarea, 기본 ""). RAG 컨텍스트 뒤 이어 붙일 지시 프롬프트.
+
+`behavior` 설명도 갱신하여 각 필드의 동작을 ConfigPanel 내부에 노출.
+
+**영향**: 엔진 UI 표면이 레거시 `document_loaders` / `agents` 수준과 동등해집니다. 프론트는 `StageField` 스펙 기반 자동 렌더이므로 이식 / 프론트 레포 무변경. 엔진 단독 반영.
+
+**검증**: `GET /api/agentflow/harness/stages` 응답에 신규 필드 노출 확인, ConfigField 컴포넌트가 select/slider/toggle/number/textarea 타입 모두 이미 지원.
+
+**출처**: 본 세션 사이클 #1 ~ #5 의 UI 노출 마무리.
+
+## [0.11.6] — 2026-04-21
+
+### 🎯 벤치 사이클 #5 — H1: `response_filtering` 3 키 지원 (api_tool)
+
+레거시 api_loader 노드의 응답 후처리 3 키 (`enable_response_filtering`, `response_filter_path`, `response_filter_fields`) 를 하네스 api_tool 어댑터에 흡수했습니다. 이전 하네스는 `response_filter` 단일 dot-path 만 지원하여, 경로 추출은 가능하지만 "추출된 list[dict] 에서 관심 필드만 남기기" 는 할 수 없었습니다. 결과 LLM 프롬프트에 불필요한 필드가 그대로 흘러들어 토큰 낭비가 발생했습니다.
+
+**변경**:
+- `adapters/node_adapters.py` `_build_api_tool`: spec 에 `enable_response_filtering` · `response_filter_path` · `response_filter_fields` 3 키 추가. 기존 `response_filter` 는 `response_filter_path` 의 별칭으로 그대로 동작 (하위 호환).
+- `adapters/resource_registry.py` `_call_api_tool`: 응답 후처리 파이프라인 확장.
+  1. `response_filter_path` 로 dot path 추출.
+  2. `response_filter_fields` 가 있으면 list[dict] 의 각 dict 에서 해당 필드만 유지.
+- `enable_response_filtering=True` 명시 또는 `response_filter_path` 가 비어있지 않으면 필터 활성 (기본 off).
+
+**영향**: API 도구 응답에서 관심 필드만 남겨 LLM 프롬프트 토큰 비용 절감 + 노이즈 감소. 기존 `response_filter` 를 쓰던 워크플로우는 그대로 동작.
+
+**출처**: `bench/reports/2026-04-21-gap-analysis.md` H1.
+
+## [0.11.5] — 2026-04-21
+
+### 🎯 벤치 사이클 #4 — H4: `enhance_prompt` (s06)
+
+레거시 `document_loaders.enhance_prompt` 에 대응하는 설정을 s06_context 에 추가했습니다. RAG 컨텍스트가 system_prompt 에 주입된 뒤, 사용자가 지정한 "응답 향상 지시" 를 덧붙입니다.
+
+**변경**:
+- `stages/s06_context.py`: RAG 컨텍스트 주입 블록 뒤에 `enhance_prompt` 처리 추가.
+  - `stage_params.s06_context.enhance_prompt` 값이 비어있지 않으면 `<enhance_prompt>...</enhance_prompt>` 블록으로 이어 붙임.
+  - Stage 출력 `results["enhance_prompt_applied"] = True` 기록.
+
+**영향**: RAG 기반 응답의 톤·형식·관점을 쿼리 단위로 유도할 수 있습니다. 기본값 빈 문자열이므로 회귀 없음.
+
+**출처**: `bench/reports/2026-04-21-gap-analysis.md` H4.
+
+## [0.11.4] — 2026-04-21
+
+### 🎯 벤치 사이클 #3 — H3: `citation_mode` (off / enabled / strict)
+
+레거시 `agents` 노드의 `strict_citation` (bool) 에 대응하는 설정을 하네스 s03_prompt 에 추가했습니다. 기존 `citation_enabled` 는 on/off 2 값이라 "인용은 권장" 과 "인용에 없는 정보는 답하지 말 것" 을 구분할 수 없었습니다.
+
+**변경**:
+- `stages/s03_prompt.py`: `citation_mode` 파라미터 신설 (`off` / `enabled` / `strict`).
+  - `off`: 인용 지시 없음.
+  - `enabled`: 기존 `citation_enabled=True` 와 동일한 `[DOC_n]` 인용 형식 권장.
+  - `strict`: enabled 규칙 + `<grounding_rules>` 블록 추가 — 제공 문서 밖 정보는 답하지 않고 명시적으로 "찾을 수 없다" 고 응답하도록 강제.
+- `citation_enabled` 는 하위 호환으로 유지. `citation_mode` 가 없으면 `citation_enabled=True → enabled`, `False → off`.
+
+**영향**: `stage_params.s03_prompt.citation_mode="strict"` 로 두면 RAG 문서 바깥의 환각 가능성이 감소합니다. 기본값은 `citation_enabled` 에서 유도되므로 회귀 없음.
+
+**출처**: `bench/reports/2026-04-21-gap-analysis.md` H3.
+
+## [0.11.3] — 2026-04-21
+
+### 🎯 벤치 사이클 #2 — H2-b: rerank 호출 Protocol 정합 + `rerank_top_k` 신설
+
+s06_context 의 rerank 호출이 `DocumentService.rerank` Protocol 과 불일치였던 것을 교정했습니다. 기존 구현은 `rerank(query=..., text=rag_context, provider=reranker_name)` 로 호출했으나 Protocol 은 `rerank(query, documents: list[str], top_k, user_id)` 을 받고 `[{"index", "score"}]` 를 반환합니다. 이로 인해 ServiceProvider 경로에서 rerank 호출이 `TypeError` 로 실패한 뒤 warning 만 남기고 원본 rag_context 로 폴백되는 상태였습니다. xgen-documents 의 `/embedding/reranker/rerank` 엔드포인트 스펙도 확인하여 실제 서버 계약에 맞췄습니다 (reranker provider 는 서버 기동 시 설정, 요청 단위에서 받지 않음).
+
+**변경**:
+- `stages/s06_context.py` rerank 블록 재작성.
+  - `rag_context` 를 2 줄 이상 공백 구분자로 청크 분리 후 `documents: list[str]` 로 전달.
+  - 반환된 `{"index", "score"}` 배열로 청크 재정렬.
+  - `rerank_top_k` 파라미터 신설. 기본값은 `rag_top_k` 와 동일.
+  - `reranker` 파라미터는 "rerank 활성 토글" 로 의미 축소 (truthy 시 rerank 호출). 실제 reranker provider 는 xgen-documents 서버 설정을 따름.
+
+**영향**:
+- `stage_params.s06_context.reranker` 를 `"vllm"` 등의 값으로 두면 지금부터 실제로 rerank 가 동작합니다 (이전엔 silent fail).
+- `stage_params.s06_context.rerank_top_k` 로 재순위 상위 k 개 제한 가능.
+- `results["reranked"]` / `results["rerank_top_k"]` 가 Stage 출력에 기록됩니다.
+
+**출처**: `bench/reports/2026-04-21-gap-analysis.md` H2-b + 호출 불일치 회귀 교정.
+
+## [0.11.2] — 2026-04-21
+
+### 🎯 벤치 사이클 #1 — H2-a: `score_threshold` end-to-end 연결
+
+레거시 `document_loaders` 노드에 있는 `score_threshold` 파라미터가 하네스 s06_context 에서 **읽기만 하고 실제 검색에는 전달되지 않던** 구간을 수정했습니다. `XgenServiceProvider.search` 는 payload 에 `score_threshold: 0.0` 을 하드코딩하고 있었고, `DocumentService.search` Protocol 에도 해당 파라미터가 없어 호출 지점에서 의도한 임계가 묵살되었습니다.
+
+**변경**:
+- `core/services.py` `DocumentService.search` 시그니처에 `score_threshold: float = 0.0` 추가.
+- `integrations/xgen_services.py` `XgenServiceProvider.search` 가 `score_threshold` 를 인자로 받아 payload 에 전달 (하드코딩 제거).
+- `stages/s06_context.py` 가 정상 경로(`doc_service.search`) 호출 시 `self.get_param("score_threshold", state, 0.0)` 을 읽어 전달.
+
+**영향**: `stage_params.s06_context.score_threshold` 를 실제로 설정하면 xgen-documents 검색 단계에서 유사도 필터가 적용됩니다. 기본값 0.0 이므로 기존 동작에는 변화 없음 (회귀 안전).
+
+**출처**: `bench/reports/2026-04-21-gap-analysis.md` 의 H2.
+
 ## [0.11.1] — 2026-04-21
 
 ### 🧹 Strategy 품격 — 하드코딩 제거 / 진짜 구현체 / 공개 API 일관성

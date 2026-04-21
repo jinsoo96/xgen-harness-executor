@@ -125,7 +125,14 @@ def _build_api_tool(node: dict, registry: "ResourceRegistry") -> None:
         "api_method": params.get("method", "POST"),
         "api_body": params.get("request_body", {}),
         "timeout": params.get("timeout", 30),
-        "response_filter": params.get("response_filter", ""),
+        # 응답 후처리 — 3 키 구조 (레거시 api_loader 호환).
+        # enable_response_filtering=True 면 아래 두 키가 적용됩니다.
+        #   response_filter_path   : "a.b.c" 형식 dot path 로 응답 dict 안 깊은 값 추출
+        #   response_filter_fields : 결과가 list[dict] 일 때 각 dict 에서 유지할 필드 (콤마 구분 문자열 또는 list)
+        # 하위 호환: 기존 단일 키 response_filter 는 response_filter_path 의 별칭으로 계속 동작.
+        "enable_response_filtering": bool(params.get("enable_response_filtering", False)),
+        "response_filter_path": params.get("response_filter_path", params.get("response_filter", "")),
+        "response_filter_fields": params.get("response_filter_fields", ""),
     }
 
     desc = params.get("description", f"API tool: {tool_name}")

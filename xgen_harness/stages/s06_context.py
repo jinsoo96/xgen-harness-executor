@@ -84,10 +84,13 @@ class ContextStage(Stage):
             if doc_service and hasattr(doc_service, "search"):
                 parts: list[str] = []
                 from ..utils.docs import extract_source, extract_text, extract_score
+                score_threshold = float(self.get_param("score_threshold", state, 0.0))
                 for col in rag_collections:
                     try:
                         # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
-                        search_hits = await doc_service.search(state.user_input, col, limit=top_k) or []
+                        search_hits = await doc_service.search(
+                            state.user_input, col, limit=top_k, score_threshold=score_threshold,
+                        ) or []
                         if search_hits:
                             part = f"## {col} ({len(search_hits)}건)\n\n"
                             for i, r in enumerate(search_hits):
@@ -110,22 +113,54 @@ class ContextStage(Stage):
                     score_threshold=float(self.get_param("score_threshold", state, 0.2)),
                     use_model_prompt=bool(self.get_param("use_model_prompt", state, True)),
                 )
-            # rerank — DocumentService.rerank 위임 (선택된 reranker 가 있을 때만)
-            reranker_name: str = self.get_param("reranker", state, "") or ""
-            if reranker_name and rag_context:
+            # rerank — DocumentService.rerank 위임.
+            # Protocol: rerank(query, documents: list[str], top_k, user_id) -> [{"index", "score"}, ...]
+            # xgen-documents 의 reranker provider 는 서버 기동 시 설정되므로, 본 Stage 는
+            # reranker 파라미터를 "rerank 활성 토글" 로만 사용합니다 (truthy 면 호출).
+            reranker_enabled: str = str(self.get_param("reranker", state, "") or "").strip()
+            if reranker_enabled and rag_context:
                 services = state.metadata.get("services")
                 doc_service = getattr(services, "documents", None) if services else None
                 if doc_service and hasattr(doc_service, "rerank"):
                     try:
-                        rag_context = await doc_service.rerank(
-                            query=state.user_input, text=rag_context, provider=reranker_name,
-                        ) or rag_context
-                        results["reranked"] = True
+                        import re as _re
+                        # 2 줄 이상 공백으로 분리된 블록을 청크로 간주. 쿼리 시점에 조립된
+                        # `## collection (N건)` 헤더 블록 구조를 그대로 유지합니다.
+                        chunks = [c.strip() for c in _re.split(r"\n{2,}", rag_context) if c.strip()]
+                        if chunks:
+                            rerank_top_k = int(self.get_param("rerank_top_k", state, top_k))
+                            ranked = await doc_service.rerank(
+                                query=state.user_input,
+                                documents=chunks,
+                                top_k=rerank_top_k,
+                            ) or []
+                            if ranked:
+                                # ranked: [{"index": i, "score": s}, ...] — score 내림차순 가정
+                                ordered_chunks: list[str] = []
+                                seen_idx: set[int] = set()
+                                for item in ranked[:rerank_top_k]:
+                                    idx = item.get("index") if isinstance(item, dict) else None
+                                    if isinstance(idx, int) and 0 <= idx < len(chunks) and idx not in seen_idx:
+                                        ordered_chunks.append(chunks[idx])
+                                        seen_idx.add(idx)
+                                if ordered_chunks:
+                                    rag_context = "\n\n".join(ordered_chunks)
+                                    results["reranked"] = True
+                                    results["rerank_top_k"] = rerank_top_k
                     except Exception as e:
                         logger.warning("[Context] rerank failed: %s", e)
             if rag_context:
                 # system_prompt에 RAG 컨텍스트 추가
                 state.system_prompt = f"{state.system_prompt}\n\n{rag_context}"
+                # enhance_prompt — RAG 컨텍스트 뒤에 사용자 지정 "응답 향상" 지시를 붙입니다.
+                # 레거시 document_loaders.enhance_prompt 에 대응. 빈 문자열이면 생략.
+                enhance_prompt = str(self.get_param("enhance_prompt", state, "") or "").strip()
+                if enhance_prompt:
+                    state.system_prompt = (
+                        f"{state.system_prompt}\n\n"
+                        f"<enhance_prompt>\n{enhance_prompt}\n</enhance_prompt>"
+                    )
+                    results["enhance_prompt_applied"] = True
                 results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
                 results["rag_collections"] = len(rag_collections)
                 logger.info("[Context] RAG: %d collections, added to system prompt", len(rag_collections))

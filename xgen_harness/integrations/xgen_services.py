@@ -375,6 +375,7 @@ class XgenDocumentService:
         collection_id: str,
         limit: int = 5,
         user_id: str = "",
+        score_threshold: float = 0.0,
     ) -> list[dict[str, Any]]:
         """xgen-documents: POST /api/retrieval/documents/search (collection_name + query_text)"""
         url = f"{self._base_url}/api/retrieval/documents/search"
@@ -382,7 +383,7 @@ class XgenDocumentService:
             "query_text": query,
             "collection_name": collection_id,
             "limit": limit,
-            "score_threshold": 0.0,
+            "score_threshold": float(score_threshold),
         }
         headers = self._auth_headers(user_id)
         try:

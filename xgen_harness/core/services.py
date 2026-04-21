@@ -135,8 +135,12 @@ class DocumentService(Protocol):
         collection_id: str,
         limit: int = 5,
         user_id: str = "",
+        score_threshold: float = 0.0,
     ) -> list[dict[str, Any]]:
-        """문서 검색. 각 항목: {content, source, score, ...}"""
+        """문서 검색. 각 항목: {content, source, score, ...}
+
+        score_threshold: 결과에 포함시킬 최소 유사도. 0.0 이면 필터링 없음.
+        """
         ...
 
     async def list_collections(self, user_id: str = "") -> list[dict[str, Any]]:

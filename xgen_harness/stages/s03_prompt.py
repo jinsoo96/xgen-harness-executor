@@ -82,9 +82,23 @@ class SystemPromptStage(Stage):
             sections.append((SECTION_PRIORITIES["rag"], "rag", rag_section))
 
         # 5. Citation — 문서 인용 형식 지시
-        citation_enabled: bool = self.get_param("citation_enabled", state, False)
-        if citation_enabled:
-            citation_instructions = (
+        # citation_mode 우선, 하위 호환으로 citation_enabled 도 여전히 읽습니다.
+        #   - off      : 인용 지시 없음
+        #   - enabled  : [DOC_n] 인용 형식 권장 (기존 citation_enabled=True 와 동일)
+        #   - strict   : enabled 규칙 + 검색 결과에 없는 정보는 답하지 않는다는 강한 규칙 추가
+        raw_mode = self.get_param("citation_mode", state, None)
+        legacy_enabled = bool(self.get_param("citation_enabled", state, False))
+        if raw_mode is None:
+            citation_mode = "enabled" if legacy_enabled else "off"
+        else:
+            citation_mode = str(raw_mode).strip().lower() or "off"
+            if citation_mode not in ("off", "enabled", "strict"):
+                citation_mode = "enabled" if legacy_enabled else "off"
+
+        if citation_mode in ("enabled", "strict"):
+            citation_instructions = self.get_param(
+                "citation_instructions_template", state, None
+            ) or (
                 "<citation_instructions>\n"
                 "When referencing information from provided documents, cite your sources "
                 "using [DOC_1], [DOC_2] format. Each citation should correspond to the "
@@ -93,6 +107,20 @@ class SystemPromptStage(Stage):
                 "</citation_instructions>"
             )
             sections.append((SECTION_PRIORITIES["rules"] + 0.5, "citation", citation_instructions))
+
+        if citation_mode == "strict":
+            # 폴백 멘트의 응답 언어는 호출자가 지정 가능. 미지정 시 영어로만 규칙 서술.
+            strict_guard = self.get_param(
+                "grounding_rules_template", state, None
+            ) or (
+                "<grounding_rules>\n"
+                "Only answer using information present in <reference_documents>. "
+                "If the answer cannot be derived from the provided documents, "
+                "state that the information is not available in the provided materials "
+                "and do not fabricate.\n"
+                "</grounding_rules>"
+            )
+            sections.append((SECTION_PRIORITIES["rules"] + 0.6, "grounding", strict_guard))
 
         # 6. History Summary (이전 결과)
         if state.previous_results:

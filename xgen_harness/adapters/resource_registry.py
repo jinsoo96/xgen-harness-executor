@@ -476,20 +476,42 @@ class ResourceRegistry:
                     resp = await client.post(url, json=body)
 
                 text = resp.text[:10000]
-                # response_filter 적용 — "a.b.c" 형식의 dot path 로 응답 dict 안 깊은 값 추출.
-                # 키 누락은 silent fallback (전체 텍스트 유지) + debug 로그.
-                rf = spec.get("response_filter", "")
-                if rf and resp.status_code == 200:
+                # 응답 후처리 파이프라인 — 레거시 api_loader 3 키 호환.
+                # enable_response_filtering 이 True 이거나, 하위 호환으로 response_filter(=path) 가
+                # 비어있지 않으면 필터를 적용합니다.
+                # 1) response_filter_path 로 dot path 추출  (e.g. "payload.searchDataList")
+                # 2) response_filter_fields 로 각 dict 에서 유지할 필드 선별 (e.g. "goodsNm,salePrc")
+                path = spec.get("response_filter_path", spec.get("response_filter", ""))
+                fields_raw = spec.get("response_filter_fields", "")
+                enabled = bool(spec.get("enable_response_filtering")) or bool(path)
+                if enabled and resp.status_code == 200:
                     try:
                         data = resp.json()
-                        for key in rf.split("."):
-                            if isinstance(data, dict) and key in data:
-                                data = data[key]
+                        if path:
+                            for key in path.split("."):
+                                if isinstance(data, dict) and key in data:
+                                    data = data[key]
+                                else:
+                                    raise KeyError(key)
+                        # fields 적용 — list[dict] 이면 각 dict 를 필드로 트림
+                        if fields_raw:
+                            if isinstance(fields_raw, str):
+                                fields = [f.strip() for f in fields_raw.split(",") if f.strip()]
                             else:
-                                raise KeyError(key)
+                                fields = [str(f).strip() for f in fields_raw if str(f).strip()]
+                            if fields:
+                                def trim(obj):
+                                    if isinstance(obj, dict):
+                                        return {k: obj[k] for k in fields if k in obj}
+                                    return obj
+                                if isinstance(data, list):
+                                    data = [trim(x) for x in data]
+                                else:
+                                    data = trim(data)
                         text = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else data
                     except Exception as e:
-                        logger.debug("[ResourceRegistry] response_filter '%s' miss: %s", rf, e)
+                        logger.debug("[ResourceRegistry] response filter miss (path=%r fields=%r): %s",
+                                     path, fields_raw, e)
 
                 return text if resp.status_code == 200 else f"API error {resp.status_code}: {text[:500]}"
         except Exception as e:
