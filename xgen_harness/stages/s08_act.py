@@ -189,8 +189,34 @@ class ExecuteStage(Stage):
             ))
 
             result_text = await self._execute_tool(tool_name, tool_input, state)
+            original_chars = len(result_text)
 
-            # 결과 축약 (예산 초과 시)
+            # L1 Tool Result Budget (Progressive Disclosure push-side) —
+            # 개별 결과가 preview_threshold 를 초과하면 preview 만 messages 에 흘리고
+            # 원본은 state.pd_stores["tool_result"][tool_use_id] 에 보존.
+            # LLM 은 `fetch_pd(kind="tool_result", id=<tool_use_id>)` 로 원본 재접근.
+            preview_threshold = int(self.get_param("tool_result_preview_threshold", state, 50000))
+            preview_size = int(self.get_param("tool_result_preview_size", state, 2048))
+            if original_chars > preview_threshold:
+                preview_body = result_text[:preview_size]
+                hint = (
+                    f"\n\n... [PD: 원본 {original_chars:,}자 — preview {preview_size:,}자만 표시. "
+                    f"전체 보려면 fetch_pd(kind='tool_result', id='{tool_use_id}') 호출]"
+                )
+                state.pd_store(
+                    kind="tool_result",
+                    resource_id=tool_use_id,
+                    preview=preview_body + hint,
+                    full=result_text,
+                    meta={
+                        "tool_name": tool_name,
+                        "original_chars": original_chars,
+                        "preview_size": preview_size,
+                    },
+                )
+                result_text = preview_body + hint
+
+            # 누적 예산 초과 시 2 차 방어 (여러 작은 결과 합이 큰 경우) — 기존 하드 트림 유지.
             chars = len(result_text)
             if current_chars + chars > result_budget:
                 remaining = max(0, result_budget - current_chars)

@@ -14,7 +14,7 @@ import logging
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
-from ..tools.builtin import DiscoverToolsTool
+from ..tools.builtin import DiscoverToolsTool, FetchPDTool
 from ..tools.rag_tool import RAGSearchTool
 
 logger = logging.getLogger("harness.stage.tool_index")

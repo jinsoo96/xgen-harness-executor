@@ -5,6 +5,44 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.9] — 2026-04-21
+
+### 🎯 벤치 사이클 #8 — Progressive Disclosure 프레임워크 + L1 Tool Result Budget
+
+**배경**: Claude Code 소스 유출로 드러난 하네스 엔지니어링의 2 축 PD 구조 (pull-side revelation + push-side compaction) 를 본 엔진에도 도입. 본 릴리스는 공용 PD 저장소 + `fetch_pd` 빌트인 + 첫 인스턴스인 tool result L1 예산.
+
+**변경**:
+
+**공용 PD 프레임워크 — `core/state.py`**
+- `PipelineState.pd_stores: dict[kind, dict[id, {preview, full, meta}]]` 추가.
+- 헬퍼 3 종 — `pd_store(kind, id, preview, full, meta)` / `pd_fetch(kind, id)` / `pd_list(kind)`.
+- kind 는 자유 문자열: `tool_result` / `rag` / `history` / `db_schema` / `gallery` 등 확장 가능.
+
+**`fetch_pd` 빌트인 — `tools/builtin.py`**
+- `FetchPDTool` 신설. state 참조를 보유하여 동일 턴에서 live 하게 pd_stores 조회.
+- `fetch_pd(kind, id)` 로 원본 반환. id 생략 시 kind 의 가용 id 목록 반환.
+- 에이전트가 preview 에서 원본 필요할 때 선택적 pull.
+
+**자동 등록 — `stages/strategies/discovery.py`**
+- `ProgressiveDiscovery` 가 `discover_tools` / `search_tools` 와 함께 `fetch_pd` 도 카탈로그에 추가.
+- `state.metadata["tool_registry"]["fetch_pd"]` 등록으로 s08 디스패치 대상.
+
+**L1 Tool Result Budget — `stages/s08_act.py`**
+- 개별 결과가 `tool_result_preview_threshold` (기본 50000 자) 초과 시 preview 만 messages 에 넣고 원본을 `pd_stores["tool_result"][tool_use_id]` 에 보존.
+- preview 끝에 `fetch_pd(kind='tool_result', id='...')` 힌트 삽입.
+- 기존 누적 `result_budget` 2 차 방어는 유지 (여러 작은 결과 합 폭주 방지).
+- Claude Code 5-Level Compression Pipeline 의 L1 (Tool Result Budget) 에 해당. **원본 소실 없음**.
+
+**UI 노출 — `core/stage_config.py`**
+- s08 에 `tool_result_preview_threshold` / `tool_result_preview_size` 필드 추가.
+- `result_budget` 설명을 "2차 방어" 로 갱신. behavior 에 L1 패턴 명시.
+
+**다음 계획**:
+- 사이클 #9: RAG Progressive Disclosure (s06 청크를 pd_stores["rag"] 로). Push-side compaction 효과 측정.
+- 사이클 #10: L4 Context Collapse overlay (토큰 압력 기반 자동 요약, 원본 비파괴 보존).
+
+**참고**: 2026-04-21 Claude Code leak 분석 (5-Level Compression Pipeline) 에 기반.
+
 ## [0.11.8] — 2026-04-21
 
 ### 🎯 벤치 사이클 #7 — RR1: `metadata_filter` + 서버 단 rerank 요청 전파

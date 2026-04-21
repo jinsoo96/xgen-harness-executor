@@ -106,6 +106,15 @@ class PipelineState:
     # --- 메타데이터 ---
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # --- Progressive Disclosure 저장소 ---
+    # 큰 리소스의 원본을 보존하면서 messages 에는 preview 만 노출하는 패턴의 백업 저장소.
+    # Level 1 (preview in messages) → Level 2 (fetch_pd(kind, id) 빌트인으로 원본 조회) → Level 3 (본문 삽입).
+    # kind: "tool_result" | "rag" | "history" | "db_schema" | "gallery" | ...
+    # id:   kind 별 식별자 (tool_use_id / chunk_index / turn_index / table_name / ...)
+    # value: {"preview": str, "full": str, "meta": dict} — preview 는 이미 messages 에 있고,
+    #                                                     full 이 복원용 원본.
+    pd_stores: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+
     # === 헬퍼 메서드 ===
 
     def add_message(self, role: str, content: Any) -> None:
@@ -129,6 +138,41 @@ class PipelineState:
             self.add_message("user", self.tool_results.copy())
             self.tool_results.clear()
             self.pending_tool_calls.clear()
+
+    # --- Progressive Disclosure 헬퍼 ---
+    def pd_store(
+        self,
+        kind: str,
+        resource_id: str,
+        preview: str,
+        full: str,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """PD 리소스 등록. messages 에는 preview 만 노출, 원본은 pd_stores 에 보존.
+
+        kind: "tool_result" / "rag" / "history" / "db_schema" / "gallery" 등 자유 문자열.
+        resource_id: kind 내부에서 고유한 식별자 (tool_use_id / chunk index / turn idx ...).
+        preview: messages 경로로 흘릴 경량 요약.
+        full: fetch_pd 빌트인이 돌려줄 원본.
+        meta: 진단용 메타 (chars, source, truncated_at 등).
+        """
+        bucket = self.pd_stores.setdefault(kind, {})
+        bucket[resource_id] = {
+            "preview": preview,
+            "full": full,
+            "meta": dict(meta or {}),
+        }
+
+    def pd_fetch(self, kind: str, resource_id: str) -> Optional[dict[str, Any]]:
+        """PD 리소스 조회. 없으면 None."""
+        bucket = self.pd_stores.get(kind)
+        if not bucket:
+            return None
+        return bucket.get(resource_id)
+
+    def pd_list(self, kind: str) -> list[str]:
+        """해당 kind 의 보존 리소스 id 목록."""
+        return list(self.pd_stores.get(kind, {}).keys())
 
     async def emit_verbose(self, event: Any) -> None:
         """HarnessConfig.verbose_events=True 시에만 이벤트 발행.

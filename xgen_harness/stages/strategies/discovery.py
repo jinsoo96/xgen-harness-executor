@@ -61,9 +61,9 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
             # Level 2 캐시에는 전체 스키마 보관
             tool_schemas[name] = td
 
-        # search_tools (Level 0) + discover_tools (Level 2) 빌트인 추가.
+        # search_tools (Level 0) + discover_tools (Level 2) + fetch_pd (PD 원본 조회) 빌트인 추가.
         # 카탈로그 ≥ _SEARCH_TOOLS_THRESHOLD 면 search_tools 도 등록 (큰 환경에서 진정한 progressive).
-        from ...tools.builtin import DiscoverToolsTool, SearchToolsTool
+        from ...tools.builtin import DiscoverToolsTool, SearchToolsTool, FetchPDTool
         augmented = list(tool_definitions)
         discover = DiscoverToolsTool(tool_definitions)
         augmented.append(discover.to_api_format())
@@ -77,6 +77,17 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
             # tool_registry 에 인스턴스 등록 (s08_act 가 디스패치 시 찾음)
             if hasattr(state, "metadata"):
                 state.metadata.setdefault("tool_registry", {})["search_tools"] = search
+
+        # fetch_pd — Progressive Disclosure 원본 조회 빌트인. tool_result L1 preview,
+        # RAG 청크, DB 스키마 등 state.pd_stores 에 보관된 리소스를 LLM 이 on-demand 로
+        # 당겨올 때 사용. state 참조를 보유하므로 매 턴 state 인스턴스가 같으면 live.
+        fetch_pd = FetchPDTool(state)
+        augmented.append(fetch_pd.to_api_format())
+        tool_index.append({
+            "name": fetch_pd.name, "description": fetch_pd.description[:_MAX_DESC_CHARS], "category": "system",
+        })
+        if hasattr(state, "metadata"):
+            state.metadata.setdefault("tool_registry", {})["fetch_pd"] = fetch_pd
 
         # state에 스키마 캐시 저장 (s08 discover_tools 핸들러에서 사용)
         if hasattr(state, 'tool_schemas'):
