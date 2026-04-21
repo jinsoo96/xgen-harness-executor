@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.11.9"
+version = "0.11.10"
 description = "XGEN Harness Pipeline Library — 12-stage dual-abstraction agent pipeline + workflow compiler (wheel/MCP)"
 requires-python = ">=3.10"
 license = {text = "MIT"}

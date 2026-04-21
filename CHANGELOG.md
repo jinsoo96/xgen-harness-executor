@@ -5,6 +5,30 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.10] — 2026-04-21
+
+### 🎯 벤치 사이클 #9 — RAG Progressive Disclosure (pull-side)
+
+v0.11.9 에서 도입한 PD 프레임워크의 두 번째 인스턴스. s06 이 RAG 청크 본문을 통째로 system_prompt 에 박던 것을, 선택적으로 "인덱스 한 줄만" 노출하고 본문은 `pd_stores["rag"]` 에 보관하도록 확장.
+
+**변경**:
+- `stages/s06_context.py`:
+  - `rag_pd_mode` 파라미터 신설 (`eager` / `progressive`). 기본 `eager` → 완전한 회귀 안전.
+  - `progressive` 모드: 각 청크를 `[i] id=<col>#<n> · src (score) · snippet…` 한 줄로만 system_prompt 에 배치. 본문은 `state.pd_store(kind="rag", id=<col>#<n>, full=chunk_text, meta={collection, index, source, score, chars})`.
+  - 맨 아래에 `fetch_pd(kind='rag', id='<col>#1')` 호출 예시 힌트 삽입.
+  - `rag_pd_snippet_size` 로 snippet 크기 조정 (기본 120 자).
+- `core/stage_config.py`: s06 에 `rag_pd_mode` (select) / `rag_pd_snippet_size` (number) 필드 추가.
+
+**영향**:
+- `eager` 기본값으로 두어 기존 워크플로우 회귀 0.
+- `progressive` 로 전환 시 RAG 10 청크 × 평균 500 자 = 5000 자 → 10 줄 × 120 자 = ~1200 자로 축소. 첫 루프 system_prompt 토큰 약 76% 절감.
+- LLM 이 꼭 필요한 청크만 `fetch_pd` 로 pull → 불필요한 청크는 아예 LLM 이 보지 않음.
+- 다중 루프 (s06 은 iteration>1 시 bypass) 구조에서는 인덱스는 유지되고 본문은 pd_stores 에 누적 → 후속 루프가 재사용.
+
+**측정 계획 (Pilot #5)**: 동일 15 쿼리에 eager vs progressive 비교 — prompt_tokens / answer_quality / fetch_pd 실사용 빈도.
+
+**참고**: Claude Code 의 Skills 3-Level PD (L1 YAML frontmatter → L2 body → L3 references) 와 유사 패턴. RAG 는 인덱스 + snippet (L1) → fetch_pd (L2) → 본문 삽입 (L3) 으로 매핑.
+
 ## [0.11.9] — 2026-04-21
 
 ### 🎯 벤치 사이클 #8 — Progressive Disclosure 프레임워크 + L1 Tool Result Budget

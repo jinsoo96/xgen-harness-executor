@@ -108,6 +108,14 @@ class ContextStage(Stage):
                     rerank_top_k_int = int(rerank_top_k_param) if rerank_top_k_param is not None else None
                 except (TypeError, ValueError):
                     rerank_top_k_int = None
+                # RAG Progressive Disclosure 모드 — Claude Code 5-Level Compression 의 정신을
+                # RAG 단에 적용. eager (기존) 는 청크 본문을 system_prompt 에 통으로 넣고,
+                # progressive 는 인덱스만 넣고 본문은 pd_stores 에 보관. LLM 은
+                # fetch_pd(kind='rag', id='<col>#<i>') 로 필요한 청크만 pull.
+                rag_pd_mode = str(self.get_param("rag_pd_mode", state, "eager") or "eager").strip().lower()
+                if rag_pd_mode not in ("eager", "progressive"):
+                    rag_pd_mode = "eager"
+                rag_pd_snippet = int(self.get_param("rag_pd_snippet_size", state, 120))
                 for col in rag_collections:
                     try:
                         # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
@@ -118,11 +126,39 @@ class ContextStage(Stage):
                         if search_hits:
                             part = f"## {col} ({len(search_hits)}건)\n\n"
                             for i, r in enumerate(search_hits):
-                                if isinstance(r, dict):
-                                    src = extract_source(r) or r.get("file_name", "")
-                                    score = extract_score(r)
-                                    text = extract_text(r) or r.get("chunk_text", "")
+                                if not isinstance(r, dict):
+                                    continue
+                                src = extract_source(r) or r.get("file_name", "")
+                                score = extract_score(r)
+                                text = extract_text(r) or r.get("chunk_text", "")
+                                if rag_pd_mode == "progressive":
+                                    # 인덱스 한 줄만. 본문은 pd_stores["rag"] 에 보관.
+                                    rid = f"{col}#{i+1}"
+                                    snippet = (text[:rag_pd_snippet] + "…") if len(text) > rag_pd_snippet else text
+                                    snippet = snippet.replace("\n", " ")
+                                    part += (
+                                        f"[{i+1}] id={rid} · {src} ({score:.3f}) · {snippet}\n"
+                                    )
+                                    state.pd_store(
+                                        kind="rag",
+                                        resource_id=rid,
+                                        preview=snippet,
+                                        full=text,
+                                        meta={
+                                            "collection": col,
+                                            "index": i + 1,
+                                            "source": src,
+                                            "score": score,
+                                            "chars": len(text),
+                                        },
+                                    )
+                                else:
                                     part += f"[{i+1}] {src} ({score:.3f})\n{text}\n\n"
+                            if rag_pd_mode == "progressive":
+                                part += (
+                                    "\n(본문이 필요하면 fetch_pd(kind='rag', id='<위 id>') 호출. "
+                                    "예: fetch_pd(kind='rag', id='" + f"{col}#1" + "'))\n"
+                                )
                             parts.append(part)
                     except Exception as e:
                         logger.warning("[Context] DocumentService.search failed for %s: %s", col, e)
