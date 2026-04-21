@@ -5,6 +5,32 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.11] — 2026-04-21
+
+### 🎯 벤치 사이클 #10 — L4 Context Collapse Overlay (비파괴 압축)
+
+Claude Code 5-Level Compression Pipeline 의 **Level 4 (Context Collapse)** 에 해당하는 비파괴 압축 전략을 s06 에 신설. 기존 `token_budget` / `sliding_window` 는 메시지를 **삭제** 하지만, `context_collapse_overlay` 는 중간 메시지를 `state.pd_stores["history"]` 에 **보존** 하고 messages 는 `[first, overlay_marker, *last_N]` 로 축소. 에이전트가 `fetch_pd(kind='history', id=...)` 로 복원 가능.
+
+**변경**:
+- `stages/s06_context.py`: strategy 디스패치에 `context_collapse_overlay` 분기 추가.
+  - 임계 (기본 90%) 초과 + messages > keep_tail+1 시 발동.
+  - old = messages[1:-keep_tail] 를 pd_stores["history"]["msg_<iter>_<idx>"] 로 이관.
+  - overlay 마커 메시지로 교체 — 접힌 id 목록 + fetch_pd 힌트 포함.
+  - results["context_collapsed"] = N 기록.
+- `core/stage_config.py`:
+  - s06 `strategy` 필드 신설 (select, `token_budget` / `sliding_window` / `context_collapse_overlay`).
+  - `context_collapse_threshold` (slider 50~95, 기본 90).
+  - `context_collapse_keep_tail` (number 1~10, 기본 3).
+
+**영향**:
+- 기본 전략 여전히 `token_budget` → 회귀 0.
+- `context_collapse_overlay` 선택 시 긴 멀티턴 대화에서도 **원본 소실 없음**.
+- Claude Code 의 "90% collapse → non-destructive view" 패턴과 동일 철학.
+
+**한계**: 현재 overlay 는 단순 마커 (역할+첫 120자 미리보기). 다음 사이클에서 LLM child agent 로 9-section summary 생성 (Claude Code L5 Autocompact 패턴) 고려.
+
+**테스트 경로**: 긴 대화 시뮬레이션으로 검증 (Pilot #7 예정).
+
 ## [0.11.10] — 2026-04-21
 
 ### 🎯 벤치 사이클 #9 — RAG Progressive Disclosure (pull-side)

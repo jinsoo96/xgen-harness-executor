@@ -305,7 +305,11 @@ class ContextStage(Stage):
         estimated_tokens = total_chars // CHARS_PER_TOKEN
         budget_used = estimated_tokens / available_tokens if available_tokens > 0 else 1.0
 
-        # 압축 전략 디스패치 — token_budget(기본) 또는 sliding_window
+        # 압축 전략 디스패치 — 3 가지
+        #   token_budget (기본):  first + last_3 유지. 파괴적 (원본 소실).
+        #   sliding_window:        최근 N개 유지. 파괴적.
+        #   context_collapse_overlay (L4, Claude Code 패턴): 비파괴 — 중간 메시지를
+        #       pd_stores["history"] 에 보관 + overlay 요약 마커로 교체. fetch_pd 로 복원.
         strategy_name = self.get_param("strategy", state, "token_budget")
         compaction_threshold = self.get_param("compaction_threshold", state, 80) / 100.0
 
@@ -316,8 +320,62 @@ class ContextStage(Stage):
                 state.messages = state.messages[-window_size:]
                 results["compacted"] = True
                 logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
+        elif strategy_name == "context_collapse_overlay":
+            # Claude Code L4 — 토큰 압력이 임계 이상이면 오래된 메시지를 pd_stores["history"]
+            # 에 보존하고 messages 는 [first, overlay_marker, *last_N] 로 축소.
+            # 에이전트는 fetch_pd(kind='history', id='msg_<iter>_<idx>') 로 복원 가능.
+            collapse_threshold = self.get_param("context_collapse_threshold", state, 90) / 100.0
+            keep_tail = int(self.get_param("context_collapse_keep_tail", state, 3))
+            if budget_used > collapse_threshold and len(state.messages) > keep_tail + 1:
+                head = state.messages[0]
+                tail = state.messages[-keep_tail:]
+                old = state.messages[1:-keep_tail]
+                # 원본 보존
+                iter_no = state.loop_iteration
+                preserved_ids: list[str] = []
+                for i, msg in enumerate(old):
+                    rid = f"msg_{iter_no}_{i}"
+                    role = msg.get("role", "?") if isinstance(msg, dict) else "?"
+                    preview_line = f"({role}) " + (
+                        str(msg.get("content", ""))[:120] if isinstance(msg, dict) else str(msg)[:120]
+                    )
+                    # full 은 dict 원본을 JSON 직렬화해 보존 (복원 시 읽기 전용).
+                    import json as _json
+                    try:
+                        full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
+                    except Exception:
+                        full_repr = str(msg)
+                    state.pd_store(
+                        kind="history",
+                        resource_id=rid,
+                        preview=preview_line,
+                        full=full_repr,
+                        meta={"role": role, "loop_iteration": iter_no, "original_index": i + 1},
+                    )
+                    preserved_ids.append(rid)
+                # overlay 마커 — 에이전트에 "N개 메시지 접힘" 알림 + 복원 경로 힌트
+                overlay = {
+                    "role": "user",
+                    "content": (
+                        f"[Context Collapse Overlay — {len(old)}개 중간 메시지가 접힘. "
+                        f"원본은 pd_stores['history'] 에 보존. "
+                        f"필요하면 fetch_pd(kind='history', id='<위 id>') 호출. "
+                        f"첫/마지막 {keep_tail} 개는 보존. "
+                        f"접힌 id 목록: {preserved_ids[:10]}" +
+                        (f"... (+{len(preserved_ids) - 10})" if len(preserved_ids) > 10 else "") +
+                        f"]"
+                    ),
+                }
+                state.messages = [head, overlay] + tail
+                results["compacted"] = True
+                results["context_collapsed"] = len(preserved_ids)
+                logger.info(
+                    "[Context] L4 Collapse: %d messages preserved in pd_stores['history'], "
+                    "kept first + overlay + last %d",
+                    len(preserved_ids), keep_tail,
+                )
         elif budget_used > compaction_threshold and len(state.messages) > 4:
-            # token_budget(기본): first + last 3
+            # token_budget(기본, 파괴적): first + last 3
             state.messages = [state.messages[0]] + state.messages[-3:]
             results["compacted"] = True
             logger.info("[Context] Compacted: kept first + last 3 messages")
