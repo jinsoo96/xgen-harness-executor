@@ -187,8 +187,11 @@ class PipelineState:
             return
         try:
             await self.event_emitter.emit(event)
-        except Exception:
-            pass  # 관찰 이벤트 실패는 실행 흐름에 영향 없음
+        except Exception as e:
+            # v0.11.21 — 관찰 이벤트 실패는 실행 흐름에 영향 없음. 단 완전 swallow 는 디버깅
+            # 난도를 올리므로 로거에 흔적. logging 모듈은 모듈 로드 시점에만 필요.
+            import logging as _logging
+            _logging.getLogger("harness.state").debug("emit_verbose suppressed: %s", e)
 
     @property
     def elapsed_ms(self) -> int:

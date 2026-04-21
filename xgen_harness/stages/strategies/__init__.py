@@ -11,7 +11,12 @@ from .tool_executor import SequentialToolExecutor, ParallelToolExecutor
 from .evaluation import LLMJudgeEvaluation, RuleBasedEvaluation, NoValidation
 from .scorer import WeightedScorer
 from .discovery import ProgressiveDiscovery, EagerLoadDiscovery
-from .compactor import TokenBudgetCompactor, SlidingWindowCompactor
+from .compactor import (
+    TokenBudgetCompactor, SlidingWindowCompactor,
+    AdvancedContextCompactor,
+    MicrocompactCompactor, ContextCollapseOverlayCompactor,
+    AutocompactLLMCompactor, CascadeCompactor,
+)
 from ._decide import ThresholdDecide, AlwaysPassDecide
 
 __all__ = [
@@ -22,5 +27,8 @@ __all__ = [
     "WeightedScorer",
     "ProgressiveDiscovery", "EagerLoadDiscovery",
     "TokenBudgetCompactor", "SlidingWindowCompactor",
+    "AdvancedContextCompactor",
+    "MicrocompactCompactor", "ContextCollapseOverlayCompactor",
+    "AutocompactLLMCompactor", "CascadeCompactor",
     "ThresholdDecide", "AlwaysPassDecide",
 ]

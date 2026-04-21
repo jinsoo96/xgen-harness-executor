@@ -275,6 +275,23 @@ class XgenAdapter:
             config_kwargs["capabilities"] = list(hc["capabilities"])
         if hc.get("capability_params"):
             config_kwargs["capability_params"] = dict(hc["capability_params"])
+        # v0.11.21 — Pilot #10 에서 발견된 우회 경로 제거: HarnessConfig.context_window 를
+        # 이식 측이 top-level 로 넘기면 s06 이 그대로 사용. 지금까지는 stage_params.s06_context.context_window
+        # 로 돌아가야 했다. int 변환 + 최소값 1024 가드.
+        if hc.get("context_window") is not None:
+            try:
+                cw = int(hc["context_window"])
+                if cw >= 1024:
+                    config_kwargs["context_window"] = cw
+            except (TypeError, ValueError):
+                logger.warning("[Adapter] context_window 파싱 실패: %r", hc.get("context_window"))
+        if hc.get("thinking_enabled") is not None:
+            config_kwargs["thinking_enabled"] = bool(hc["thinking_enabled"])
+        if hc.get("thinking_budget_tokens") is not None:
+            try:
+                config_kwargs["thinking_budget_tokens"] = int(hc["thinking_budget_tokens"])
+            except (TypeError, ValueError):
+                pass
 
         config = HarnessConfig(**config_kwargs)
 

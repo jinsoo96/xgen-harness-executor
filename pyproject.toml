@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.11.20"
+version = "0.11.21"
 description = "XGEN Harness Pipeline Library — 12-stage dual-abstraction agent pipeline + workflow compiler (wheel/MCP)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -79,3 +79,34 @@ include = ["xgen_harness*"]
 # v0.10.0+ 컴파일러 템플릿은 순수 Python 문자열이라 package-data 불필요 (templates/__init__.py 에 내장)
 [tool.setuptools.package-data]
 "xgen_harness" = ["integrations/*.json"]
+
+# ─── v0.11.21 — 타입체커 gate (점진 도입) ───
+# code review 등급 C+ (타입 안전성) → B+ 로 끌어올리는 baseline.
+# 지금은 relaxed — Any 남발을 하루에 지울 수 없으니 strict 플래그는 0.
+# CI/로컬에서 `mypy xgen_harness` 가 실행 가능한 상태만 확보. 이후 모듈별 strict 승격 예정.
+[tool.mypy]
+python_version = "3.10"
+# 외부 의존성이 타입 스텁 없이 와도 blocker 되지 않도록 silence.
+ignore_missing_imports = true
+# relaxed baseline — strict flag 하나하나 켜서 회귀 방지하며 진입.
+check_untyped_defs = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false
+warn_unused_ignores = true
+# 변경 감지 빨라지도록 캐시 루트 고정.
+cache_dir = ".mypy_cache"
+# 플러그인 미사용 — dataclasses/Protocol 은 네이티브 해석에 맡긴다.
+plugins = []
+
+# 모듈별 strict 승격은 여기에 [[tool.mypy.overrides]] 로 추가.
+[[tool.mypy.overrides]]
+module = "xgen_harness.core.*"
+# core/ 만 우선 엄격화 — 외부 의존 없고 PipelineState/HarnessConfig 가 진입점이라 타입 안전성 효과 큼.
+# 단 Any 필드가 아직 남아 있어 warn_return_any 는 유예.
+check_untyped_defs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

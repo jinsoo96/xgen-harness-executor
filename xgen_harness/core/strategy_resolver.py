@@ -100,6 +100,8 @@ def _register_defaults() -> None:
         WeightedScorer,
         ProgressiveDiscovery, EagerLoadDiscovery,
         TokenBudgetCompactor, SlidingWindowCompactor,
+        MicrocompactCompactor, ContextCollapseOverlayCompactor,
+        AutocompactLLMCompactor, CascadeCompactor,
     )
     from ..stages.strategies.tool_executor import ParallelToolExecutor
 
@@ -107,9 +109,13 @@ def _register_defaults() -> None:
     register_strategy("s04_tool", "discovery", "progressive_3level", ProgressiveDiscovery)
     register_strategy("s04_tool", "discovery", "eager_load", EagerLoadDiscovery)
 
-    # s06_context — compactor
+    # s06_context — compactor (v0.11.21: L3/L4/L5/cascade 4종 resolver 승격)
     register_strategy("s06_context", "compactor", "token_budget", TokenBudgetCompactor)
     register_strategy("s06_context", "compactor", "sliding_window", SlidingWindowCompactor)
+    register_strategy("s06_context", "compactor", "microcompact", MicrocompactCompactor)
+    register_strategy("s06_context", "compactor", "context_collapse_overlay", ContextCollapseOverlayCompactor)
+    register_strategy("s06_context", "compactor", "autocompact_llm", AutocompactLLMCompactor)
+    register_strategy("s06_context", "compactor", "cascade", CascadeCompactor)
 
     # s07_llm — retry
     register_strategy("s07_llm", "retry", "exponential_backoff", ExponentialBackoffRetry)

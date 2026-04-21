@@ -5,6 +5,39 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.21] — 2026-04-22
+
+### 🎯 이식 연결선 + 확장성 보강 (사용자 10 블록 지시)
+
+사용자 지시로 엔진 ↔ 이식 사이 "자동 반영 착시" 를 깨는 3 갭 (context_window forwarding / metrics.output_tokens / s06 compactor 외부 교체 불가) 을 일괄 해소. 더불어 code review B+ 지적의 타입 gate / bare except 정리 일부를 선행 반영.
+
+**🔴 연결선 수정 (T2b / T2c / code review 1)**:
+- `adapters/xgen.py` — HarnessConfig `context_window` / `thinking_enabled` / `thinking_budget_tokens` 를 top-level hc 에서 수신해 `config_kwargs` 로 전달. Pilot #10 의 "stage_params 우회" 근본 제거. 파싱 실패 시 기본값 유지.
+- `core/config.py` — `HarnessConfig.from_workflow` 가 `context_window` 수신 (int 파싱 + 최소 1024 가드). `_safe_int` 유틸 신설.
+- `stages/s07_llm.py` — `output_tokens` 누적 로직 수정. Anthropic `STOP` / OpenAI `USAGE` 이벤트 양쪽에서 **선착 1회만** 집계 → MetricsEvent 스트리밍 토큰 `0` 증상 해소.
+
+**🔴 확장성 수정 (code review A → 확고화)**:
+- `stages/strategies/compactor.py` — `AdvancedContextCompactor` ABC 신설. state/pd_stores/provider 접근이 필요한 전략을 위한 `apply(state, stage, budget_used, results)` 시그니처. 4 기본 구현체 추가:
+  - `MicrocompactCompactor` (L3)
+  - `ContextCollapseOverlayCompactor` (L4)
+  - `AutocompactLLMCompactor` (L5)
+  - `CascadeCompactor` (자동 에스컬레이션)
+- `core/strategy_resolver.py` — 위 4 개를 `register_strategy("s06_context","compactor",…)` 슬롯에 등록. 외부 기여자가 `active_strategies` / `stage_params.s06_context.strategy` 로 자기 구현 swap 가능.
+- `stages/s06_context.py` — execute() 진입 시 resolver 로 먼저 dispatch 시도. 등록된 Advanced 가 있으면 위임, 없으면 기존 inline if/elif fallback. cascade inline 블록을 `_try_cascade()` 메서드로 추출 (L3/L4/L5 와 대칭).
+
+**🟡 코드 품질 (code review B+ 탈출)**:
+- `pyproject.toml` — `[tool.mypy]` 추가 (relaxed baseline). `xgen_harness.core.*` 만 `check_untyped_defs=true` 로 선제 승격. `[tool.pytest.ini_options]` 추가.
+- `stages/strategies/tool_router.py::CompositeToolRouter.list_available` — bare `except Exception: pass` → `logger.warning` 로 교체.
+- `core/registry.py::_discover_plugin_stages` — 엔트리포인트 백엔드 실패 swallow → `logger.debug` 로 교체.
+- `core/state.py::emit_verbose` — 관찰 이벤트 실패 swallow → `logger.debug` 로 교체.
+
+**⏭ 다음 릴리즈로 유예 (사유 명시)**:
+- `s06_context.py` 물리 분해 (`strategies/compactor_pd.py` 이관) — AdvancedContextCompactor 4 구현체가 stage helper 에 의존해 분해 범위가 크다. resolver 슬롯 외부 교체가 확보된 이상 필수가 아니라 응집도 이슈 → v0.11.22 후보.
+- `PipelineState` 100+ 필드 도메인 분해 — 모든 Stage 의 필드 접근 경로 수정이 필요해 회귀 위험. 슬롯 단위 migration helper 설계 후 진입 필요 → v0.11.22 후보.
+- bare `except` 전수 정리 — 대표 3 건 반영, 나머지는 호출자 계약 문서화 후 일괄 → v0.11.22.
+
+**이식측 반영 필요 여부**: pyproject 의 `xgen-harness>=0.11.21` 핀 상향 1 줄. 연결 갭 3 종은 엔진만 수정으로 전파 가능 (`HarnessConfig` top-level 필드 전달 + s07 내부 집계).
+
 ## [0.11.20] — 2026-04-22
 
 ### 🎯 벤치 사이클 #19 — 코드 감사 후속 정리 (확장성·하드코딩·연동성)

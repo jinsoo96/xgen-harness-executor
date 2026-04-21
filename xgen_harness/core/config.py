@@ -249,11 +249,28 @@ class HarnessConfig:
             strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
+            # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
+            context_window=_safe_int(
+                harness_config.get("context_window"), default=200_000, minimum=1024,
+            ),
             capabilities=list(harness_config.get("capabilities", []) or []),
             capability_params=dict(harness_config.get("capability_params", {}) or {}),
             external_inputs=dict(harness_config.get("external_inputs", {}) or {}),
             preset=preset,
         )
+
+
+def _safe_int(value: Any, *, default: int, minimum: int | None = None) -> int:
+    """빈 문자열/None/파싱 실패 시 default. minimum 미달 시 default."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and parsed < minimum:
+        return default
+    return parsed
 
 
 def _extract_agent_config_from_nodes(workflow_data: dict) -> dict[str, Any]:

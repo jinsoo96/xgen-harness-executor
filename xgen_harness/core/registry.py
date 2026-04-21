@@ -243,8 +243,10 @@ def _discover_plugin_stages(registry: ArtifactRegistry) -> None:
                             stage_id, artifact_name, ep.name)
             except Exception as e:
                 logger.warning("Failed to load plugin stage %s: %s", ep.name, e)
-    except Exception:
-        pass  # No plugins installed
+    except Exception as e:
+        # v0.11.21 — importlib.metadata 자체가 실패하는 환경(예: editable install 조합)에서는
+        # 플러그인 발견이 불가능해도 엔진 부팅은 계속. 디버그로 흔적 남김.
+        logger.debug("Plugin stage discovery skipped (no entry_points backend): %s", e)
 
 
 # ── 싱글턴 레지스트리 (기본 인스턴스) ──────────────────────────────

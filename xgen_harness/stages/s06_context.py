@@ -351,7 +351,24 @@ class ContextStage(Stage):
         strategy_name = self.get_param("strategy", state, "token_budget")
         compaction_threshold = self.get_param("compaction_threshold", state, 80) / 100.0
 
-        if strategy_name == "sliding_window":
+        # v0.11.21 — 외부 기여자가 register_strategy("s06_context","compactor",...) 로
+        # 교체할 수 있도록 resolver 경로를 선행 조회. AdvancedContextCompactor 인스턴스가
+        # 반환되면 자체 apply() 에 전적으로 위임하고 inline if/elif 는 건너뛴다.
+        handled_by_strategy = False
+        try:
+            from ..core.strategy_resolver import StrategyResolver
+            from .strategies.compactor import AdvancedContextCompactor
+            resolver = StrategyResolver.default()
+            compactor = resolver.resolve("s06_context", "compactor", strategy_name)
+            if isinstance(compactor, AdvancedContextCompactor):
+                await compactor.apply(state=state, stage=self, budget_used=budget_used, results=results)
+                handled_by_strategy = True
+        except Exception as e:
+            logger.warning("[Context] strategy resolver dispatch 실패 (%s): %s", strategy_name, e)
+
+        if handled_by_strategy:
+            pass  # AdvancedContextCompactor 가 results 에 이미 반영
+        elif strategy_name == "sliding_window":
             # 슬라이딩 윈도우: 최근 N개 메시지만 유지 (심플하지만 채팅에 효과적)
             window_size = int(self.get_param("window_size", state, 20))
             if len(state.messages) > window_size:
@@ -365,46 +382,7 @@ class ContextStage(Stage):
         elif strategy_name == "context_collapse_overlay":
             self._try_context_collapse(state, budget_used, results)
         elif strategy_name == "cascade":
-            # Claude Code Cascade — 압력에 따라 L3 → L4 → L5 자동 선택. 한 턴에 하나만 발동.
-            #   < l3_th:  pass (L1 preview 는 s08 이 항상 수행)
-            #   >= l3_th: L3 microcompact (경량)
-            #   >= l4_th: L4 context_collapse_overlay (중량)
-            #   >= l5_th: L5 autocompact_llm (중량, 실패 시 회로 차단)
-            # 기본 임계는 Claude Code 권장값에서 차용.
-            # v0.11.16 — L3 기본 70 → 80 (baseline token_budget 의 compaction_threshold 와 동기).
-            # 이전 Pilot #11 에서 ctx 여유 시 조기 발동이 오히려 -19% 품질 악화 관측 → baseline 이
-            # 자연 compact 할 시점 이후에만 cascade 가 개입하는 게 정답. 사용자는 여전히 override 가능.
-            l3_th = self.get_param("cascade_l3_threshold", state, 80) / 100.0
-            l4_th = self.get_param("cascade_l4_threshold", state, 90) / 100.0
-            l5_th = self.get_param("cascade_l5_threshold", state, 97) / 100.0
-            # 가장 무거운 전략부터 역순 체크 → 한 턴 한 전략 규칙 유지.
-            # 단 L3 는 tool_result 가 있을 때만 효과적이므로 L4/L5 와 별도 차원.
-            #   먼저 L3 로 tool_result 축소 시도 (있다면 즉시 효과).
-            #   이후 메시지 자체가 여전히 과대하면 L4 또는 L5 로 추가 축소.
-            # v0.11.20 — state.metadata 임시 키 대신 helper 에 직접 threshold 전달 (leak 방지, DRY)
-            cascade_applied: list[str] = []
-            if budget_used >= l3_th:
-                # L3 는 tool_result 있을 때만 동작 — 실패해도 손실 없음. 먼저 시도.
-                pre_mc = results.get("microcompacted", 0)
-                self._try_microcompact(state, budget_used, results, threshold_override=l3_th)
-                if results.get("microcompacted", 0) > pre_mc:
-                    cascade_applied.append("L3")
-            if budget_used >= l5_th:
-                # 최후 수단 L5
-                pre_ac = results.get("autocompacted", 0)
-                await self._try_autocompact(state, budget_used, results, threshold_override=l5_th)
-                if results.get("autocompacted", 0) > pre_ac:
-                    cascade_applied.append("L5")
-            elif budget_used >= l4_th:
-                # 중간 수준 L4 (L5 보다 싼 비파괴 overlay)
-                pre_cc = results.get("context_collapsed", 0)
-                self._try_context_collapse(state, budget_used, results, threshold_override=l4_th)
-                if results.get("context_collapsed", 0) > pre_cc:
-                    cascade_applied.append("L4")
-            if cascade_applied:
-                results["cascade_applied"] = cascade_applied
-                logger.info("[Context] Cascade dispatched: %s (budget=%.0f%%)",
-                            "+".join(cascade_applied), budget_used * 100)
+            await self._try_cascade(state, budget_used, results)
         elif budget_used > compaction_threshold and len(state.messages) > 4:
             # token_budget(기본, 파괴적): first + last 3
             state.messages = [state.messages[0]] + state.messages[-3:]
@@ -418,7 +396,45 @@ class ContextStage(Stage):
                     estimated_tokens, budget_used * 100, len(rag_collections))
         return results
 
-    # ── L3 / L4 / L5 helper methods (cascade 재사용용) ──
+    # ── L3 / L4 / L5 / Cascade helper methods ──
+
+    async def _try_cascade(
+        self, state: PipelineState, budget_used: float, results: dict,
+    ) -> None:
+        """Claude Code Cascade — 압력에 따라 L3 → L4 → L5 자동 선택. 한 턴에 하나만 발동.
+
+        - < l3_th:  pass (L1 preview 는 s08 이 항상 수행)
+        - >= l3_th: L3 microcompact (경량)
+        - >= l4_th: L4 context_collapse_overlay (중량)
+        - >= l5_th: L5 autocompact_llm (중량, 실패 시 회로 차단)
+
+        v0.11.16 — L3 기본 70 → 80 (baseline token_budget 의 compaction_threshold 와 동기).
+        Pilot #11 에서 조기 발동 품질 악화 관측 → baseline compact 시점 이후만 개입.
+        v0.11.20 — helper 에 직접 threshold 전달 (state.metadata 임시 키 제거, leak 방지).
+        """
+        l3_th = self.get_param("cascade_l3_threshold", state, 80) / 100.0
+        l4_th = self.get_param("cascade_l4_threshold", state, 90) / 100.0
+        l5_th = self.get_param("cascade_l5_threshold", state, 97) / 100.0
+        cascade_applied: list[str] = []
+        if budget_used >= l3_th:
+            pre_mc = results.get("microcompacted", 0)
+            self._try_microcompact(state, budget_used, results, threshold_override=l3_th)
+            if results.get("microcompacted", 0) > pre_mc:
+                cascade_applied.append("L3")
+        if budget_used >= l5_th:
+            pre_ac = results.get("autocompacted", 0)
+            await self._try_autocompact(state, budget_used, results, threshold_override=l5_th)
+            if results.get("autocompacted", 0) > pre_ac:
+                cascade_applied.append("L5")
+        elif budget_used >= l4_th:
+            pre_cc = results.get("context_collapsed", 0)
+            self._try_context_collapse(state, budget_used, results, threshold_override=l4_th)
+            if results.get("context_collapsed", 0) > pre_cc:
+                cascade_applied.append("L4")
+        if cascade_applied:
+            results["cascade_applied"] = cascade_applied
+            logger.info("[Context] Cascade dispatched: %s (budget=%.0f%%)",
+                        "+".join(cascade_applied), budget_used * 100)
 
     def _try_microcompact(
         self, state: PipelineState, budget_used: float, results: dict,

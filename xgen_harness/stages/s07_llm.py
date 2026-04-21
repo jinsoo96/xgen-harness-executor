@@ -243,6 +243,11 @@ class LLMStage(Stage):
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         usage = TokenUsage()
+        # v0.11.21 — MetricsEvent.output_tokens=0 현상 해결.
+        # Anthropic 은 message_delta(STOP) 에 output_tokens 를 싣고,
+        # OpenAI 는 stream_options.include_usage 로 USAGE 이벤트 말미에 completion_tokens 를 싣는다.
+        # 둘 중 먼저 도착한 값만 집계(중복 방지).
+        _output_tokens_recorded = False
 
         # verbose: LLM 요청 시작
         from ..events.types import StageSubstepEvent
@@ -312,9 +317,16 @@ class LLMStage(Stage):
                 usage.input_tokens += event.input_tokens
                 usage.cache_creation_tokens += event.cache_creation_tokens
                 usage.cache_read_tokens += event.cache_read_tokens
+                # OpenAI 경로: USAGE 이벤트가 completion_tokens 를 싣는다. 선착 집계.
+                if event.output_tokens and not _output_tokens_recorded:
+                    usage.output_tokens += event.output_tokens
+                    _output_tokens_recorded = True
 
             elif event.type == ProviderEventType.STOP:
-                usage.output_tokens += event.output_tokens
+                # Anthropic 경로: message_delta 이벤트가 output_tokens 누적값 전달.
+                if event.output_tokens and not _output_tokens_recorded:
+                    usage.output_tokens += event.output_tokens
+                    _output_tokens_recorded = True
 
         result_text = "".join(text_parts)
         return result_text, tool_calls, usage

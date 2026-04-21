@@ -152,6 +152,11 @@ class CompositeToolRouter(ToolRouter):
                     if t["name"] not in seen:
                         all_tools.append(t)
                         seen.add(t["name"])
-            except Exception:
-                pass
+            except Exception as e:
+                # v0.11.21 — 한 라우터 실패가 다른 라우터 발견을 막으면 안 됨.
+                # pass 대신 로그 남겨 디버깅 가능성 확보.
+                logger.warning(
+                    "[CompositeToolRouter] %s.list_available 실패, 해당 라우터 건너뜀: %s",
+                    type(router).__name__, e,
+                )
         return all_tools
