@@ -18,7 +18,7 @@ from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.stage.context")
 
-CHARS_PER_TOKEN = 3  # 평균 추정
+CHARS_PER_TOKEN = 3  # 평균 추정 (영어 ≈ 4, 한국어 ≈ 1.5~2). stage_param chars_per_token 으로 override.
 
 
 class ContextStage(Stage):
@@ -313,12 +313,15 @@ class ContextStage(Stage):
                 )
 
         # ── 3. 토큰 예산 관리 ──
-        context_window = self.get_param("context_window", state, config.context_window if config else 200_000)
-        max_tokens = config.max_tokens if config else 8192
+        # v0.11.20 — context_window 는 getattr 로 방어 (HarnessConfig 이전 버전 호환).
+        context_window = self.get_param(
+            "context_window", state, getattr(config, "context_window", 200_000)
+        )
+        max_tokens = getattr(config, "max_tokens", 8192) if config else 8192
         available_tokens = context_window - max_tokens
 
-        if config and config.thinking_enabled:
-            available_tokens -= config.thinking_budget_tokens
+        if config and getattr(config, "thinking_enabled", False):
+            available_tokens -= getattr(config, "thinking_budget_tokens", 0)
 
         total_chars = len(state.system_prompt)
         for msg in state.messages:
@@ -331,7 +334,11 @@ class ContextStage(Stage):
                         total_chars += len(str(block.get("text", "")))
                         total_chars += len(str(block.get("content", "")))
 
-        estimated_tokens = total_chars // CHARS_PER_TOKEN
+        # chars_per_token override 가능 (영어/한국어 토큰 비율이 달라서).
+        chars_per_token = int(self.get_param("chars_per_token", state, CHARS_PER_TOKEN))
+        if chars_per_token < 1:
+            chars_per_token = CHARS_PER_TOKEN
+        estimated_tokens = total_chars // chars_per_token
         budget_used = estimated_tokens / available_tokens if available_tokens > 0 else 1.0
 
         # 압축 전략 디스패치
@@ -374,30 +381,24 @@ class ContextStage(Stage):
             # 단 L3 는 tool_result 가 있을 때만 효과적이므로 L4/L5 와 별도 차원.
             #   먼저 L3 로 tool_result 축소 시도 (있다면 즉시 효과).
             #   이후 메시지 자체가 여전히 과대하면 L4 또는 L5 로 추가 축소.
+            # v0.11.20 — state.metadata 임시 키 대신 helper 에 직접 threshold 전달 (leak 방지, DRY)
             cascade_applied: list[str] = []
             if budget_used >= l3_th:
                 # L3 는 tool_result 있을 때만 동작 — 실패해도 손실 없음. 먼저 시도.
                 pre_mc = results.get("microcompacted", 0)
-                # microcompact 내부 threshold 는 cascade 임계로 override 하기 위해 일시 state param 주입
-                state.metadata["_cascade_mc_threshold_override"] = l3_th * 100
-                self._try_microcompact(state, budget_used, results)
-                state.metadata.pop("_cascade_mc_threshold_override", None)
+                self._try_microcompact(state, budget_used, results, threshold_override=l3_th)
                 if results.get("microcompacted", 0) > pre_mc:
                     cascade_applied.append("L3")
             if budget_used >= l5_th:
                 # 최후 수단 L5
                 pre_ac = results.get("autocompacted", 0)
-                state.metadata["_cascade_ac_threshold_override"] = l5_th * 100
-                await self._try_autocompact(state, budget_used, results)
-                state.metadata.pop("_cascade_ac_threshold_override", None)
+                await self._try_autocompact(state, budget_used, results, threshold_override=l5_th)
                 if results.get("autocompacted", 0) > pre_ac:
                     cascade_applied.append("L5")
             elif budget_used >= l4_th:
                 # 중간 수준 L4 (L5 보다 싼 비파괴 overlay)
                 pre_cc = results.get("context_collapsed", 0)
-                state.metadata["_cascade_cc_threshold_override"] = l4_th * 100
-                self._try_context_collapse(state, budget_used, results)
-                state.metadata.pop("_cascade_cc_threshold_override", None)
+                self._try_context_collapse(state, budget_used, results, threshold_override=l4_th)
                 if results.get("context_collapsed", 0) > pre_cc:
                     cascade_applied.append("L4")
             if cascade_applied:
@@ -421,15 +422,17 @@ class ContextStage(Stage):
 
     def _try_microcompact(
         self, state: PipelineState, budget_used: float, results: dict,
+        threshold_override: float | None = None,
     ) -> None:
-        """L3 — 오래된 tool_result 블록을 placeholder 로 교체. 원본은 pd_stores['tool_result'] 보존."""
+        """L3 — 오래된 tool_result 블록을 placeholder 로 교체. 원본은 pd_stores['tool_result'] 보존.
+
+        threshold_override: cascade 에서 전달하는 임계(0~1). None 이면 stage_param 의 기본값 사용.
+        """
         mc_keep = int(self.get_param("microcompact_keep_recent", state, 5))
-        # cascade 에서 임계 override 가능
-        mc_threshold_override = state.metadata.get("_cascade_mc_threshold_override")
-        mc_threshold = (
-            mc_threshold_override / 100.0 if mc_threshold_override is not None
-            else self.get_param("microcompact_threshold", state, 75) / 100.0
-        )
+        if threshold_override is not None:
+            mc_threshold = float(threshold_override)
+        else:
+            mc_threshold = self.get_param("microcompact_threshold", state, 75) / 100.0
         if budget_used <= mc_threshold:
             return
         tool_refs: list[tuple[int, int, str]] = []
@@ -476,13 +479,16 @@ class ContextStage(Stage):
 
     def _try_context_collapse(
         self, state: PipelineState, budget_used: float, results: dict,
+        threshold_override: float | None = None,
     ) -> None:
-        """L4 — 오래된 메시지를 overlay 로 교체하고 원본은 pd_stores['history'] 에 보존."""
-        cc_threshold_override = state.metadata.get("_cascade_cc_threshold_override")
-        collapse_threshold = (
-            cc_threshold_override / 100.0 if cc_threshold_override is not None
-            else self.get_param("context_collapse_threshold", state, 90) / 100.0
-        )
+        """L4 — 오래된 메시지를 overlay 로 교체하고 원본은 pd_stores['history'] 에 보존.
+
+        threshold_override: cascade 에서 전달하는 임계(0~1). None 이면 stage_param 의 기본값 사용.
+        """
+        if threshold_override is not None:
+            collapse_threshold = float(threshold_override)
+        else:
+            collapse_threshold = self.get_param("context_collapse_threshold", state, 90) / 100.0
         keep_tail = int(self.get_param("context_collapse_keep_tail", state, 3))
         if budget_used <= collapse_threshold or len(state.messages) <= keep_tail + 1:
             return
@@ -533,13 +539,16 @@ class ContextStage(Stage):
 
     async def _try_autocompact(
         self, state: PipelineState, budget_used: float, results: dict,
+        threshold_override: float | None = None,
     ) -> None:
-        """L5 — child LLM 9-section summary 로 교체. 원본은 pd_stores['history'] 보존. 회로 차단기."""
-        ac_threshold_override = state.metadata.get("_cascade_ac_threshold_override")
-        auto_threshold = (
-            ac_threshold_override / 100.0 if ac_threshold_override is not None
-            else self.get_param("autocompact_threshold", state, 87) / 100.0
-        )
+        """L5 — child LLM 9-section summary 로 교체. 원본은 pd_stores['history'] 보존. 회로 차단기.
+
+        threshold_override: cascade 에서 전달하는 임계(0~1). None 이면 stage_param 의 기본값 사용.
+        """
+        if threshold_override is not None:
+            auto_threshold = float(threshold_override)
+        else:
+            auto_threshold = self.get_param("autocompact_threshold", state, 87) / 100.0
         keep_tail = int(self.get_param("autocompact_keep_tail", state, 3))
         failures = int(state.metadata.get("autocompact_failures", 0))
         if failures >= 3:
@@ -712,7 +721,12 @@ class ContextStage(Stage):
         return "\n\n".join(parts)
 
     def list_strategies(self) -> list[StrategyInfo]:
+        # v0.11.20 — dispatcher 와 완전 동기. stage_config.options 와 이 목록은 단일 진실 원본이어야 함.
         return [
-            StrategyInfo("token_budget", "RAG 검색 + 토큰 예산 압축", is_default=True),
+            StrategyInfo("token_budget", "RAG 검색 + 토큰 예산 압축 (파괴적 first+last3)", is_default=True),
             StrategyInfo("sliding_window", "슬라이딩 윈도우 (최근 N개 메시지)"),
+            StrategyInfo("microcompact", "L3 Microcompact — 오래된 tool_result 를 placeholder 로 교체 (Claude Code L3)"),
+            StrategyInfo("context_collapse_overlay", "L4 Context Collapse — 중간 메시지 overlay, 원본은 pd_stores 보존 (Claude Code L4)"),
+            StrategyInfo("autocompact_llm", "L5 Autocompact — child LLM 9-section summary (Claude Code L5)"),
+            StrategyInfo("cascade", "Cascade — 압력별 L3→L4→L5 자동 선택 (Claude Code Cascade)"),
         ]

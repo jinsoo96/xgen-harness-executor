@@ -153,40 +153,56 @@ class SystemPromptStage(Stage):
         logger.info("[System Prompt] %d chars, sections=%s", len(assembled), result["sections"])
         return result
 
+    # 기본 도메인 토큰 — 일반 명사만. 회사/프로젝트 고유명사는 포함하지 않는다.
+    # 이식 측이 도메인 특화 토큰을 사용하려면 stage_params 로 override:
+    #   citation_auto_doc_tokens: ["규정", "지침", ...]
+    #   citation_auto_prod_tokens: ["stock", ...]
+    _DEFAULT_DOC_TOKENS: tuple[str, ...] = (
+        "doc", "document", "report", "regulation", "policy", "manual",
+        "rule", "guide", "spec", "pdf", "hwp", "docx", "pptx",
+    )
+    _DEFAULT_PROD_TOKENS: tuple[str, ...] = (
+        "product", "commerce", "stock", "inventory", "catalog", "sku",
+        "price", "item", "sales", "csv", "json", "xlsx",
+    )
+
     def _detect_citation_need(self, state: PipelineState) -> bool:
-        """v0.11.17 — 도메인 자동 감지 (auto-router).
+        """v0.11.17 — 도메인 자동 감지 (auto-router, 실험적).
 
         s03 는 s06 RAG 주입 전 실행되므로 rag_context 는 보통 빔. 따라서
         **collection 이름 + stage_params.s06_context.rag_collections** 를 먼저 감지.
 
         휴리스틱 우선순위:
-          1. Collection 이름 힌트: `masahoe/krra/doc/report/policy/regulation`
-             같은 문서형 토큰 포함 → strict. `assort/product/x2bee/commerce` 같은
-             상품형 토큰 → off. (가장 robust)
-          2. RAG context 에 파일 확장자 (.pdf vs .csv) 출현 (rag_context 주입된 경우만)
+          1. Collection 이름 토큰 (중립 명사만; override 가능)
+          2. RAG context 에 파일 확장자 (.pdf vs .csv) — rag_context 주입된 경우만
           3. 내용 신호 (연도·metadata) fallback
+
+        **확장 지점**:
+          - `citation_auto_doc_tokens` / `citation_auto_prod_tokens` stage_param
+            으로 회사·언어 특화 토큰 주입 (기본값과 OR 결합).
 
         본 판정은 휴리스틱이라 완전하지 않음. 사용자가 명시 off/strict 주면 override.
         """
         import re as _re
 
-        # 1차 — collection 이름 토큰 (가장 robust, s03 에서 바로 가능)
+        # 1차 — collection 이름 토큰
         rag_collections: list[str] = self.get_param("rag_collections", state, []) or []
         if not rag_collections:
-            # fallback: state.metadata 에서 시도 (s04 에서 주입되는 경우)
             rag_collections = (state.metadata or {}).get("rag_collections", []) or []
         col_text = " ".join(str(c).lower() for c in rag_collections)
-        doc_col_tokens = ("masahoe", "krra", "doc", "report", "regulation", "policy",
-                          "pdf", "공공문서", "manual", "hwp", "rule")
-        prod_col_tokens = ("assort", "product", "x2bee", "commerce", "stock",
-                           "inventory", "catalog", "상품", "sku")
-        doc_col_match = sum(1 for t in doc_col_tokens if t in col_text)
-        prod_col_match = sum(1 for t in prod_col_tokens if t in col_text)
+
+        extra_doc = self.get_param("citation_auto_doc_tokens", state, []) or []
+        extra_prod = self.get_param("citation_auto_prod_tokens", state, []) or []
+        doc_tokens = tuple(self._DEFAULT_DOC_TOKENS) + tuple(str(t).lower() for t in extra_doc)
+        prod_tokens = tuple(self._DEFAULT_PROD_TOKENS) + tuple(str(t).lower() for t in extra_prod)
+
+        doc_col_match = sum(1 for t in doc_tokens if t in col_text)
+        prod_col_match = sum(1 for t in prod_tokens if t in col_text)
         if doc_col_match + prod_col_match > 0:
             decision = doc_col_match >= prod_col_match and doc_col_match >= 1
             logger.info(
-                "[s03] auto-detect (collection): doc=%d prod=%d [%s] → %s",
-                doc_col_match, prod_col_match, col_text,
+                "[s03] auto-detect (collection): doc=%d prod=%d → %s",
+                doc_col_match, prod_col_match,
                 "strict" if decision else "off",
             )
             return decision

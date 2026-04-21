@@ -93,7 +93,23 @@ class LangChainAdapter(LLMProvider):
         if tools:
             lc_tools = self._to_langchain_tools(tools)
             if lc_tools and hasattr(llm, "bind_tools"):
-                llm = llm.bind_tools(lc_tools)
+                # v0.11.20 — tool_choice 를 LangChain bind_tools 로 forward.
+                # LangChain 0.2+ 가 kwarg 로 tool_choice 지원 (OpenAI/Anthropic 양쪽 모두).
+                # 구버전이면 TypeError 나므로 fallback 으로 plain bind.
+                if tool_choice:
+                    try:
+                        llm = llm.bind_tools(lc_tools, tool_choice=tool_choice)
+                    except TypeError:
+                        # LangChain 이 tool_choice kwarg 미지원 → 경고 후 일반 bind
+                        import logging as _logging
+                        _logging.getLogger(__name__).warning(
+                            "[LangChainAdapter] bind_tools(tool_choice=...) unsupported — "
+                            "ignoring tool_choice=%r",
+                            tool_choice,
+                        )
+                        llm = llm.bind_tools(lc_tools)
+                else:
+                    llm = llm.bind_tools(lc_tools)
 
         # 스트리밍 실행
         total_text = ""

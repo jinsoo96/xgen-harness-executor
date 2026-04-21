@@ -255,11 +255,27 @@ class LLMStage(Stage):
                   "tools_count": len(state.tool_definitions or [])},
         ))
 
-        # v0.11.19 — tool_choice: s04 가 state.metadata["force_tool_choice"] 에 세팅
-        # 가능 값: "auto" (기본), "required" (반드시 tool 하나 호출), "none", 또는 특정 tool 이름
+        # v0.11.19/20 — tool_choice: s04 가 state.metadata["force_tool_choice"] 에 세팅.
+        # 가능 값: "auto" (기본), "required" (반드시 tool 하나 호출), "none", 또는 특정 tool 이름.
+        #
+        # v0.11.20 circuit breaker: "required" 는 루프 첫 iter 에만 강제, 2회차부터 "auto" 로 격하.
+        # 이유: OpenAI required 는 매 호출마다 tool 호출 강제이므로 text 응답 생성 불가 → 무한 루프.
+        # 사용자 의도(첫 탐색 강제)는 지키면서 후속 iter 는 LLM 판단에 맡긴다.
         _tool_choice = None
         if state.tool_definitions:
             _tool_choice = (state.metadata or {}).get("force_tool_choice")
+            if _tool_choice == "required" and getattr(state, "loop_iteration", 0) >= 1:
+                # loop_iteration 은 s05_strategy 에서 1-based 로 증가. 첫 iter = 0 or 1 환경에 무관하게
+                # 1 번째 LLM 호출 직후 (loop_iteration >= 1) 부터 auto 로 격하.
+                logger.info(
+                    "[LLM] force_tool_choice=required → auto (iter=%d, circuit breaker)",
+                    getattr(state, "loop_iteration", 0),
+                )
+                _tool_choice = "auto"
+        elif (state.metadata or {}).get("force_tool_choice"):
+            logger.warning(
+                "[LLM] force_tool_choice set but no tool_definitions — ignored"
+            )
         async for event in provider.chat(
             messages=state.messages,
             system=state.system_prompt or None,

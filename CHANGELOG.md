@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.20] — 2026-04-22
+
+### 🎯 벤치 사이클 #19 — 코드 감사 후속 정리 (확장성·하드코딩·연동성)
+
+Iter#25 감사 (B등급) 에서 지적된 중대 3 + 중간 5 항목 대응. 기능 변경 없이 품질·확장성·안전성 강화.
+
+**🔴 중대 수정**:
+- `stages/s03_prompt.py` **고유명사 하드코딩 제거**. 기존 collection 토큰 (`masahoe`, `krra`, `assort`, `x2bee`, `상품` 등 프로젝트 고유명사) 를 중립 명사 (`doc`/`report`/`regulation`/`product`/`stock` 등) 로 교체. **확장 지점** `citation_auto_doc_tokens` / `citation_auto_prod_tokens` 를 stage_param 으로 추가해 이식측이 도메인 특화 토큰 주입 가능.
+- `stages/s06_context.py` **`_cascade_*_threshold_override` state.metadata 임시키 leak 방지**. `_try_microcompact/_try_context_collapse/_try_autocompact` 헬퍼 시그니처에 `threshold_override: float | None = None` 인자 추가. cascade 는 인자로 직접 전달. 예외 발생 시 잔존 키 누출 불가.
+- `stages/s03_prompt.py` — auto-router 가 **실험적** 표시 명시 (stage_config description).
+
+**🟡 중간 수정**:
+- `stages/s07_llm.py` **force_tool_use circuit breaker 추가**: `state.loop_iteration >= 1` (2회차+) 부터 `tool_choice=auto` 로 격하. Iter#22 에서 발견한 `required` 무한 루프 방지. `tool_definitions` 없는데 `force_tool_choice` 설정되면 경고 로그.
+- `providers/anthropic.py` **`tool_choice="none"` 처리**: Anthropic 공식 미지원이므로 `tools` 자체를 드롭해 OpenAI 의미론 맞춤 (기존 `{"type":"none"}` 은 400 에러).
+- `providers/langchain_adapter.py` **tool_choice forward 추가**. `bind_tools(tool_choice=...)` 로 전달. LangChain < 0.2 호환 fallback (TypeError 시 warning + plain bind).
+- `stages/s06_context.py::list_strategies()` **dispatcher 와 완전 동기**. `microcompact`/`context_collapse_overlay`/`autocompact_llm`/`cascade` 를 list 에 추가 (이전엔 token_budget/sliding_window 만).
+- `stages/s06_context.py` **context_window AttributeError 방어**: `getattr(config, 'context_window', 200_000)` 로 HarnessConfig 이전 버전 호환.
+- `stages/s06_context.py` **`chars_per_token` override** 노출. 영어/한국어 토큰 비율 조정 가능.
+- `core/stage_config.py` — 신규 필드 3 종 (`citation_auto_doc_tokens` / `citation_auto_prod_tokens` / `chars_per_token`) 등록.
+
+**무침범**: 모든 변경이 **기존 사용자 동작 보존**. 새 override 필드는 default 가 `[]` 또는 기존 값 → 기존 프로젝트 영향 0. 이식/프론트 무수정.
+
 ## [0.11.19] — 2026-04-22
 
 ### 🎯 벤치 사이클 #18 — tool_choice API (L3 Microcompact 실전 완결)

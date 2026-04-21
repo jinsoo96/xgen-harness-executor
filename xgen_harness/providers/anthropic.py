@@ -72,14 +72,17 @@ class AnthropicProvider(LLMProvider):
 
         if tools:
             body["tools"] = tools
-            # v0.11.19 — Anthropic tool_choice: {"type": "auto"|"any"|"tool", "name": "..."}
+            # v0.11.19 — Anthropic tool_choice: {"type": "auto"|"any"|"tool", "name": "..."}.
+            # v0.11.20 — "none" 은 Anthropic 공식 미지원 → tools 자체를 제거해 LLM 이 tool 을 못 쓰게 함.
             if tool_choice:
                 if tool_choice == "required":
                     body["tool_choice"] = {"type": "any"}
                 elif tool_choice == "auto":
                     body["tool_choice"] = {"type": "auto"}
                 elif tool_choice == "none":
-                    body["tool_choice"] = {"type": "none"}
+                    # Anthropic 은 "none" 옵션이 없어 tools 자체를 드롭 (OpenAI semantics 에 맞춤)
+                    body.pop("tools", None)
+                    body.pop("tool_choice", None)
                 else:
                     body["tool_choice"] = {"type": "tool", "name": tool_choice}
 
