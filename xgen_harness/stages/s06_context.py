@@ -311,11 +311,13 @@ class ContextStage(Stage):
         estimated_tokens = total_chars // CHARS_PER_TOKEN
         budget_used = estimated_tokens / available_tokens if available_tokens > 0 else 1.0
 
-        # 압축 전략 디스패치 — 3 가지
+        # 압축 전략 디스패치
         #   token_budget (기본):  first + last_3 유지. 파괴적 (원본 소실).
         #   sliding_window:        최근 N개 유지. 파괴적.
-        #   context_collapse_overlay (L4, Claude Code 패턴): 비파괴 — 중간 메시지를
-        #       pd_stores["history"] 에 보관 + overlay 요약 마커로 교체. fetch_pd 로 복원.
+        #   microcompact (L3):     오래된 tool_result 만 placeholder 교체. 비파괴 (pd_stores 복원).
+        #   context_collapse_overlay (L4): 중간 메시지 overlay 교체. 비파괴.
+        #   autocompact_llm (L5):  child LLM 9-section 요약으로 교체. 비파괴.
+        #   cascade (v0.11.15+):   임계별 L3 → L4 → L5 순 자동 전환. 현재 turn 에 1개만 발동.
         strategy_name = self.get_param("strategy", state, "token_budget")
         compaction_threshold = self.get_param("compaction_threshold", state, 80) / 100.0
 
@@ -327,160 +329,55 @@ class ContextStage(Stage):
                 results["compacted"] = True
                 logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
         elif strategy_name == "microcompact":
-            # Claude Code L3 — 최근 N 개 tool_result 만 유지하고 나머지는 placeholder 로 교체.
-            # 원본은 이미 v0.11.9 의 L1 (Tool Result Budget) 이 pd_stores["tool_result"] 에
-            # 보존하므로 본 L3 는 "교체 정책" 만 수행 — LLM 에 흘리는 토큰 축소.
-            # messages 중 tool_result content block 을 탐색하여 최근 keep 개만 유지.
-            mc_keep = int(self.get_param("microcompact_keep_recent", state, 5))
-            mc_threshold = self.get_param("microcompact_threshold", state, 75) / 100.0
-            if budget_used > mc_threshold:
-                # tool_result 블록을 최근 순으로 수집
-                tool_refs: list[tuple[int, int, str]] = []  # (msg_idx, block_idx, tool_use_id)
-                for mi, msg in enumerate(state.messages):
-                    if not isinstance(msg, dict): continue
-                    content = msg.get("content", "")
-                    if not isinstance(content, list): continue
-                    for bi, block in enumerate(content):
-                        if isinstance(block, dict) and block.get("type") == "tool_result":
-                            tid = block.get("tool_use_id", "") or f"unknown_{mi}_{bi}"
-                            tool_refs.append((mi, bi, tid))
-                # 최근 mc_keep 개 제외 나머지 교체
-                if len(tool_refs) > mc_keep:
-                    to_replace = tool_refs[:-mc_keep]  # 오래된 것들
-                    replaced = 0
-                    for mi, bi, tid in to_replace:
-                        msg = state.messages[mi]
-                        content = msg.get("content") or []
-                        if isinstance(content, list) and 0 <= bi < len(content):
-                            original = content[bi]
-                            if isinstance(original, dict) and original.get("type") == "tool_result":
-                                # 원본이 pd_stores 에 이미 있으면 힌트만, 없으면 원본 텍스트 보존
-                                has_pd = state.pd_fetch("tool_result", tid) is not None
-                                placeholder_text = (
-                                    f"[Microcompact — 오래된 tool_result. "
-                                    f"fetch_pd(kind='tool_result', id='{tid}') 로 조회]"
-                                    if has_pd else
-                                    f"[Microcompact — tool_result omitted (id={tid})]"
-                                )
-                                content[bi] = {
-                                    "type": "tool_result",
-                                    "tool_use_id": tid,
-                                    "content": placeholder_text,
-                                }
-                                replaced += 1
-                    if replaced:
-                        results["compacted"] = True
-                        results["microcompacted"] = replaced
-                        logger.info(
-                            "[Context] L3 Microcompact: %d tool_results 교체 (최근 %d 유지)",
-                            replaced, mc_keep,
-                        )
+            self._try_microcompact(state, budget_used, results)
         elif strategy_name == "autocompact_llm":
-            # Claude Code L5 — 토큰 압력이 임계 (기본 87%) 초과 시 child agent 가
-            # 9-section 구조화 summary 를 생성해 messages 를 [first, summary, last_N] 로 축소.
-            # 원본은 pd_stores["history"] 에 보존. 연속 실패 3 회 시 회로 차단기 발동.
-            auto_threshold = self.get_param("autocompact_threshold", state, 87) / 100.0
-            keep_tail = int(self.get_param("autocompact_keep_tail", state, 3))
-            failures = int(state.metadata.get("autocompact_failures", 0))
-            if failures >= 3:
-                logger.warning("[Context] L5 Autocompact circuit-breaker tripped (failures=%d), skip", failures)
-            elif budget_used > auto_threshold and len(state.messages) > keep_tail + 1:
-                head = state.messages[0]
-                tail = state.messages[-keep_tail:]
-                old = state.messages[1:-keep_tail]
-                iter_no = state.loop_iteration
-                preserved_ids: list[str] = []
-                # 원본 보존
-                import json as _json
-                for i, msg in enumerate(old):
-                    rid = f"auto_{iter_no}_{i}"
-                    role = msg.get("role", "?") if isinstance(msg, dict) else "?"
-                    try:
-                        full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
-                    except Exception:
-                        full_repr = str(msg)
-                    state.pd_store(
-                        kind="history", resource_id=rid,
-                        preview=f"({role}) ...", full=full_repr,
-                        meta={"role": role, "loop_iteration": iter_no,
-                              "original_index": i + 1, "compaction": "autocompact_llm"},
-                    )
-                    preserved_ids.append(rid)
-                # Child LLM 호출로 9-section summary 생성
-                summary_text = await self._autocompact_summarize(state, old)
-                if summary_text:
-                    summary_msg = {
-                        "role": "user",
-                        "content": (
-                            "[Autocompact Summary — child agent 9-section:]\n" + summary_text +
-                            f"\n\n[원본 {len(preserved_ids)}개는 pd_stores['history'] 에 보존. "
-                            f"필요시 fetch_pd(kind='history', id='auto_<iter>_<idx>')]"
-                        ),
-                    }
-                    state.messages = [head, summary_msg] + tail
-                    results["compacted"] = True
-                    results["autocompacted"] = len(preserved_ids)
-                    logger.info(
-                        "[Context] L5 Autocompact: %d messages → summary, kept first + last %d",
-                        len(preserved_ids), keep_tail,
-                    )
-                else:
-                    state.metadata["autocompact_failures"] = failures + 1
-                    logger.warning("[Context] L5 Autocompact 실패 %d/3", failures + 1)
+            await self._try_autocompact(state, budget_used, results)
         elif strategy_name == "context_collapse_overlay":
-            # Claude Code L4 — 토큰 압력이 임계 이상이면 오래된 메시지를 pd_stores["history"]
-            # 에 보존하고 messages 는 [first, overlay_marker, *last_N] 로 축소.
-            # 에이전트는 fetch_pd(kind='history', id='msg_<iter>_<idx>') 로 복원 가능.
-            collapse_threshold = self.get_param("context_collapse_threshold", state, 90) / 100.0
-            keep_tail = int(self.get_param("context_collapse_keep_tail", state, 3))
-            if budget_used > collapse_threshold and len(state.messages) > keep_tail + 1:
-                head = state.messages[0]
-                tail = state.messages[-keep_tail:]
-                old = state.messages[1:-keep_tail]
-                # 원본 보존
-                iter_no = state.loop_iteration
-                preserved_ids: list[str] = []
-                for i, msg in enumerate(old):
-                    rid = f"msg_{iter_no}_{i}"
-                    role = msg.get("role", "?") if isinstance(msg, dict) else "?"
-                    preview_line = f"({role}) " + (
-                        str(msg.get("content", ""))[:120] if isinstance(msg, dict) else str(msg)[:120]
-                    )
-                    # full 은 dict 원본을 JSON 직렬화해 보존 (복원 시 읽기 전용).
-                    import json as _json
-                    try:
-                        full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
-                    except Exception:
-                        full_repr = str(msg)
-                    state.pd_store(
-                        kind="history",
-                        resource_id=rid,
-                        preview=preview_line,
-                        full=full_repr,
-                        meta={"role": role, "loop_iteration": iter_no, "original_index": i + 1},
-                    )
-                    preserved_ids.append(rid)
-                # overlay 마커 — 에이전트에 "N개 메시지 접힘" 알림 + 복원 경로 힌트
-                overlay = {
-                    "role": "user",
-                    "content": (
-                        f"[Context Collapse Overlay — {len(old)}개 중간 메시지가 접힘. "
-                        f"원본은 pd_stores['history'] 에 보존. "
-                        f"필요하면 fetch_pd(kind='history', id='<위 id>') 호출. "
-                        f"첫/마지막 {keep_tail} 개는 보존. "
-                        f"접힌 id 목록: {preserved_ids[:10]}" +
-                        (f"... (+{len(preserved_ids) - 10})" if len(preserved_ids) > 10 else "") +
-                        f"]"
-                    ),
-                }
-                state.messages = [head, overlay] + tail
-                results["compacted"] = True
-                results["context_collapsed"] = len(preserved_ids)
-                logger.info(
-                    "[Context] L4 Collapse: %d messages preserved in pd_stores['history'], "
-                    "kept first + overlay + last %d",
-                    len(preserved_ids), keep_tail,
-                )
+            self._try_context_collapse(state, budget_used, results)
+        elif strategy_name == "cascade":
+            # Claude Code Cascade — 압력에 따라 L3 → L4 → L5 자동 선택. 한 턴에 하나만 발동.
+            #   < l3_th:  pass (L1 preview 는 s08 이 항상 수행)
+            #   >= l3_th: L3 microcompact (경량)
+            #   >= l4_th: L4 context_collapse_overlay (중량)
+            #   >= l5_th: L5 autocompact_llm (중량, 실패 시 회로 차단)
+            # 기본 임계는 Claude Code 권장값에서 차용.
+            l3_th = self.get_param("cascade_l3_threshold", state, 70) / 100.0
+            l4_th = self.get_param("cascade_l4_threshold", state, 85) / 100.0
+            l5_th = self.get_param("cascade_l5_threshold", state, 95) / 100.0
+            # 가장 무거운 전략부터 역순 체크 → 한 턴 한 전략 규칙 유지.
+            # 단 L3 는 tool_result 가 있을 때만 효과적이므로 L4/L5 와 별도 차원.
+            #   먼저 L3 로 tool_result 축소 시도 (있다면 즉시 효과).
+            #   이후 메시지 자체가 여전히 과대하면 L4 또는 L5 로 추가 축소.
+            cascade_applied: list[str] = []
+            if budget_used >= l3_th:
+                # L3 는 tool_result 있을 때만 동작 — 실패해도 손실 없음. 먼저 시도.
+                pre_mc = results.get("microcompacted", 0)
+                # microcompact 내부 threshold 는 cascade 임계로 override 하기 위해 일시 state param 주입
+                state.metadata["_cascade_mc_threshold_override"] = l3_th * 100
+                self._try_microcompact(state, budget_used, results)
+                state.metadata.pop("_cascade_mc_threshold_override", None)
+                if results.get("microcompacted", 0) > pre_mc:
+                    cascade_applied.append("L3")
+            if budget_used >= l5_th:
+                # 최후 수단 L5
+                pre_ac = results.get("autocompacted", 0)
+                state.metadata["_cascade_ac_threshold_override"] = l5_th * 100
+                await self._try_autocompact(state, budget_used, results)
+                state.metadata.pop("_cascade_ac_threshold_override", None)
+                if results.get("autocompacted", 0) > pre_ac:
+                    cascade_applied.append("L5")
+            elif budget_used >= l4_th:
+                # 중간 수준 L4 (L5 보다 싼 비파괴 overlay)
+                pre_cc = results.get("context_collapsed", 0)
+                state.metadata["_cascade_cc_threshold_override"] = l4_th * 100
+                self._try_context_collapse(state, budget_used, results)
+                state.metadata.pop("_cascade_cc_threshold_override", None)
+                if results.get("context_collapsed", 0) > pre_cc:
+                    cascade_applied.append("L4")
+            if cascade_applied:
+                results["cascade_applied"] = cascade_applied
+                logger.info("[Context] Cascade dispatched: %s (budget=%.0f%%)",
+                            "+".join(cascade_applied), budget_used * 100)
         elif budget_used > compaction_threshold and len(state.messages) > 4:
             # token_budget(기본, 파괴적): first + last 3
             state.messages = [state.messages[0]] + state.messages[-3:]
@@ -493,6 +390,177 @@ class ContextStage(Stage):
         logger.info("[Context] tokens=%d, budget=%.0f%%, rag=%d cols",
                     estimated_tokens, budget_used * 100, len(rag_collections))
         return results
+
+    # ── L3 / L4 / L5 helper methods (cascade 재사용용) ──
+
+    def _try_microcompact(
+        self, state: PipelineState, budget_used: float, results: dict,
+    ) -> None:
+        """L3 — 오래된 tool_result 블록을 placeholder 로 교체. 원본은 pd_stores['tool_result'] 보존."""
+        mc_keep = int(self.get_param("microcompact_keep_recent", state, 5))
+        # cascade 에서 임계 override 가능
+        mc_threshold_override = state.metadata.get("_cascade_mc_threshold_override")
+        mc_threshold = (
+            mc_threshold_override / 100.0 if mc_threshold_override is not None
+            else self.get_param("microcompact_threshold", state, 75) / 100.0
+        )
+        if budget_used <= mc_threshold:
+            return
+        tool_refs: list[tuple[int, int, str]] = []
+        for mi, msg in enumerate(state.messages):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            if not isinstance(content, list):
+                continue
+            for bi, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tid = block.get("tool_use_id", "") or f"unknown_{mi}_{bi}"
+                    tool_refs.append((mi, bi, tid))
+        if len(tool_refs) <= mc_keep:
+            return
+        to_replace = tool_refs[:-mc_keep]
+        replaced = 0
+        for mi, bi, tid in to_replace:
+            msg = state.messages[mi]
+            content = msg.get("content") or []
+            if isinstance(content, list) and 0 <= bi < len(content):
+                original = content[bi]
+                if isinstance(original, dict) and original.get("type") == "tool_result":
+                    has_pd = state.pd_fetch("tool_result", tid) is not None
+                    placeholder_text = (
+                        f"[Microcompact — 오래된 tool_result. "
+                        f"fetch_pd(kind='tool_result', id='{tid}') 로 조회]"
+                        if has_pd else
+                        f"[Microcompact — tool_result omitted (id={tid})]"
+                    )
+                    content[bi] = {
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": placeholder_text,
+                    }
+                    replaced += 1
+        if replaced:
+            results["compacted"] = True
+            results["microcompacted"] = replaced
+            logger.info(
+                "[Context] L3 Microcompact: %d tool_results 교체 (최근 %d 유지)",
+                replaced, mc_keep,
+            )
+
+    def _try_context_collapse(
+        self, state: PipelineState, budget_used: float, results: dict,
+    ) -> None:
+        """L4 — 오래된 메시지를 overlay 로 교체하고 원본은 pd_stores['history'] 에 보존."""
+        cc_threshold_override = state.metadata.get("_cascade_cc_threshold_override")
+        collapse_threshold = (
+            cc_threshold_override / 100.0 if cc_threshold_override is not None
+            else self.get_param("context_collapse_threshold", state, 90) / 100.0
+        )
+        keep_tail = int(self.get_param("context_collapse_keep_tail", state, 3))
+        if budget_used <= collapse_threshold or len(state.messages) <= keep_tail + 1:
+            return
+        head = state.messages[0]
+        tail = state.messages[-keep_tail:]
+        old = state.messages[1:-keep_tail]
+        iter_no = state.loop_iteration
+        preserved_ids: list[str] = []
+        import json as _json
+        for i, msg in enumerate(old):
+            rid = f"msg_{iter_no}_{i}"
+            role = msg.get("role", "?") if isinstance(msg, dict) else "?"
+            preview_line = f"({role}) " + (
+                str(msg.get("content", ""))[:120] if isinstance(msg, dict) else str(msg)[:120]
+            )
+            try:
+                full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
+            except Exception:
+                full_repr = str(msg)
+            state.pd_store(
+                kind="history",
+                resource_id=rid,
+                preview=preview_line,
+                full=full_repr,
+                meta={"role": role, "loop_iteration": iter_no, "original_index": i + 1},
+            )
+            preserved_ids.append(rid)
+        overlay = {
+            "role": "user",
+            "content": (
+                f"[Context Collapse Overlay — {len(old)}개 중간 메시지가 접힘. "
+                f"원본은 pd_stores['history'] 에 보존. "
+                f"필요하면 fetch_pd(kind='history', id='<위 id>') 호출. "
+                f"첫/마지막 {keep_tail} 개는 보존. "
+                f"접힌 id 목록: {preserved_ids[:10]}" +
+                (f"... (+{len(preserved_ids) - 10})" if len(preserved_ids) > 10 else "") +
+                f"]"
+            ),
+        }
+        state.messages = [head, overlay] + tail
+        results["compacted"] = True
+        results["context_collapsed"] = len(preserved_ids)
+        logger.info(
+            "[Context] L4 Collapse: %d messages preserved in pd_stores['history'], "
+            "kept first + overlay + last %d",
+            len(preserved_ids), keep_tail,
+        )
+
+    async def _try_autocompact(
+        self, state: PipelineState, budget_used: float, results: dict,
+    ) -> None:
+        """L5 — child LLM 9-section summary 로 교체. 원본은 pd_stores['history'] 보존. 회로 차단기."""
+        ac_threshold_override = state.metadata.get("_cascade_ac_threshold_override")
+        auto_threshold = (
+            ac_threshold_override / 100.0 if ac_threshold_override is not None
+            else self.get_param("autocompact_threshold", state, 87) / 100.0
+        )
+        keep_tail = int(self.get_param("autocompact_keep_tail", state, 3))
+        failures = int(state.metadata.get("autocompact_failures", 0))
+        if failures >= 3:
+            logger.warning("[Context] L5 Autocompact circuit-breaker tripped (failures=%d), skip", failures)
+            return
+        if budget_used <= auto_threshold or len(state.messages) <= keep_tail + 1:
+            return
+        head = state.messages[0]
+        tail = state.messages[-keep_tail:]
+        old = state.messages[1:-keep_tail]
+        iter_no = state.loop_iteration
+        preserved_ids: list[str] = []
+        import json as _json
+        for i, msg in enumerate(old):
+            rid = f"auto_{iter_no}_{i}"
+            role = msg.get("role", "?") if isinstance(msg, dict) else "?"
+            try:
+                full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
+            except Exception:
+                full_repr = str(msg)
+            state.pd_store(
+                kind="history", resource_id=rid,
+                preview=f"({role}) ...", full=full_repr,
+                meta={"role": role, "loop_iteration": iter_no,
+                      "original_index": i + 1, "compaction": "autocompact_llm"},
+            )
+            preserved_ids.append(rid)
+        summary_text = await self._autocompact_summarize(state, old)
+        if summary_text:
+            summary_msg = {
+                "role": "user",
+                "content": (
+                    "[Autocompact Summary — child agent 9-section:]\n" + summary_text +
+                    f"\n\n[원본 {len(preserved_ids)}개는 pd_stores['history'] 에 보존. "
+                    f"필요시 fetch_pd(kind='history', id='auto_<iter>_<idx>')]"
+                ),
+            }
+            state.messages = [head, summary_msg] + tail
+            results["compacted"] = True
+            results["autocompacted"] = len(preserved_ids)
+            logger.info(
+                "[Context] L5 Autocompact: %d messages → summary, kept first + last %d",
+                len(preserved_ids), keep_tail,
+            )
+        else:
+            state.metadata["autocompact_failures"] = failures + 1
+            logger.warning("[Context] L5 Autocompact 실패 %d/3", failures + 1)
 
     async def _autocompact_summarize(self, state: PipelineState, old_messages: list[dict]) -> str:
         """Claude Code L5 child agent 9-section summary.

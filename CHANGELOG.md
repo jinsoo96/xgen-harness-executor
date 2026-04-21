@@ -5,6 +5,33 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.15] — 2026-04-21
+
+### 🎯 벤치 사이클 #14 — Strategy Cascade (Claude Code Cascade 이식)
+
+단일 전략 택1 방식을 넘어, 토큰 압력에 따라 **L3 → L4 → L5** 를 자동 선택하는 `cascade` 전략 추가.
+
+**메커니즘**:
+- `budget_used ≥ cascade_l3_threshold` (기본 70%) → **L3 microcompact** 선제 시도 (tool_result 교체, 경량)
+- `budget_used ≥ cascade_l4_threshold` (기본 85%) → **L4 context_collapse_overlay** 추가 발동 (비파괴 overlay)
+- `budget_used ≥ cascade_l5_threshold` (기본 95%) → **L5 autocompact_llm** 최후 수단 (child LLM 9-section)
+
+한 턴당 L3 + (L4 또는 L5) 최대 2 단계. L5 는 회로 차단기 (연속 실패 3 회 시 스킵) 유지. `results["cascade_applied"]` 에 발동 계층 리스트 기록.
+
+**변경**:
+- `stages/s06_context.py`
+  - 기존 3 전략 바디를 `_try_microcompact` / `_try_context_collapse` / `_try_autocompact` 헬퍼로 추출 (DRY)
+  - `strategy = "cascade"` 분기 추가 (L3 + L4/L5 연쇄)
+  - cascade 내부 임계 override 는 `state.metadata` 임시 키로 공용 헬퍼에 전달
+- `core/stage_config.py`
+  - `strategy` select 에 `cascade` 추가
+  - 신규 슬라이더 3종: `cascade_l3_threshold` (70) / `cascade_l4_threshold` (85) / `cascade_l5_threshold` (95)
+- `__init__.py` — `__version__` **0.11.15** (이전 0.11.1 박제 해소)
+
+**무침범**: 기존 4 전략은 공개 dispatcher 에 그대로 유지. 이식 / 프론트 무변경.
+
+---
+
 ## [0.11.14] — 2026-04-21
 
 ### 🎯 벤치 사이클 #13 — L3 Microcompact (Claude Code 5-Level 완전 이식)
