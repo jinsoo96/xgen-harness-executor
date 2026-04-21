@@ -5,6 +5,34 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.14] — 2026-04-21
+
+### 🎯 벤치 사이클 #13 — L3 Microcompact (Claude Code 5-Level 완전 이식)
+
+Claude Code 5-Level Compression Pipeline 의 **L3 Microcompact** 구현. 이로써 L1/L3/L4/L5 를 본 엔진에 모두 반영. L3 는 L1 (tool result 저장소) 과 짝을 이뤄 "교체 정책" 담당.
+
+**메커니즘**:
+- 토큰 사용률이 `microcompact_threshold` (기본 75%) 초과 시 발동.
+- messages 내 `tool_result` 블록 중 **최근 `keep_recent` 개 제외** 나머지를 placeholder 로 교체.
+- 원본은 이미 v0.11.9 의 L1 이 `pd_stores["tool_result"]` 에 보존 중이므로 L3 는 단순 교체만 수행 (비파괴).
+- placeholder 는 `fetch_pd(kind='tool_result', id=<tool_use_id>)` 호출 힌트 포함 → LLM 이 필요 시 복원.
+
+**변경**:
+- `stages/s06_context.py`: strategy 디스패치에 `microcompact` 분기 추가.
+- `core/stage_config.py`:
+  - `strategy` select 에 `microcompact` 옵션 추가 (L3 위치).
+  - `microcompact_threshold` (slider 50~95, 기본 75).
+  - `microcompact_keep_recent` (number 1~20, 기본 5).
+
+**Claude Code 5-Level 완전 이식 완료**:
+- L1 Tool Result Budget → v0.11.9 (Cycle #8) — 50KB preview + pd_stores 보존
+- L2 History Snip → token_budget 전략에 내재
+- L3 Microcompact → **v0.11.14 (Cycle #13)** — 오래된 tool_result 선별 교체
+- L4 Context Collapse → v0.11.11 (Cycle #10) — 비파괴 overlay
+- L5 Autocompact → v0.11.13 (Cycle #12) — child LLM 9-section summary
+
+**다음**: prompt cache 연동한 L3 2 경로 (cache cold/hot) 는 anthropic API 캐시 도입 시점에 후속.
+
 ## [0.11.13] — 2026-04-21
 
 ### 🎯 벤치 사이클 #12 — L5 Autocompact (Claude Code child agent summarizer)

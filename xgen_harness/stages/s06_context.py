@@ -326,6 +326,55 @@ class ContextStage(Stage):
                 state.messages = state.messages[-window_size:]
                 results["compacted"] = True
                 logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
+        elif strategy_name == "microcompact":
+            # Claude Code L3 — 최근 N 개 tool_result 만 유지하고 나머지는 placeholder 로 교체.
+            # 원본은 이미 v0.11.9 의 L1 (Tool Result Budget) 이 pd_stores["tool_result"] 에
+            # 보존하므로 본 L3 는 "교체 정책" 만 수행 — LLM 에 흘리는 토큰 축소.
+            # messages 중 tool_result content block 을 탐색하여 최근 keep 개만 유지.
+            mc_keep = int(self.get_param("microcompact_keep_recent", state, 5))
+            mc_threshold = self.get_param("microcompact_threshold", state, 75) / 100.0
+            if budget_used > mc_threshold:
+                # tool_result 블록을 최근 순으로 수집
+                tool_refs: list[tuple[int, int, str]] = []  # (msg_idx, block_idx, tool_use_id)
+                for mi, msg in enumerate(state.messages):
+                    if not isinstance(msg, dict): continue
+                    content = msg.get("content", "")
+                    if not isinstance(content, list): continue
+                    for bi, block in enumerate(content):
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            tid = block.get("tool_use_id", "") or f"unknown_{mi}_{bi}"
+                            tool_refs.append((mi, bi, tid))
+                # 최근 mc_keep 개 제외 나머지 교체
+                if len(tool_refs) > mc_keep:
+                    to_replace = tool_refs[:-mc_keep]  # 오래된 것들
+                    replaced = 0
+                    for mi, bi, tid in to_replace:
+                        msg = state.messages[mi]
+                        content = msg.get("content") or []
+                        if isinstance(content, list) and 0 <= bi < len(content):
+                            original = content[bi]
+                            if isinstance(original, dict) and original.get("type") == "tool_result":
+                                # 원본이 pd_stores 에 이미 있으면 힌트만, 없으면 원본 텍스트 보존
+                                has_pd = state.pd_fetch("tool_result", tid) is not None
+                                placeholder_text = (
+                                    f"[Microcompact — 오래된 tool_result. "
+                                    f"fetch_pd(kind='tool_result', id='{tid}') 로 조회]"
+                                    if has_pd else
+                                    f"[Microcompact — tool_result omitted (id={tid})]"
+                                )
+                                content[bi] = {
+                                    "type": "tool_result",
+                                    "tool_use_id": tid,
+                                    "content": placeholder_text,
+                                }
+                                replaced += 1
+                    if replaced:
+                        results["compacted"] = True
+                        results["microcompacted"] = replaced
+                        logger.info(
+                            "[Context] L3 Microcompact: %d tool_results 교체 (최근 %d 유지)",
+                            replaced, mc_keep,
+                        )
         elif strategy_name == "autocompact_llm":
             # Claude Code L5 — 토큰 압력이 임계 (기본 87%) 초과 시 child agent 가
             # 9-section 구조화 summary 를 생성해 messages 를 [first, summary, last_N] 로 축소.
