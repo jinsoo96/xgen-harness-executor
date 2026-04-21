@@ -5,6 +5,33 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.13] — 2026-04-21
+
+### 🎯 벤치 사이클 #12 — L5 Autocompact (Claude Code child agent summarizer)
+
+5-Level Compression Pipeline 의 **마지막 레벨 L5 Autocompact** 를 s06 에 구현. 87% 토큰 임계 초과 시 child LLM 이 대화 전체를 읽고 **9-section 구조화 summary** 생성, messages 를 `[first, summary, last_N]` 로 축소. 원본은 `pd_stores["history"]` 에 보존 (비파괴). 연속 실패 3 회 시 회로 차단.
+
+**변경**:
+- `stages/s06_context.py`:
+  - strategy 디스패치에 `autocompact_llm` 분기 추가.
+  - `_autocompact_summarize()` 헬퍼: 메시지 직렬화 → child LLM 호출 → 9-section 결과.
+    - Sections: Primary Request / Key Decisions / Tools Used / Errors-Fixes / Files Touched / Data Mentioned / User Preferences / Open Issues / Next Steps.
+    - state.provider 없으면 규칙 기반 fallback.
+    - `state.metadata["autocompact_failures"]` 카운터로 회로 차단 (Claude Code 와 동일 패턴).
+- `core/stage_config.py`:
+  - `strategy` select 에 `autocompact_llm` 옵션 추가.
+  - `autocompact_threshold` (slider 50~95, 기본 87).
+  - `autocompact_keep_tail` (number 1~10, 기본 3).
+
+**Claude Code 5-Level Compression Pipeline 완전 이식 완료**:
+- L1 Tool Result Budget → v0.11.9 (Cycle #8)
+- L2 History Snip → 내재 (compaction 일부)
+- L3 Microcompact → 향후 (cache-aware 2 경로)
+- L4 Context Collapse → v0.11.11 (Cycle #10)
+- **L5 Autocompact → v0.11.13 (Cycle #12)**
+
+본 세션 11 사이클로 하네스는 Claude Code 의 압축 파이프라인 핵심 4/5 를 갖춤. L3 는 prompt cache 연동 필요로 후속.
+
 ## [0.11.12] — 2026-04-21
 
 ### 🎯 벤치 사이클 #11 — RR2 Intent Routing (자동 metadata_filter)

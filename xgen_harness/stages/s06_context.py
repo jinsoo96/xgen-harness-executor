@@ -326,6 +326,58 @@ class ContextStage(Stage):
                 state.messages = state.messages[-window_size:]
                 results["compacted"] = True
                 logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
+        elif strategy_name == "autocompact_llm":
+            # Claude Code L5 — 토큰 압력이 임계 (기본 87%) 초과 시 child agent 가
+            # 9-section 구조화 summary 를 생성해 messages 를 [first, summary, last_N] 로 축소.
+            # 원본은 pd_stores["history"] 에 보존. 연속 실패 3 회 시 회로 차단기 발동.
+            auto_threshold = self.get_param("autocompact_threshold", state, 87) / 100.0
+            keep_tail = int(self.get_param("autocompact_keep_tail", state, 3))
+            failures = int(state.metadata.get("autocompact_failures", 0))
+            if failures >= 3:
+                logger.warning("[Context] L5 Autocompact circuit-breaker tripped (failures=%d), skip", failures)
+            elif budget_used > auto_threshold and len(state.messages) > keep_tail + 1:
+                head = state.messages[0]
+                tail = state.messages[-keep_tail:]
+                old = state.messages[1:-keep_tail]
+                iter_no = state.loop_iteration
+                preserved_ids: list[str] = []
+                # 원본 보존
+                import json as _json
+                for i, msg in enumerate(old):
+                    rid = f"auto_{iter_no}_{i}"
+                    role = msg.get("role", "?") if isinstance(msg, dict) else "?"
+                    try:
+                        full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
+                    except Exception:
+                        full_repr = str(msg)
+                    state.pd_store(
+                        kind="history", resource_id=rid,
+                        preview=f"({role}) ...", full=full_repr,
+                        meta={"role": role, "loop_iteration": iter_no,
+                              "original_index": i + 1, "compaction": "autocompact_llm"},
+                    )
+                    preserved_ids.append(rid)
+                # Child LLM 호출로 9-section summary 생성
+                summary_text = await self._autocompact_summarize(state, old)
+                if summary_text:
+                    summary_msg = {
+                        "role": "user",
+                        "content": (
+                            "[Autocompact Summary — child agent 9-section:]\n" + summary_text +
+                            f"\n\n[원본 {len(preserved_ids)}개는 pd_stores['history'] 에 보존. "
+                            f"필요시 fetch_pd(kind='history', id='auto_<iter>_<idx>')]"
+                        ),
+                    }
+                    state.messages = [head, summary_msg] + tail
+                    results["compacted"] = True
+                    results["autocompacted"] = len(preserved_ids)
+                    logger.info(
+                        "[Context] L5 Autocompact: %d messages → summary, kept first + last %d",
+                        len(preserved_ids), keep_tail,
+                    )
+                else:
+                    state.metadata["autocompact_failures"] = failures + 1
+                    logger.warning("[Context] L5 Autocompact 실패 %d/3", failures + 1)
         elif strategy_name == "context_collapse_overlay":
             # Claude Code L4 — 토큰 압력이 임계 이상이면 오래된 메시지를 pd_stores["history"]
             # 에 보존하고 messages 는 [first, overlay_marker, *last_N] 로 축소.
@@ -392,6 +444,76 @@ class ContextStage(Stage):
         logger.info("[Context] tokens=%d, budget=%.0f%%, rag=%d cols",
                     estimated_tokens, budget_used * 100, len(rag_collections))
         return results
+
+    async def _autocompact_summarize(self, state: PipelineState, old_messages: list[dict]) -> str:
+        """Claude Code L5 child agent 9-section summary.
+
+        state.provider 가 있으면 그걸로 LLM 호출. 없으면 규칙 기반 fallback summary.
+        9 sections: Primary Request, Key Decisions, Tools Used, Errors/Fixes,
+        Files Touched, Data Mentioned, User Preferences, Open Issues, Next Steps.
+        """
+        # 메시지들을 LLM 에 던질 텍스트로 직렬화 (경량)
+        lines = []
+        for i, msg in enumerate(old_messages):
+            if not isinstance(msg, dict): continue
+            role = msg.get("role", "?")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # content blocks: text/tool_use/tool_result — 텍스트만 추출
+                parts = []
+                for b in content:
+                    if isinstance(b, dict):
+                        if b.get("type") == "text":
+                            parts.append(str(b.get("text", "")))
+                        elif b.get("type") == "tool_use":
+                            parts.append(f"[tool_use: {b.get('name','?')}]")
+                        elif b.get("type") == "tool_result":
+                            parts.append(f"[tool_result: {str(b.get('content',''))[:200]}]")
+                content_str = " ".join(parts)
+            else:
+                content_str = str(content)
+            lines.append(f"[{i+1}] {role}: {content_str[:800]}")
+        conversation = "\n".join(lines)
+
+        prompt = (
+            "아래 대화 이력을 9 섹션 구조로 요약하라. 한국어 응답, 각 섹션 1~3 줄.\n\n"
+            "## Primary Request\n## Key Decisions\n## Tools Used\n## Errors/Fixes\n"
+            "## Files Touched\n## Data Mentioned\n## User Preferences\n## Open Issues\n## Next Steps\n\n"
+            "--- 대화 시작 ---\n"
+            f"{conversation}\n"
+            "--- 대화 끝 ---"
+        )
+
+        provider = getattr(state, "provider", None)
+        if provider is None:
+            # Fallback: 규칙 기반 초간단 summary
+            roles = [m.get("role","?") for m in old_messages if isinstance(m, dict)]
+            return (
+                "## Primary Request\n(child LLM 미사용 — rule-based fallback)\n"
+                f"## Messages\n총 {len(old_messages)}개 ({dict((r, roles.count(r)) for r in set(roles))})\n"
+                "## Note\nprovider 초기화 안 된 상태에서 L5 발동. 정확한 요약은 재실행 권장."
+            )
+
+        try:
+            # 간단 chat 호출 — stream 없이 non-blocking
+            if hasattr(provider, "chat_once"):
+                return await provider.chat_once(prompt, max_tokens=500, temperature=0.0)
+            # chat_once 없으면 chat() stream 을 수집
+            if hasattr(provider, "chat"):
+                from ..providers.base import MessageBlock
+                result_chunks = []
+                async for event in provider.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    system="You are a precise summarization agent.",
+                    tools=[], model=None, max_tokens=500, temperature=0.0,
+                ):
+                    if hasattr(event, "text") and event.text:
+                        result_chunks.append(event.text)
+                return "".join(result_chunks).strip()
+        except Exception as e:
+            logger.warning("[Context] L5 summarize LLM 호출 실패: %s", e)
+            return ""
+        return ""
 
     async def _fetch_rag(
         self, collections: list[str], query: str, user_id: str,
