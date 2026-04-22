@@ -111,6 +111,8 @@ class XgenAdapter:
         attached_files: Optional[list] = None,
         runtime_harness_config: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[list] = None,
+        user_is_admin: bool = False,
+        user_is_superuser: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """워크플로우 실행 → xgen SSE 이벤트 스트림.
 
@@ -123,6 +125,10 @@ class XgenAdapter:
             workflow_name: 워크플로우 이름
             attached_files: 첨부 파일 목록
             runtime_harness_config: 런타임 오버라이드 (프론트에서 전달)
+            user_is_admin: gateway 가 인증한 admin 플래그. v0.11.26 — 기본 False.
+                호출자가 명시 주입해야 ExecutionContext 로 전파되고 내부 서비스 호출 시
+                x-user-admin 헤더가 "true" 로 나간다. 주입 생략 시 익명으로 호출됨.
+            user_is_superuser: superuser 플래그. 기본 False.
 
         Yields:
             xgen SSE 포맷 dict:
@@ -326,13 +332,17 @@ class XgenAdapter:
                 logger.warning("[Adapter] xgen LLM factory 실패, 내장 프로바이더 폴백: %s", e)
 
         # ━━━━ 8. API 키를 실행 컨텍스트에 설정 (contextvars — 동시 실행 격리) ━━━━
+        # v0.11.26 — admin/superuser 는 더 이상 하드코딩 "true" 가 아니다. 호출자(이식측)가
+        # 게이트웨이 인증 결과를 명시 주입해야 내부 서비스 호출에서 권한이 승격된다.
+        # 값이 False 이면 xgen-documents / mcp-station 요청은 익명(admin=false) 으로 나가며,
+        # 서버측 권한 정책에 따라 거부될 수 있다.
         set_execution_context(
             api_key=api_key,
             provider=provider,
             model=model,
             user_id=str(user_id),
-            user_is_admin="true",       # xgen-workflow에서 호출될 땐 이미 인증된 요청
-            user_is_superuser="true",
+            user_is_admin="true" if user_is_admin else "false",
+            user_is_superuser="true" if user_is_superuser else "false",
         )
 
         try:
@@ -344,6 +354,10 @@ class XgenAdapter:
             state.tool_definitions = registry.get_tool_definitions()
             state.metadata["tool_registry"] = registry.get_tool_executors()
             state.metadata["resource_registry"] = registry
+            # v0.11.26 — ServiceProvider 를 state 에 명시 주입.
+            # RAGSearchTool (v0.11.25) / s02_history / s06_context 가
+            # state.metadata["services"].documents 를 참조. 없으면 graceful skip.
+            state.metadata["services"] = self._services
 
             # 9.5. Capability 자동 발행 — 로드된 자산을 CapabilityRegistry에 등록
             #      s04_tool / s05_strategy의 capability 바인딩이 자동 동작하도록

@@ -5,6 +5,33 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.26] — 2026-04-22
+
+### 🎯 XgenAdapter 하드코딩 제거 + services state 주입 (v0.11.25 감사 후속)
+
+v0.11.24 에서 `get_xgen_auth_headers` 기본값을 `false` 로 교정했는데 `XgenAdapter.execute` 가 여전히 `user_is_admin="true"` / `user_is_superuser="true"` 로 하드코딩 호출하던 모순을 잡음. v0.11.25 에서 RAGSearchTool 에 DocumentService 를 주입받도록 바꿨는데 `state.metadata["services"]` 경로가 정작 주입되지 않던 누락도 해소.
+
+**🔴 XgenAdapter.execute 시그니처 확장**:
+- `user_is_admin: bool = False`, `user_is_superuser: bool = False` 파라미터 추가 (기본 False).
+- `set_execution_context(..., user_is_admin="true" if user_is_admin else "false", ...)` — 호출자(이식측)가 명시 주입해야 권한 승격. v0.11.24 의 기본값 false 원칙이 실제로 동작.
+- 이전: 고정 `"true"` 박제 → 지금: 게이트웨이 인증 결과를 그대로 전달.
+
+**🔴 state.metadata["services"] 주입**:
+- `XgenAdapter.execute` 가 `ResourceRegistry.load_all()` 직후 `state.metadata["services"] = self._services` 를 명시 주입.
+- v0.11.25 에서 `RAGSearchTool(doc_service=...)` / `s04_tool` / `s08_act` 가 `state.metadata["services"].documents` 를 참조하도록 바꿔둔 경로가 실제로 물림. s02_history / s06_context 의 기존 참조 (5 지점) 도 그대로 정상 동작.
+
+**이식측 반영 필요**:
+- `xgen-workflow feature/harness-v2` `harness.py::_stream_harness_pipeline` — `XgenAdapter.execute(...)` 호출 시 request header 에서 admin / superuser 추출해 전달:
+  ```python
+  is_admin = request.headers.get("x-user-admin", "false").lower() == "true"
+  is_super = request.headers.get("x-user-superuser", "false").lower() == "true"
+  async for event in adapter.execute(..., user_is_admin=is_admin, user_is_superuser=is_super):
+  ```
+- pyproject pin `xgen-harness>=0.11.26`.
+
+**기존 사용자 영향**:
+- XgenAdapter 를 직접 쓰던 외부 코드는 admin/superuser 를 명시 주입 안 하면 내부 xgen 서비스 호출이 익명(admin=false) 으로 나감. 서버 정책에 따라 거부될 수 있음. 기존 동작을 유지하려면 `user_is_admin=True` 를 명시.
+
 ## [0.11.25] — 2026-04-22
 
 ### 🎯 엔진 독립성 완결 — xgen-documents API 스키마 직접 참조 전면 제거
