@@ -194,8 +194,12 @@ def _collect_stages(config) -> list[dict[str, Any]]:
             "active": entry.get("active", True),
             "artifacts": entry.get("artifacts", []),
             "current_artifact": entry.get("current_artifact", "default"),
+            # v0.15.2 — 파일 경로 노출. LLM 이 "이 Stage 는 어디에 있는지" 파악 → 내부
+            # 구조(strategies/ / variants/ / tools/) 를 유추해 자율 조립.
+            "source_file": entry.get("source_file", ""),
             # v0.15.0 — Strategy 상세(name + description + is_default) 포함.
             # Planner 가 "이 Stage 에 어떤 impl 들이 있고 각각 뭘 하는지" 알고 고름.
+            # v0.15.2 — 각 Strategy 도 slot / source_file 을 포함.
             "strategies": entry.get("strategies", []),
             "description_ko": cfg.get("description_ko", ""),
             # v0.12.0 self-describing — Stage 저자가 직접 선언한 사용/제외 기준.

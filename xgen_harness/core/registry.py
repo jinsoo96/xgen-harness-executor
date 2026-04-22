@@ -120,6 +120,32 @@ class ArtifactRegistry:
                 current_artifact = (
                     config.get_artifact_for_stage(stage_id) if config else "default"
                 )
+                # v0.15.2 — Stage 와 각 Strategy 의 실제 소스 파일 경로까지 노출.
+                # LLM / 프론트가 "이 Stage 는 어디에 있고 내부 구조는 어떤가" 를 보고 판단.
+                from .fs_scanner import get_stage_source_file
+                stage_source = get_stage_source_file(default_cls)
+                strategies_out: list[dict] = []
+                for s in desc.strategies:
+                    entry: dict = {
+                        "name": s.name,
+                        "description": s.description,
+                        "is_default": s.is_default,
+                    }
+                    # Strategy impl 의 소스 파일도 StrategyResolver 가 알고 있으면 꺼내준다.
+                    try:
+                        # 모듈 전역 _REGISTRY 는 (stage_id, slot_name, impl_name) → cls.
+                        # 해당 Stage + impl 이름이 일치하는 엔트리를 찾아 slot 과 파일경로 노출.
+                        from .strategy_resolver import _REGISTRY as _STRAT_REG, _ensure_defaults_registered
+                        _ensure_defaults_registered()
+                        for (sid_k, slot_k, impl_k), cls in _STRAT_REG.items():
+                            if sid_k == stage_id and impl_k == s.name:
+                                entry["source_file"] = get_stage_source_file(cls)
+                                entry["slot"] = slot_k
+                                break
+                    except Exception:
+                        pass
+                    strategies_out.append(entry)
+
                 descriptions.append({
                     "stage_id": desc.stage_id,
                     "display_name": desc.display_name,
@@ -130,10 +156,8 @@ class ArtifactRegistry:
                     "required": stage_id in REQUIRED_STAGES,
                     "artifacts": list(artifacts.keys()),
                     "current_artifact": current_artifact,
-                    "strategies": [
-                        {"name": s.name, "description": s.description, "is_default": s.is_default}
-                        for s in desc.strategies
-                    ],
+                    "source_file": stage_source,
+                    "strategies": strategies_out,
                     # stage_config: UI 렌더링용 설정 스키마
                     "config": {
                         "description_ko": stage_cfg.get("description_ko", ""),
@@ -153,73 +177,35 @@ class ArtifactRegistry:
 
 
 def _register_default_stages(registry: ArtifactRegistry) -> None:
-    """모든 기본 스테이지를 레지스트리에 등록 (v0.14.0 — 11 스테이지 + s00_harness)"""
-    from ..stages.s01_input import InputStage
-    from ..stages.s03_prompt import SystemPromptStage
-    from ..stages.s07_act import ExecuteStage
-    from ..stages.s09_decide import DecideStage
-    from ..stages.s11_finalize import CompleteStage
+    """기본 스테이지 등록 — v0.15.2 파일시스템 스캔.
 
-    registry.register("s01_input", "default", InputStage)
-    registry.register("s03_prompt", "default", SystemPromptStage)
-    registry.register("s07_act", "default", ExecuteStage)
-    registry.register("s09_decide", "default", DecideStage)
-    registry.register("s11_finalize", "default", CompleteStage)
+    과거 `from ..stages.s01_input import InputStage` 같은 리터럴 import 12 건을
+    제거. 이제 `fs_scanner.scan_default_stages()` 가 `xgen_harness/stages/`
+    디렉토리를 훑어 `sNN_xxx/` 패턴 디렉토리의 Stage 서브클래스를 자동 등록.
 
-    # s00_harness — 통제탑. Provider/Planner/본문호출/iterative replan 소유.
-    # HarnessConfig.use_planner=True (또는 v0.14.0+ harness_mode) 일 때 Pipeline 이
-    # ingress 최상단에 prepend.
-    try:
-        from ..stages.s00_harness import HarnessStage
-        registry.register("s00_harness", "default", HarnessStage)
-    except ImportError:
-        pass
+    외부 기여자는 `stages/s04_tool_lotte/` 디렉토리만 만들고 `__init__.py` 에서
+    Stage 서브클래스를 export 하면 엔진 코드 수정 0.
+    """
+    from .fs_scanner import scan_default_stages, scan_stage_artifacts
 
-    try:
-        from ..stages.s02_history import MemoryStage
-        registry.register("s02_history", "default", MemoryStage)
-    except ImportError:
-        pass
+    count = scan_default_stages(registry)
+    logger.debug("[registry] fs_scanner: %d default stages", count)
 
-    try:
-        from ..stages.s04_tool import ToolIndexStage
-        registry.register("s04_tool", "default", ToolIndexStage)
-    except ImportError:
-        pass
+    # 같은 Stage 의 대안 artifact (swap-in 변형) 도 디렉토리에서 자동 발견.
+    # convention: `stages/sNN_xxx/artifacts/<name>.py` → registry.register(sNN, name, cls)
+    art_count = scan_stage_artifacts(registry)
+    if art_count:
+        logger.debug("[registry] fs_scanner: %d stage artifacts", art_count)
 
-    try:
-        from ..stages.s05_strategy import PlanStage
-        registry.register("s05_strategy", "default", PlanStage)
-    except ImportError:
-        pass
-
-    try:
-        from ..stages.s06_context import ContextStage
-        registry.register("s06_context", "default", ContextStage)
-    except ImportError:
-        pass
-
-    try:
-        from ..stages.s08_judge import ValidateStage
-        registry.register("s08_judge", "default", ValidateStage)
-    except ImportError:
-        pass
-
-    try:
-        from ..stages.s10_save import SaveStage
-        registry.register("s10_save", "default", SaveStage)
-    except ImportError:
-        pass
-
-    # 멀티에이전트 자동 분기 — s05_strategy 의 second artifact ('multi_agent').
-    # 디폴트 PlanStage 와 동일 슬롯 swap 후보. UI 에서 1클릭으로 선택.
+    # 멀티에이전트 planner 는 `orchestrator/` 디렉토리에 있어 일반 Stage 스캔 대상 외 —
+    # s05_strategy 의 대안 artifact 로 register (유일한 cross-directory artifact).
     try:
         from ..orchestrator.multi_agent_planner import MultiAgentPlannerStage
         registry.register("s05_strategy", "multi_agent", MultiAgentPlannerStage)
     except ImportError:
         pass
 
-    # 플러그인 자동 탐색
+    # 외부 패키지 플러그인 (entry_points 경로) 탐색 — `xgen_harness.stages` 그룹.
     _discover_plugin_stages(registry)
 
 

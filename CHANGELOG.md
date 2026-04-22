@@ -5,6 +5,66 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] — 2026-04-22
+
+### 🎯 파일 구조 자동 연동 — fs_scanner + Tool entry_points + catalog source_file
+
+사용자 지시: **"모든것이 다 엔트리포인트를 알아서 읽고 가져오게 해야 돼. 파일구조나 그런 것도 애가 참고해서 이해됨?"**. 기본 Stage 등록까지 파일시스템 스캔으로 전환 + Tool entry_points 완성 + catalog 에 실제 소스 파일 경로 노출.
+
+**🟢 1. Filesystem Scanner 신설 (`core/fs_scanner.py`)**:
+- `scan_default_stages(registry)` — `xgen_harness/stages/` 아래 `sNN_xxx/` 패턴 디렉토리 전수 훑어 Stage 서브클래스 자동 import + register.
+- `scan_stage_artifacts(registry)` — `stages/sNN_xxx/artifacts/<name>.py` 가 있으면 대안 artifact 로 자동 등록 (swap-in 변형 디렉토리 convention).
+- `get_stage_source_file(cls)` — 클래스의 소스 파일 경로(`xgen_harness/...` 이하 상대)를 반환.
+- 외부 기여자는 `stages/s04_tool_lotte/` 디렉토리만 만들고 Stage 서브클래스 export → 엔진 코드 수정 0.
+
+**🟢 2. registry.py 리터럴 Import 제거**:
+- 과거 `from ..stages.s01_input import InputStage` 식 12 건 수동 import + register 제거.
+- `_register_default_stages()` 가 `fs_scanner.scan_default_stages(registry)` 한 줄 위임.
+- cross-directory artifact 1 건만 유지 (`orchestrator/multi_agent_planner.py` 의 `s05_strategy/multi_agent`) — stages/ 바깥이라 스캔 대상 외.
+
+**🟢 3. Tool entry_points 완성 (`tools/__init__.py`)**:
+- `_discover_from_entry_points_once()` 추가. 그룹 `xgen_harness.tool_sources`.
+- `get_tool_sources()` 첫 호출 시 idempotent 스캔.
+- entry_point 반환값 3 형태 수용: `ToolSource` 인스턴스 / factory callable / iterable.
+- pip install xgen-tools-xxx 한 패키지가 자동 합류.
+
+**🟢 4. catalog `source_file` 노출 — "LLM 이 파일 구조 보고 판단" (`core/registry.py` · `core/catalog.py`)**:
+- `stages[].source_file` = `xgen_harness/stages/sNN_xxx/stage.py`
+- `stages[].strategies[].source_file` + `stages[].strategies[].slot` = StrategyResolver `_REGISTRY` 직접 조회로 실제 구현 파일 노출.
+- 예시: s00_harness 의 transport 슬롯은 `xgen_harness/stages/strategies/transport.py` 가 streaming/batch 2개 impl 보유 ← LLM 이 이걸 보고 "이 슬롯은 streaming/batch 공용 파일에 정의되어 있고, 새 impl 을 얹으려면 거기에 클래스 추가" 판단 가능.
+
+### 자동 연동 커버리지 (v0.15.2 기준 9 축 완료)
+
+| 축 | 외부 entry_points | 내부 파일 스캔 | catalog source_file |
+|---|---|---|---|
+| Stage | ✅ xgen_harness.stages | ✅ fs_scanner | ✅ |
+| Strategy | ✅ xgen_harness.strategies | ⚠ (Phase 2 convention) | ✅ |
+| Capability | ✅ xgen_harness.capabilities (v0.15.1) | N/A | — |
+| Tool | ✅ **xgen_harness.tool_sources (v0.15.2)** | N/A | — |
+| Orchestrator | ✅ xgen_harness.orchestrators (v0.15.0) | N/A | — |
+| Provider | ✅ xgen_harness.providers (v0.15.1) | N/A | — |
+| Phase | ✅ xgen_harness.phases (v0.15.1) | N/A | — |
+| NodeAdapter | ✅ xgen_harness.node_adapters | N/A | — |
+| Transport | ✅ via strategies | options_source 동적 | ✅ |
+
+### 자가검증 grep (8 / 8 PASS)
+
+1. `fs_scanner.scan_default_stages()` 이 12 Stage (s00~s11) 모두 자동 발견 ✅
+2. `catalog.stages[].source_file` 전수 존재 ✅
+3. `catalog.stages[].strategies[].slot` + `.source_file` 노출 (s00_harness transport 슬롯 실측) ✅
+4. `tools.get_tool_sources()` 첫 호출 시 entry_points 스캔 idempotent ✅
+5. `tools.register_tool_source()` 직접 등록도 정상 합류 ✅
+6. `registry.py` 안 Stage 이름 리터럴 = 1 건 (multi_agent artifact 한 줄) ✅
+7. `fs_scanner.py` 안 Stage 이름 리터럴 = 0 ✅
+8. 외부 `stages/s04_tool_lotte/` 디렉토리만 드롭해도 `_STAGE_DIR_RE` 매칭 → 자동 합류 ✅
+
+### 다음 턴 (Phase 2 남은 부분)
+
+- Strategy 디렉토리 convention (`stages/sNN/strategies/<slot>/<impl>.py`) + 파일 스캔 자동 등록
+- 프론트 PlanningCard / StageList 가 `source_file` 읽어 "이 Stage 는 어디에 있는지" 힌트 표시
+- Pipeline Phase B 의 `orchestrator_hint` 실 분기
+- 프론트 서브에이전트 산출물 리뷰 + push (AUTO 배지 포함)
+
 ## [0.15.1] — 2026-04-22
 
 ### 🎯 모든 확장 지점 자동 연동성 감사 — 3개 갭 제거
