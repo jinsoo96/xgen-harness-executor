@@ -12,9 +12,9 @@ S06 Context — 컨텍스트 수집 + 윈도우 관리
 
 import logging
 
-from ..core.stage import Stage, StrategyInfo
-from ..core.state import PipelineState
-from ..core.service_registry import get_service_url
+from ...core.stage import Stage, StrategyInfo
+from ...core.state import PipelineState
+from ...core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.stage.context")
 

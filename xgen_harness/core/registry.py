@@ -168,6 +168,14 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
     registry.register("s10_decide", "default", DecideStage)
     registry.register("s12_finalize", "default", CompleteStage)
 
+    # v0.12.0 — Harness Planner 메타 스테이지. HarnessConfig.use_planner=True
+    # 일 때만 Pipeline 이 주입하므로 기본 파이프라인 변화 없음.
+    try:
+        from ..stages.s00_harness import HarnessStage
+        registry.register("s00_harness", "default", HarnessStage)
+    except ImportError:
+        pass
+
     # Phase 2/3 스테이지 (구현되면 추가)
     try:
         from ..stages.s02_history import MemoryStage

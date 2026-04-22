@@ -169,6 +169,24 @@ class RetryEvent(HarnessEvent):
     max_attempts: int = 1
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Harness Planner — v0.12.0 "Real Harness" 축 A
+#  LLM 이 카탈로그를 보고 Stage/파라미터/Strategy 를 런타임 조립한 결과.
+#  프론트는 이 이벤트를 카드로 렌더해 "왜 이 조합인가" 를 사용자에게 보여준다.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@dataclass
+class PlanningEvent(HarnessEvent):
+    """Harness Planner 가 수립한 실행 계획"""
+    chosen: list = field(default_factory=list)          # 실행할 stage_id 순서
+    skipped: dict = field(default_factory=dict)         # stage_id → 스킵 이유
+    params: dict = field(default_factory=dict)          # stage_id → {key: value} override
+    strategies: dict = field(default_factory=dict)      # stage_id → active strategy 이름
+    reasoning: str = ""                                 # 선택 근거 (explainability)
+    planner_model: str = ""                             # Plan 을 만든 모델 식별자
+    source: str = "llm"                                 # "llm" | "fallback_all" | "error"
+
+
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
     """이벤트를 harness_router.py가 이해하는 (event_type, data) dict로 변환"""
     type_map = {
@@ -187,6 +205,7 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
         CapabilityBindEvent: "capability_bind",
         StageSubstepEvent: "stage_substep",
         RetryEvent: "retry",
+        PlanningEvent: "planning",
     }
     event_type = type_map.get(type(event), "unknown")
 

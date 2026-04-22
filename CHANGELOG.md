@@ -5,6 +5,40 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-04-22
+
+### 🎯 REAL HARNESS — Harness Planner 축 A 착수 (LLM 자율 조립)
+
+사용자 핵심 깨달음 "지금 엔진은 12 스테이지를 고정 파이프라인으로 돌릴 뿐, 진짜 하네싱이 아니다. LLM 에게 환경(Stage·파라미터·기능 카탈로그) 을 주고 스스로 조립하게 해야 한다" 에 대한 첫 구현.
+
+**🔴 Harness Planner (s00_harness) 신설**:
+- `xgen_harness/stages/s00_harness.py::HarnessStage` — order=0, phase=ingress 최상단. LLM 이 카탈로그를 보고 Plan(Stage 선택/파라미터/Strategy) 을 내놓는 메타 스테이지.
+- `xgen_harness/core/planner.py::HarnessPlanner, HarnessPlan` — 카탈로그 + user_input → LLM 호출 → Plan 반환. 프롬프트 자체도 카탈로그에서 동적 생성 (하드코딩 0). 파싱 실패 시 fallback (빈 chosen → Pipeline 이 전체 실행).
+- `xgen_harness/core/catalog.py::get_catalog()` — Stage/Capability/Preset 카탈로그를 런타임에 발견. Stage 이름·필드 이름 리터럴이 이 파일에 0 개 (전부 레지스트리에서 읽음).
+
+**🔴 Pipeline 에 Plan 분기**:
+- `HarnessConfig.use_planner: bool = False` 추가 (하위 호환).
+- `Pipeline.from_config` 가 use_planner=True 면 s00_harness 를 ingress 최상단에 prepend.
+- 각 Stage 실행 직전 `_planner_skips` 로 Plan.chosen 체크 → 선택 안 된 Stage 는 bypass 이벤트(스킵 이유는 Plan.skipped 에서 추출).
+- Plan.params / Plan.strategies 는 s00 이 state.config 에 shallow merge (이미 UI 에 설정된 값보다 Plan 이 우선, 언급 없는 값은 그대로 유지).
+
+**🔴 PlanningEvent 신설**:
+- `events/types.py::PlanningEvent` — chosen/skipped/params/strategies/reasoning/planner_model/source. `event_to_dict` 에 "planning" 타입으로 등록.
+- 프론트가 이 이벤트를 카드로 렌더해 "왜 이 조합인지" 사용자에게 설명(explainability).
+
+**🔴 provider_bootstrap DRY**:
+- `xgen_harness/core/provider_bootstrap.py::ensure_provider()` — s07_llm._lazy_init_provider 로직을 공용 헬퍼로 추출. s00(Planner) 도 동일 경로로 provider 자체 초기화 가능. s07 의 기존 메서드는 ensure_provider 호출로 교체 (중복 제거).
+
+**🟢 Public API export**:
+- `xgen_harness` top-level: `get_catalog` / `HarnessPlanner` / `HarnessPlan` / `PlanningEvent` / `ensure_provider`.
+
+**기존 사용자 영향**:
+- `use_planner=False` 기본값이라 기존 엔진 동작 **완전 동일**. 이식 측에서 플래그 명시 주입할 때만 Planner 활성.
+- s07_llm 의 `_lazy_init_provider` 메서드는 제거 — 외부에서 호출하던 코드는 `from xgen_harness import ensure_provider; await ensure_provider(state)` 로 교체.
+
+**후속 (Phase 2~4)**:
+- Stage Gallery (s09_judge 시범 분리), NOM (단일 IR), 독립 샌드박스, xgen 모노레포 노드 플러그인 뺐다꼈다. 자세한 로드맵은 `docs/harness/REAL_HARNESS.md`.
+
 ## [0.11.27] — 2026-04-22
 
 ### 🎯 2차 감사 지적 4건 일괄 해소 (기능 무력화 · 멀티턴 오염 · 사이클 silent drop · 집계 0 drop)

@@ -62,10 +62,25 @@ class Pipeline:
         registry 미지정 시 전역 싱글톤(`_get_default_registry()`)을 사용하여
         `register_stage()` 나 entry_points 로 등록된 외부 플러그인 Stage 도
         함께 반영됩니다. 테스트/격리가 필요하면 registry 를 명시 전달하세요.
+
+        v0.12.0 — `config.use_planner=True` 면 s00_harness (Planner 메타 스테이지)
+        를 ingress 최상단에 prepend. Planner 가 없을 때 기본 파이프라인 그대로.
         """
         from .registry import _get_default_registry
         reg = registry or _get_default_registry()
         stages = reg.build_pipeline_stages(config)
+
+        if config.use_planner:
+            try:
+                s00_cls = reg.get("s00_harness", "default")
+                s00 = s00_cls()
+                # 중복 방지 + 최상단 보장
+                stages = [s for s in stages if s.stage_id != "s00_harness"]
+                stages.insert(0, s00)
+                logger.info("[Pipeline] Harness Planner 활성 — s00_harness 주입")
+            except KeyError:
+                logger.warning("[Pipeline] use_planner=True 이나 s00_harness 미등록 — 기본 파이프라인으로 진행")
+
         return cls(config, stages, event_emitter)
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -78,6 +93,9 @@ class Pipeline:
             # Phase A: Ingress (1회)
             logger.info("[Pipeline] Phase A: Ingress (%d stages)", len(self.ingress_stages))
             for stage in self.ingress_stages:
+                if self._planner_skips(stage, state):
+                    await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
+                    continue
                 if stage.should_bypass(state):
                     await self._emit_bypass(stage, state)
                     continue
@@ -90,6 +108,9 @@ class Pipeline:
                 logger.info("[Pipeline] Loop iteration %d", state.loop_iteration)
 
                 for stage in self.loop_stages:
+                    if self._planner_skips(stage, state):
+                        await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
+                        continue
                     if stage.should_bypass(state):
                         await self._emit_bypass(stage, state)
                         continue
@@ -120,6 +141,9 @@ class Pipeline:
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))
             for stage in self.egress_stages:
+                if self._planner_skips(stage, state):
+                    await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
+                    continue
                 if stage.should_bypass(state):
                     await self._emit_bypass(stage, state)
                     continue
@@ -251,10 +275,19 @@ class Pipeline:
             ))
             raise PipelineAbortError(str(e), stage.stage_id)
 
-    async def _emit_bypass(self, stage: Stage, state: PipelineState) -> None:
-        """bypass된 스테이지도 이벤트 발행 (UI에서 스킵 상태 표시)"""
+    async def _emit_bypass(
+        self,
+        stage: Stage,
+        state: PipelineState,
+        reason: str = "조건 미충족으로 건너뜀",
+    ) -> None:
+        """bypass된 스테이지도 이벤트 발행 (UI에서 스킵 상태 표시).
+
+        Planner 가 skip 한 경우 reason 에 Plan.skipped[stage_id] 가 주입되어
+        "왜 이 단계를 건너뛰었는지"를 프론트가 그대로 표시할 수 있다.
+        """
         step = self._get_step_number(stage)
-        logger.debug("[Pipeline] Bypass: %s", stage.stage_id)
+        logger.debug("[Pipeline] Bypass: %s (%s)", stage.stage_id, reason)
         await self.event_emitter.emit(StageEnterEvent(
             stage_id=stage.stage_id,
             stage_name=stage.display_name_ko,
@@ -266,10 +299,38 @@ class Pipeline:
         await self.event_emitter.emit(StageExitEvent(
             stage_id=stage.stage_id,
             stage_name=stage.display_name_ko,
-            output={"bypassed": True, "reason": "조건 미충족으로 건너뜀"},
+            output={"bypassed": True, "reason": reason},
             step=step,
             total=self._total_stage_count,
         ))
+
+    # ── Harness Planner 연동 (v0.12.0) ─────────────────────────────
+
+    def _planner_skips(self, stage: Stage, state: PipelineState) -> bool:
+        """Planner 가 세운 Plan 에 따라 이 Stage 를 skip 해야 하는지.
+
+        Plan 미수립(state.metadata["harness_plan"] 없음) 또는 chosen 이 비어있는
+        fallback 상태에서는 skip 하지 않음 (전체 실행 — 하위 호환).
+        s00_harness 자체는 Plan 생성 주체이므로 절대 skip 되지 않는다.
+        """
+        if stage.stage_id == "s00_harness":
+            return False
+        plan = state.metadata.get("harness_plan")
+        if not isinstance(plan, dict):
+            return False
+        chosen = plan.get("chosen") or []
+        if not chosen:
+            return False  # fallback — 전체 실행
+        return stage.stage_id not in chosen
+
+    def _planner_skip_reason(self, stage: Stage, state: PipelineState) -> str:
+        """Plan.skipped[stage_id] 가 있으면 그 이유, 없으면 일반 메시지."""
+        plan = state.metadata.get("harness_plan") or {}
+        skipped = plan.get("skipped") or {}
+        reason = skipped.get(stage.stage_id)
+        if reason:
+            return f"Planner: {reason}"
+        return "Planner 가 이번 턴에는 불필요하다고 판단"
 
     def _get_step_number(self, stage: Stage) -> int:
         for i, s in enumerate(self._all_stages, 1):

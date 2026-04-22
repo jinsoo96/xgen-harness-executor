@@ -38,7 +38,11 @@ from .events.types import (
     CapabilityBindEvent,
     StageSubstepEvent,
     RetryEvent,
+    PlanningEvent,
 )
+from .core.catalog import get_catalog
+from .core.planner import HarnessPlanner, HarnessPlan
+from .core.provider_bootstrap import ensure_provider
 from .errors import (
     HarnessError,
     ConfigError,
@@ -112,7 +116,7 @@ from .compile import (
     get_gallery,
 )
 
-__version__ = "0.11.27"
+__version__ = "0.12.0"
 
 __all__ = [
     # Core
@@ -152,6 +156,12 @@ __all__ = [
     "CapabilityBindEvent",
     "StageSubstepEvent",
     "RetryEvent",
+    # v0.12.0 — Harness Planner (REAL_HARNESS §4)
+    "PlanningEvent",
+    "get_catalog",
+    "HarnessPlanner",
+    "HarnessPlan",
+    "ensure_provider",
     # Errors
     "HarnessError",
     "ConfigError",

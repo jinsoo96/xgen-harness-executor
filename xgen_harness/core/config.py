@@ -110,6 +110,11 @@ class HarnessConfig:
     # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
     verbose_events: bool = False
 
+    # --- Harness Planner (v0.12.0, REAL_HARNESS §4) ---
+    # True 면 Pipeline 이 s00_harness 를 먼저 돌려 LLM 이 Stage/파라미터를 런타임 조립.
+    # False 면 기존 12 스테이지 고정 파이프라인 그대로. 하위 호환 유지.
+    use_planner: bool = False
+
     # 레거시 호환
     preset: str = ""
 
@@ -252,6 +257,7 @@ class HarnessConfig:
             strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
+            use_planner=bool(harness_config.get("use_planner", False)),
             # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
             context_window=_safe_int(
                 harness_config.get("context_window"), default=200_000, minimum=1024,

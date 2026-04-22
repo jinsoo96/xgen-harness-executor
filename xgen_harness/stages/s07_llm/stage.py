@@ -13,11 +13,11 @@ import asyncio
 import logging
 from typing import Optional
 
-from ..core.stage import Stage, StrategyInfo
-from ..core.state import PipelineState, TokenUsage
-from ..events.types import MessageEvent, ToolCallEvent, ThinkingEvent
-from ..errors import ProviderError, RateLimitError, OverloadError, ContextOverflowError, PipelineAbortError
-from ..providers.base import ProviderEvent, ProviderEventType
+from ...core.stage import Stage, StrategyInfo
+from ...core.state import PipelineState, TokenUsage
+from ...events.types import MessageEvent, ToolCallEvent, ThinkingEvent
+from ...errors import ProviderError, RateLimitError, OverloadError, ContextOverflowError, PipelineAbortError
+from ...providers.base import ProviderEvent, ProviderEventType
 
 logger = logging.getLogger("harness.stage.llm")
 
@@ -43,10 +43,10 @@ class LLMStage(Stage):
 
     async def execute(self, state: PipelineState) -> dict:
         # v0.9.0+: provider 생성 책임이 s07 로 이관됨 (PHILOSOPHY §2 s07 "담당").
-        # state.provider 가 아직 없으면 lazy init — s01_input 이 아닌 여기서 생성.
-        # backward compat: s01_input 이 이미 생성해 뒀다면 그대로 재사용.
-        if not state.provider:
-            await self._lazy_init_provider(state)
+        # v0.12.0: 공용 헬퍼(`core.provider_bootstrap.ensure_provider`) 로 위임 —
+        # s00_harness Planner 도 동일 경로를 쓰므로 중복 제거.
+        from ..core.provider_bootstrap import ensure_provider
+        await ensure_provider(state, stage_id=self.stage_id)
         if not state.provider:
             raise PipelineAbortError("LLM provider not initialized", self.stage_id)
 
@@ -104,72 +104,6 @@ class LLMStage(Stage):
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
         }
-
-    async def _lazy_init_provider(self, state: PipelineState) -> None:
-        """state.provider 가 아직 없으면 여기서 생성 (v0.9.0+).
-
-        PHILOSOPHY §2 s07 "담당": provider 생성 + API key 해석 + base_url 해석.
-        s01_input 이 backward-compat 으로 여전히 먼저 생성할 수 있지만, 향후
-        s01 이 입력 정규화만 담당하게 되면 s07 가 단독 주체가 된다.
-        """
-        import os
-        from ..core.execution_context import get_api_key as ctx_get_api_key
-        from ..providers import (
-            create_provider, get_api_key_env, resolve_api_key_from_file,
-            PROVIDER_DEFAULT_MODEL,
-        )
-
-        config = state.config
-        if not config:
-            raise PipelineAbortError("Config not set", self.stage_id)
-
-        provider_name: str = (config.provider or "").lower()
-        model_name: str = config.model or PROVIDER_DEFAULT_MODEL.get(provider_name, "")
-        if not provider_name or not model_name:
-            raise PipelineAbortError(
-                f"Provider/model not resolved (provider={provider_name!r}, model={model_name!r})",
-                self.stage_id,
-            )
-
-        # API key: ExecutionContext → ServiceProvider → env → file
-        api_key: Optional[str] = ctx_get_api_key()
-        if not api_key:
-            services = state.metadata.get("services")
-            if services and getattr(services, "config", None):
-                try:
-                    api_key = await services.config.get_api_key(provider_name)
-                except Exception as e:
-                    logger.debug("[LLM] ServiceProvider API key lookup failed: %s", e)
-        if not api_key:
-            env_var = get_api_key_env(provider_name)
-            api_key = os.environ.get(env_var, "")
-            if not api_key:
-                # 파일 폴백 — providers 레지스트리 헬퍼 위임
-                # (경로 고정 금지: XGEN_HARNESS_API_KEY_FILE_DIR 로 override 가능)
-                api_key = resolve_api_key_from_file(provider_name)
-        if not api_key:
-            raise PipelineAbortError(
-                f"{provider_name} API key not configured", self.stage_id,
-            )
-
-        # base_url: ServiceProvider(Redis) → env → None
-        base_url: Optional[str] = None
-        env_var_url = f"{provider_name.upper()}_API_BASE_URL"
-        services = state.metadata.get("services")
-        if services and getattr(services, "config", None):
-            try:
-                get_setting = getattr(services.config, "get_setting", None)
-                if get_setting is not None:
-                    base_url = await get_setting(env_var_url) or None
-                else:
-                    base_url = await services.config.get_value(env_var_url, "") or None
-            except Exception as e:
-                logger.debug("[LLM] base_url Redis 조회 실패: %s", e)
-        if not base_url:
-            base_url = os.environ.get(env_var_url, "") or None
-
-        state.provider = create_provider(provider_name, api_key, model_name, base_url=base_url)
-        logger.info("[LLM] lazy init provider=%s, model=%s", provider_name, model_name)
 
     async def _call_with_retry(self, state: PipelineState) -> tuple[str, list[dict], TokenUsage]:
         """재시도 로직 포함 LLM 호출.

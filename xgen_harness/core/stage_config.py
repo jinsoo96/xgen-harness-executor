@@ -49,11 +49,40 @@ def canonical_stage_id_map(d: dict) -> dict:
 
 
 STAGE_CONFIGS: dict[str, dict] = {
+    "s00_harness": {
+        "description_ko": "Harness Planner — LLM 이 카탈로그를 보고 이번 턴의 Stage/파라미터/도구를 자율 조립합니다.",
+        "description_en": "Harness Planner — LLM composes per-turn stages/params/tools by reading the self-describing catalog.",
+        "when_to_use": "use_planner=True 일 때 Pipeline 이 자동 주입. 사용자가 직접 chosen 에 넣을 필요 없음.",
+        "when_to_skip": "use_planner=False 로 끄면 전혀 실행되지 않음 (하위 호환).",
+        "cost_hint": "medium",
+        "icon": "🎯",
+        "fields": [
+            {
+                "id": "strategy",
+                "label": "Planner Strategy",
+                "type": "select",
+                "options": ["llm", "noop"],
+                "default": "llm",
+                "description": "llm=LLM 이 Plan 작성, noop=전체 실행 (Planner 비활성과 동일).",
+            },
+        ],
+        "behavior": [
+            "카탈로그 자동 수집 (Stage/Capability/Tool/Resource)",
+            "LLM 에게 submit_plan 도구 하나 노출 → 구조화된 Plan 수신",
+            "Plan.params/strategies 를 state.config 에 병합 후 Pipeline 에 넘김",
+            "PlanningEvent 방출로 프론트가 '왜 이 조합인지' 카드 렌더",
+        ],
+    },
     "s01_input": {
         # PHILOSOPHY §2 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
         # 선택은 하네스 상단 설정 또는 s07 관할 — s01 에서 필드로 노출하지 않음.
         "description_ko": "사용자 입력을 검증하고 첨부 파일을 content block 으로 정규화합니다.",
         "description_en": "Validates user input and normalizes attached files to content blocks.",
+        # v0.12.0 self-describing — Planner 가 이 세 필드만 보고 선택/제외/파라미터 조정.
+        # 시스템 프롬프트 가이드 대신 "환경이 스스로 말한다" (REAL_HARNESS).
+        "when_to_use": "항상 (필수). 빈 입력 거부 + 첨부 파일 정규화 + 첫 user 메시지 push.",
+        "when_to_skip": "불가 (REQUIRED_STAGES).",
+        "cost_hint": "low",
         "icon": "📥",
         "fields": [
             # v0.11.23 — provider/model 선택을 엔진 stage_config 에 공식 선언.
@@ -77,6 +106,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s02_history": {
         "description_ko": "이전 대화 이력, 실행 결과, 관련 문서를 로드합니다.",
+        "when_to_use": "멀티턴 대화 / 이전 실행 결과 재사용 / 관련 문서 상기 필요할 때.",
+        "when_to_skip": "단일 턴 stateless 요청, 첫 대화, 이력 무관한 단발성 작업.",
+        "cost_hint": "medium",
         "description_en": "Loads conversation history, results, and related documents.",
         "icon": "🧠",
         "fields": [
@@ -106,6 +138,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s03_prompt": {
         "description_ko": "시스템 프롬프트를 조립합니다. 에이전트의 역할과 행동 규칙을 정의합니다.",
+        "when_to_use": "시스템 프롬프트·인용 규칙·도구 힌트 조립이 필요한 일반 요청.",
+        "when_to_skip": "state.system_prompt 가 이미 완성되어 있고 추가 조립 불필요할 때.",
+        "cost_hint": "low",
         "description_en": "Assembles system prompt defining agent role and rules.",
         "icon": "📝",
         "fields": [
@@ -164,6 +199,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s04_tool": {
         "description_ko": "사용할 도구, MCP 세션, 문서 컬렉션을 선택합니다. Progressive Disclosure로 효율적으로 관리합니다.",
+        "when_to_use": "외부 도구(API/DB/웹/MCP)·RAG 컬렉션·custom_tools·capabilities 중 하나 이상 필요. 도구 선택 자체가 이 Stage 의 핵심.",
+        "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
+        "cost_hint": "low",
         "description_en": "Select tools, MCP sessions, and document collections.",
         "icon": "🔧",
         "fields": [
@@ -251,6 +289,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s05_strategy": {
         "description_ko": "Chain-of-Thought 계획을 수립합니다. LLM이 단계별로 생각하도록 유도합니다.",
+        "when_to_use": "복잡한 추론 · 멀티에이전트 DAG · 단계별 계획이 이득이 될 때.",
+        "when_to_skip": "단일 패스 직답형 요청 (인사·짧은 QA·단순 조회).",
+        "cost_hint": "low",
         "description_en": "Chain-of-Thought planning before execution.",
         "icon": "📋",
         "fields": [
@@ -278,6 +319,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s06_context": {
         "description_ko": "토큰 윈도우를 관리합니다. 예산 초과 시 자동으로 컨텍스트를 압축합니다.",
+        "when_to_use": "RAG 컨텍스트 주입 · 긴 대화 압축 · Progressive Disclosure (5-Level cascade) 가 필요할 때. s04_tool 이 RAG/문서 리소스를 고르면 거의 필수.",
+        "when_to_skip": "짧은 단일 메시지 + 컨텍스트 자료 없음.",
+        "cost_hint": "medium",
         "description_en": "Manages token window with automatic compaction.",
         "icon": "📊",
         "fields": [
@@ -516,6 +560,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s07_llm": {
         "description_ko": "LLM API를 호출합니다. 실시간 스트리밍, 재시도, 모델 폴백을 지원합니다.",
+        "when_to_use": "항상 (필수). 본 답변 생성 지점.",
+        "when_to_skip": "불가 (REQUIRED_STAGES).",
+        "cost_hint": "high",
         "description_en": "Calls LLM API with streaming, retry, and fallback.",
         "icon": "🤖",
         "fields": [
@@ -554,6 +601,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s08_act": {
         "description_ko": "도구를 실행합니다. MCP 도구, 빌트인 도구를 호출하고 결과를 수집합니다.",
+        "when_to_use": "s07 이 도구 호출을 생성했을 때 (tool_use). Pipeline 이 자동 판단하므로 chosen 에 포함해두면 충분.",
+        "when_to_skip": "도구 사용 없이 텍스트 응답만으로 종결되는 요청.",
+        "cost_hint": "variable",
         "description_en": "Executes tool calls from LLM response.",
         "icon": "⚡",
         "fields": [
@@ -607,6 +657,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s09_judge": {
         "description_ko": "독립 LLM 호출로 응답 품질을 평가합니다. 기준 미달 시 재시도합니다.",
+        "when_to_use": "품질 검증 필수 (규제·법무·의료·금융·정확도 민감). 기준 미달 시 s10 이 retry 판단.",
+        "when_to_skip": "창작·브레인스토밍·잡담 — 정답이 없어 평가 기준이 모호한 경우.",
+        "cost_hint": "medium",
         "description_en": "Evaluates response quality with independent LLM call.",
         "icon": "✅",
         "fields": [
@@ -635,6 +688,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s10_decide": {
         "description_ko": "루프를 계속할지 완료할지 판단합니다.",
+        "when_to_use": "항상 (필수). 에이전틱 루프 종료 판정.",
+        "when_to_skip": "불가 (REQUIRED_STAGES).",
+        "cost_hint": "low",
         "description_en": "Decides whether to continue, complete, or retry.",
         "icon": "🔀",
         "fields": [
@@ -665,6 +721,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s11_save": {
         "description_ko": "실행 결과를 데이터베이스에 저장합니다.",
+        "when_to_use": "실행 로그 영구화 필요 (감사·리플레이·KPI 측정·세션 공유).",
+        "when_to_skip": "테스트·ephemeral·개인 비공유 세션.",
+        "cost_hint": "low",
         "description_en": "Persists execution results to database.",
         "icon": "💾",
         "fields": [
@@ -683,6 +742,9 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s12_finalize": {
         "description_ko": "최종 출력을 확정하고 메트릭스를 수집합니다.",
+        "when_to_use": "항상 (필수). MetricsEvent 방출 + final_output 확정.",
+        "when_to_skip": "불가 (REQUIRED_STAGES).",
+        "cost_hint": "low",
         "description_en": "Finalizes output and collects metrics.",
         "icon": "🏁",
         "fields": [

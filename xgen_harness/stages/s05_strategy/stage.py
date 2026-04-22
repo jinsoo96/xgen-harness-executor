@@ -11,15 +11,15 @@ S05 Plan — 계획 수립 단계
 
 import logging
 
-from ..capabilities import (
+from ...capabilities import (
     CapabilityMatcher,
     MatchStrategy,
     get_default_registry,
     materialize_capabilities,
     merge_into_state,
 )
-from ..core.stage import Stage, StrategyInfo
-from ..core.state import PipelineState
+from ...core.stage import Stage, StrategyInfo
+from ...core.state import PipelineState
 
 logger = logging.getLogger("harness.stage.plan")
 

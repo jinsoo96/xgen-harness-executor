@@ -15,8 +15,8 @@ v0.9.0: RAG 검색은 s06_context 가 단독 담당 — 이 Stage 는 state.rag_
 
 import logging
 
-from ..core.stage import Stage, StrategyInfo
-from ..core.state import PipelineState
+from ...core.stage import Stage, StrategyInfo
+from ...core.state import PipelineState
 
 logger = logging.getLogger("harness.stage.system_prompt")
 

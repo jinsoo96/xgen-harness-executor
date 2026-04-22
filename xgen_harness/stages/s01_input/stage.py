@@ -18,9 +18,9 @@ PHILOSOPHY §2 s01 "비담당" (v0.9.0+):
 import logging
 from typing import Any
 
-from ..core.stage import Stage, StrategyInfo
-from ..core.state import PipelineState
-from ..errors import ConfigError, PipelineAbortError
+from ...core.stage import Stage, StrategyInfo
+from ...core.state import PipelineState
+from ...errors import ConfigError, PipelineAbortError
 
 logger = logging.getLogger("harness.stage.input")
 
