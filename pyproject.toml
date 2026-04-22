@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.16.4"
-description = "XGEN Harness — s04_tool 브릿지: 전역 tool_sources 가 LLM tool_definitions 로 자동 전파 (end-to-end 도구 실행)"
+version = "0.16.5"
+description = "XGEN Harness — hot-fix: tool_result content string 정규화 (dict/list JSON 직렬화, Anthropic API 400 방지)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

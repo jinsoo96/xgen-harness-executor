@@ -124,9 +124,17 @@ class SynthesizedToolSource:
                 "timed_out": result.timed_out,
             }
         # stdout 의 JSON 첫 대상이 return_value. 없으면 raw stdout.
+        # v0.16.5 — LLM/Anthropic/OpenAI API 는 tool_result content 를 **string** 으로 요구.
+        # dict/list 반환 시 JSON 직렬화. 엔진 어떤 경로에서 slicing 해도 타입 안전.
+        import json as _json
         payload = result.return_value
         if payload is None:
             payload = result.stdout.strip()
+        if not isinstance(payload, str):
+            try:
+                payload = _json.dumps(payload, ensure_ascii=False, default=str)
+            except Exception:
+                payload = str(payload)
         return {"content": payload, "is_error": False}
 
     def has_tool(self, name: str) -> bool:

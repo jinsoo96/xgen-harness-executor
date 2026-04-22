@@ -340,13 +340,20 @@ class ExecuteStage(Stage):
                 return await registry.execute_tool(tool_name, tool_input)
 
         # 플러그인 ToolSource 경로 (register_tool_source로 등록된 소스)
+        # v0.16.5 — content 가 dict/list 로 오더라도 string 으로 정규화. Anthropic
+        # tool_result.content 는 string 필수 + 엔진 내부 slicing([:N]) 에서 TypeError 방지.
         from ...tools import get_tool_sources
+        import json as _json
         for source in get_tool_sources():
             if source.has_tool(tool_name):
                 result = await source.call_tool(tool_name, tool_input)
-                if isinstance(result, dict):
-                    return result.get("content", str(result))
-                return str(result)
+                content = result.get("content", result) if isinstance(result, dict) else result
+                if not isinstance(content, str):
+                    try:
+                        content = _json.dumps(content, ensure_ascii=False, default=str)
+                    except Exception:
+                        content = str(content)
+                return content
 
         # 레거시 폴백: state.metadata에 직접 등록된 Tool 인스턴스
         tool_registry = state.metadata.get("tool_registry", {})

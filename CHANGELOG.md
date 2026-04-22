@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.5] — 2026-04-22 (hot-fix)
+
+### 🔥 Tool result content string 정규화 — Anthropic 400 + slice TypeError 동시 수정
+
+v0.16.4 실측에서 5 도구 실호출 시도 시 두 에러 발생:
+1. `Tool 'cj_tool' failed: slice(None, 500, None)` — `result_text[:500]` 이 dict 에 대해 불가
+2. `HTTP 400: tool_result.content must be string or content block list` — Anthropic API 가 dict 거부
+
+원인:
+- `SynthesizedToolSource.call_tool` 가 dict payload 를 그대로 content 로 반환
+- `s07_act._dispatch_tool` 의 `result.get("content", str(result))` 가 dict 면 dict 그대로 리턴
+
+수정 (두 지점 동시):
+- `tools/synthesis.py::SynthesizedToolSource.call_tool` — content 가 str 이 아니면 JSON 직렬화
+- `stages/s07_act/stage.py::_dispatch_tool` ToolSource 경로 — 안전 가드. 둘 다 막히는 이중 방어
+
 ## [0.16.4] — 2026-04-22
 
 ### 🎯 s04_tool 브릿지 — 전역 tool_sources 가 LLM tool_definitions 로 자동 전파
