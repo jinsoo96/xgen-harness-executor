@@ -36,6 +36,10 @@ from ..events.types import (
 logger = logging.getLogger("harness.orchestrator")
 
 
+class DAGCycleError(ValueError):
+    """DAG 에 사이클이 존재 — `_topological_levels` 에서 감지 시 발생 (v0.11.27)."""
+
+
 @dataclass
 class AgentNode:
     """DAG의 노드 — 하네스 파이프라인 1개"""
@@ -292,7 +296,12 @@ class DAGOrchestrator:
         )
 
     def _topological_levels(self) -> list[list[str]]:
-        """토폴로지 정렬 — 레벨별 그룹화 (Kahn's algorithm)"""
+        """토폴로지 정렬 — 레벨별 그룹화 (Kahn's algorithm).
+
+        v0.11.27 — 사이클 감지 추가. Kahn 이 처리한 노드 수가 전체 노드 수보다 적으면
+        사이클이 존재한다는 뜻. 이전에는 빈 level 을 조용히 반환해 사이클 노드가
+        실행에서 누락됐다. 이제 `DAGCycleError` 로 명시적 실패.
+        """
         in_degree: dict[str, int] = defaultdict(int)
         adj: dict[str, list[str]] = defaultdict(list)
 
@@ -306,10 +315,12 @@ class DAGOrchestrator:
         # BFS
         queue = deque([n for n in self._nodes if in_degree[n] == 0])
         levels: list[list[str]] = []
+        processed = 0
 
         while queue:
             level = list(queue)
             levels.append(level)
+            processed += len(level)
             next_queue: deque[str] = deque()
             for node_id in level:
                 for neighbor in adj[node_id]:
@@ -317,6 +328,14 @@ class DAGOrchestrator:
                     if in_degree[neighbor] == 0:
                         next_queue.append(neighbor)
             queue = next_queue
+
+        if processed != len(self._nodes):
+            unresolved = [n for n in self._nodes if in_degree[n] > 0]
+            raise DAGCycleError(
+                f"DAG 에 사이클이 존재합니다: 미해결 노드 {unresolved} "
+                f"(총 {len(self._nodes)}개 중 {processed}개만 위상정렬 가능). "
+                "edges 를 점검하거나 orchestrator.remove_edge() 로 순환을 끊어주세요."
+            )
 
         return levels
 

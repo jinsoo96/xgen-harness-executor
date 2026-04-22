@@ -5,6 +5,39 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.27] — 2026-04-22
+
+### 🎯 2차 감사 지적 4건 일괄 해소 (기능 무력화 · 멀티턴 오염 · 사이클 silent drop · 집계 0 drop)
+
+외부 2차 감사에서 제시한 권고 5건 중 확인된 실버그 4건 + cosmetic 1건 전량 해소. s09_judge 가 평가 noop 에 빠져 있던 상태를 복원하고, 세션 오염·DAG 사이클 silent drop·이벤트 필터링 버그를 순차 수정.
+
+**🔴 #1 s09_judge LLMJudge provider 미주입 (기능 무력화 복원)**:
+- `stages/s09_judge.py::execute()` — `resolve_strategy` 후 `strategy.set_provider(state.provider)` 호출 추가.
+- 이전엔 `LLMJudge.__init__(provider=None)` 이후 `evaluate()` 가 `if not self._provider:` 로 조기 반환하여 s09_judge 가 **사실상 noop** 이었음. full preset 에서 평가/재시도 루프가 돌지 않던 근본 원인.
+- `set_provider` 미노출 전략(NoValidation/RuleBased)은 `hasattr` 가드로 영향 없음.
+
+**🔴 #2 core/session.py messages shallow copy (멀티턴 오염 차단)**:
+- `SessionManager.run_turn` — `self.state.messages.copy()` + for-push 조합이 **list 만 복사하고 내부 dict 는 공유**. 한 턴에서 메시지 dict 를 수정하면 이전 턴 이력까지 변질.
+- `copy.deepcopy` 전환. conversation_history / state.messages 둘 다 deepcopy.
+
+**🔴 #4 DAG Kahn 사이클 silent drop (명시 실패로 전환)**:
+- `orchestrator/dag.py::_topological_levels` — Kahn 이 처리한 노드 수(`processed`) 를 전체와 비교. `processed != len(self._nodes)` 면 사이클이므로 **`DAGCycleError(미해결 노드 목록)` raise**.
+- 이전엔 사이클 노드가 level 에 못 들어가 **조용히 실행 누락** 됐음. 이제 즉시 명시적 실패.
+- `DAGCycleError` 클래스 신설 + top-level export.
+
+**🟡 #3 events/types.py::event_to_dict falsy drop (관측성)**:
+- 이전: `v != 0 and v != 0.0 and v != ""` 로 합법적 0 값(`total_tokens=0` / `duration_ms=0` / `iterations=0` / `cost_usd=0.0`) 을 전부 drop.
+- 지금: `None` 만 필터 (빈 dict 도 제외). 프론트가 0 값을 정상적으로 받아 집계/그래프에 반영.
+
+**🟢 #5 Public API export 보강**:
+- `xgen_harness/__init__.py` top-level 에서 `RateLimitError` / `OverloadError` / `ContextOverflowError` / `ToolTimeoutError` / `MCPConnectionError` / `ValidationError` / `ErrorCategory` / `DAGCycleError` 추가 export. 외부 기여자가 `from xgen_harness import RateLimitError` 로 바로 catch 가능.
+
+**기존 사용자 영향**:
+- #1 은 지금까지 평가가 noop 이었으므로 활성화 후 **validation_score 가 실제 값** 으로 돌아온다 (이전엔 bypass). full preset 사용자는 재시도 루프가 실제로 발동할 수 있음.
+- #2 는 내부 동작, 성능 영향 미미.
+- #3 은 이벤트 payload 에 0 값 필드가 추가로 포함됨. 프론트에서 `undefined` 를 가정하고 `?? 0` 폴백 쓰던 코드는 그대로 동작.
+- #4 는 사이클이 있는 DAG 는 **지금까지도 실제 실행이 안 됐던** 상태 — 이제 명시적 실패로 전환되어 디버깅이 쉬워짐.
+
 ## [0.11.26] — 2026-04-22
 
 ### 🎯 XgenAdapter 하드코딩 제거 + services state 주입 (v0.11.25 감사 후속)

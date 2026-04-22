@@ -70,6 +70,14 @@ class ValidateStage(Stage):
         if strategy:
             from ..stages.interfaces import EvaluationStrategy
             if isinstance(strategy, EvaluationStrategy):
+                # v0.11.27 — LLMJudge 같은 provider 의존 전략은 set_provider 호출이 없으면
+                # self._provider=None 에서 멈춰 noop 으로 빠진다. 평가 전에 현재 provider
+                # 를 주입. 전략이 set_provider 를 노출하지 않으면 무시 (no-op 전략은 영향 없음).
+                if hasattr(strategy, "set_provider"):
+                    try:
+                        strategy.set_provider(state.provider)
+                    except Exception as e:
+                        logger.debug("[Validate] set_provider failed on %s: %s", strategy.name, e)
                 result = await strategy.evaluate(
                     user_input=state.user_input[:500],
                     assistant_response=state.last_assistant_text[:2000],

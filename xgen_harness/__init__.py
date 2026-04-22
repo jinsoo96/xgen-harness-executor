@@ -45,11 +45,20 @@ from .errors import (
     ProviderError,
     ToolError,
     PipelineAbortError,
+    # v0.11.27 — 세분화된 예외도 top-level 노출. 외부 기여자가
+    # `from xgen_harness import RateLimitError` 처럼 잡을 수 있도록.
+    RateLimitError,
+    OverloadError,
+    ContextOverflowError,
+    ToolTimeoutError,
+    MCPConnectionError,
+    ValidationError,
+    ErrorCategory,
 )
 from .core.builder import PipelineBuilder
 from .core.strategy_resolver import StrategyResolver
 from .core.session import HarnessSession, SessionManager
-from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult
+from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult, DAGCycleError
 from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
@@ -103,7 +112,7 @@ from .compile import (
     get_gallery,
 )
 
-__version__ = "0.11.26"
+__version__ = "0.11.27"
 
 __all__ = [
     # Core
@@ -149,6 +158,14 @@ __all__ = [
     "ProviderError",
     "ToolError",
     "PipelineAbortError",
+    # v0.11.27 — 세분화된 예외 top-level export
+    "RateLimitError",
+    "OverloadError",
+    "ContextOverflowError",
+    "ToolTimeoutError",
+    "MCPConnectionError",
+    "ValidationError",
+    "ErrorCategory",
     # Builder & Session
     "PipelineBuilder",
     "HarnessSession",
@@ -158,6 +175,7 @@ __all__ = [
     "AgentNode",
     "DAGEdge",
     "DAGResult",
+    "DAGCycleError",
     "MultiAgentExecutor",
     # Services (pluggable)
     "ServiceProvider",

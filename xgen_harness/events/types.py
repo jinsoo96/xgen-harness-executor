@@ -191,13 +191,18 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
     event_type = type_map.get(type(event), "unknown")
 
     data = {}
+    # v0.11.27 — 이전 필터 `v != 0 and v != 0.0 and v != ""` 은 합법적인 0 값
+    # (total_tokens=0, duration_ms=0, cost_usd=0.0, iterations=0 등) 을 전부 drop 시켜
+    # 프론트 집계/그래프가 undefined 로 깨졌다. 이제 `None` 만 필터하여 0 값을 그대로 전달.
+    # 단, 빈 dict 는 의미 없는 noise 라 그대로 제외.
     for k, v in event.__dict__.items():
         if k == "timestamp":
             continue
-        if v is not None and v != "" and v != 0 and v != {} and v != 0.0:
-            data[k] = v
-        elif k in ("is_error", "is_final", "success", "recoverable"):
-            data[k] = v
+        if v is None:
+            continue
+        if v == {}:
+            continue
+        data[k] = v
 
     data["timestamp"] = event.timestamp
     return {"event_type": event_type, "data": data}

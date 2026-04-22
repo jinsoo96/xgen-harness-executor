@@ -5,6 +5,7 @@ Session — 멀티턴 대화 + 설정 저장/로드
 하네스 설정과 대화 이력을 유지하여 멀티턴 실행.
 """
 
+import copy
 import json
 import logging
 import time
@@ -55,13 +56,15 @@ class HarnessSession:
         emitter = emitter or EventEmitter()
         pipeline = Pipeline.from_config(self.config, emitter)
 
+        # v0.11.27 — list.copy() 는 shallow 라 내부 dict 가 세션 이력과 공유됨.
+        # 멀티턴 실행 중 메시지 dict 를 건드리면 이전 턴 기록까지 변질되므로 deepcopy 로 격리.
         state = PipelineState(
             user_input=user_input,
-            conversation_history=self.state.messages.copy(),
+            conversation_history=copy.deepcopy(self.state.messages),
         )
-        # 이전 대화를 messages에 직접 주입 (s02_history 비활성이어도 동작)
+        # 이전 대화를 messages 에 직접 주입 (s02_history 비활성이어도 동작). 마찬가지로 deepcopy.
         for msg in self.state.messages:
-            state.messages.append(msg)
+            state.messages.append(copy.deepcopy(msg))
 
         await pipeline.run(state)
 
