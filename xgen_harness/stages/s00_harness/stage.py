@@ -37,6 +37,13 @@ class HarnessStage(Stage):
         return "s00_harness"
 
     @property
+    def role(self) -> str:
+        # v0.16.6 — Pipeline 이 이 Stage 를 ingress 최상단 prepend + bypass 금지 +
+        # Phase B replan 대상으로 특수 처리. Pipeline 은 이름 "s00_harness" 대신
+        # 이 role 을 본다.
+        return "orchestrator_planner"
+
+    @property
     def order(self) -> int:
         # s01 보다 먼저. Stage.phase 기본 계산은 order<=4 면 ingress 라 문제 없음.
         return 0

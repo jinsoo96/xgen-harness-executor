@@ -32,6 +32,12 @@ class ExecuteStage(Stage):
         return "s07_act"
 
     @property
+    def role(self) -> str:
+        # v0.16.6 — Pipeline 이 이 Stage 직전에 본문 LLM 호출(planner.main_call)을 주입.
+        # 역할 이름은 "main_actor" — 외부 Stage 가 자기를 같은 role 로 바꿔 끼우면 자동.
+        return "main_actor"
+
+    @property
     def order(self) -> int:
         return 7
 

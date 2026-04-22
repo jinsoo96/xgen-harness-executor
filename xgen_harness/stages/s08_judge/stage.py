@@ -54,6 +54,11 @@ class ValidateStage(Stage):
         return "s08_judge"
 
     @property
+    def role(self) -> str:
+        # v0.16.6 — Pipeline 이 StageExitEvent.score 에 validation_score 를 싣는 대상.
+        return "scorer"
+
+    @property
     def order(self) -> int:
         return 8
 

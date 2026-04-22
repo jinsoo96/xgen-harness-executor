@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.16.5"
-description = "XGEN Harness — hot-fix: tool_result content string 정규화 (dict/list JSON 직렬화, Anthropic API 400 방지)"
+version = "0.16.6"
+description = "XGEN Harness — Pipeline Role 체계 (Stage 이름 리터럴 0): orchestrator_planner / main_actor / scorer 선언형"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

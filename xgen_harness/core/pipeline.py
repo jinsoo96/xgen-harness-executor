@@ -70,18 +70,20 @@ class Pipeline:
         reg = registry or _get_default_registry()
         stages = reg.build_pipeline_stages(config)
 
-        # v0.14.0 — s00_harness 는 본문 LLM 호출도 소유. harness_mode 가 "off" 가 아닌
-        # 이상 항상 주입. use_planner=True 는 레거시 호환으로 autonomous 로 파생됨.
+        # v0.14.0/v0.16.6 — "orchestrator_planner" role Stage (예: s00_harness) 를
+        # ingress 최상단에 prepend. 이름 리터럴 대신 **role 검색** 으로 전환.
+        # 외부 기여자가 자기 Planner Stage 를 `role == "orchestrator_planner"` 로
+        # 선언하면 Pipeline 코드 변경 0 으로 대체 가능.
         mode = getattr(config, "harness_mode", "") or ("autonomous" if config.use_planner else "off")
         if mode != "off":
-            try:
-                s00_cls = reg.get("s00_harness", "default")
-                s00 = s00_cls()
-                stages = [s for s in stages if s.stage_id != "s00_harness"]
-                stages.insert(0, s00)
-                logger.info("[Pipeline] s00_harness 주입 (mode=%s)", mode)
-            except KeyError:
-                logger.warning("[Pipeline] s00_harness 미등록 — 기본 파이프라인으로 진행")
+            planner_stage = _find_role_in_registry(reg, config, "orchestrator_planner")
+            if planner_stage is not None:
+                # 기존 stages 에서 같은 stage_id 제거 후 최상단 prepend.
+                stages = [s for s in stages if s.stage_id != planner_stage.stage_id]
+                stages.insert(0, planner_stage)
+                logger.info("[Pipeline] Planner 주입 (mode=%s, stage_id=%s)", mode, planner_stage.stage_id)
+            else:
+                logger.warning("[Pipeline] orchestrator_planner role Stage 미등록 — 기본 파이프라인으로 진행")
 
         return cls(config, stages, event_emitter)
 
@@ -151,10 +153,10 @@ class Pipeline:
                         break
 
                 for stage in self.loop_stages:
-                    # v0.14.0 — s07_act 직전에 s00 본문 LLM 호출 주입.
-                    # s07_llm Stage 삭제로 생긴 공백을 s00_harness.main_call 이 메움.
-                    # Plan 이 s07_act 를 건너뛰더라도 본문 호출은 필요 → 별도 분기.
-                    if stage.stage_id == "s07_act" and s00_stage is not None:
+                    # v0.16.6 — "main_actor" role Stage 직전에 Planner 의 main_call 주입.
+                    # 이름 리터럴("s07_act") 대신 Stage.role 로 검색 → 외부 Stage 가
+                    # 같은 role 로 바꿔 끼워도 자동 인식.
+                    if stage.role == "main_actor" and s00_stage is not None:
                         await self._invoke_main_call(state, s00_stage)
 
                     if self._planner_skips(stage, state):
@@ -268,7 +270,8 @@ class Pipeline:
                 stage_id=stage.stage_id,
                 stage_name=stage.display_name_ko,
                 output=result,
-                score=state.validation_score if stage.stage_id == "s08_judge" else None,
+                # v0.16.6 — "scorer" role Stage 의 StageExit 에만 validation_score 노출.
+                score=state.validation_score if stage.role == "scorer" else None,
                 step=step,
                 total=self._total_stage_count,
             ))
@@ -366,9 +369,9 @@ class Pipeline:
 
         Plan 미수립(state.metadata["harness_plan"] 없음) 또는 chosen 이 비어있는
         fallback 상태에서는 skip 하지 않음 (전체 실행 — 하위 호환).
-        s00_harness 자체는 Plan 생성 주체이므로 절대 skip 되지 않는다.
+        v0.16.6 — Planner 자신(role="orchestrator_planner") 은 skip 대상 외.
         """
-        if stage.stage_id == "s00_harness":
+        if stage.role == "orchestrator_planner":
             return False
         plan = state.metadata.get("harness_plan")
         if not isinstance(plan, dict):
@@ -387,30 +390,31 @@ class Pipeline:
             return f"Planner: {reason}"
         return "Planner 가 이번 턴에는 불필요하다고 판단"
 
-    async def _invoke_main_call(self, state: PipelineState, s00_stage: Stage) -> None:
-        """v0.14.0 — s00_harness 의 main_call 호출 (본문 LLM 호출).
+    async def _invoke_main_call(self, state: PipelineState, planner_stage: Stage) -> None:
+        """v0.14.0/v0.16.6 — Planner(role="orchestrator_planner") 의 main_call 호출.
 
-        과거 s07_llm 이 하던 역할. StageEnter/Exit 이벤트는 s00_harness 이름으로
-        발행하고, 내부적으로 state.config.active_strategies['s00_harness'] 값을 보고
-        streaming vs batch 선택.
+        StageEnter/Exit 이벤트는 planner_stage.stage_id 를 그대로 사용.
+        transport 선택은 `state.config.active_strategies[<stage_id>]` — 이름 리터럴 없음.
         """
-        if not hasattr(s00_stage, "main_call"):
-            logger.error("[Pipeline] s00_stage has no main_call — upgrade required")
+        if not hasattr(planner_stage, "main_call"):
+            logger.error("[Pipeline] planner_stage has no main_call — upgrade required")
             return
 
-        step = self._get_step_number(s00_stage)
+        sid = planner_stage.stage_id
+        step = self._get_step_number(planner_stage)
         transport = "streaming"
         if state.config:
-            active = state.config.active_strategies.get("s00_harness")
-            if active in ("streaming", "batch"):
+            active = state.config.active_strategies.get(sid)
+            if isinstance(active, str) and active:
                 transport = active
-            params = state.config.stage_params.get("s00_harness") or {}
-            if params.get("strategy") in ("streaming", "batch"):
-                transport = params["strategy"]
+            params = state.config.stage_params.get(sid) or {}
+            strat = params.get("strategy")
+            if isinstance(strat, str) and strat:
+                transport = strat
 
         await self.event_emitter.emit(StageEnterEvent(
-            stage_id="s00_harness",
-            stage_name=s00_stage.display_name_ko,
+            stage_id=sid,
+            stage_name=planner_stage.display_name_ko,
             phase="loop",
             step=step,
             total=self._total_stage_count,
@@ -419,31 +423,30 @@ class Pipeline:
 
         t0 = time.time()
         try:
-            result = await s00_stage.main_call(state, strategy=transport)
+            result = await planner_stage.main_call(state, strategy=transport)
             elapsed = time.time() - t0
-            state.stage_timings["s00_harness_main_call"] = elapsed * 1000
+            state.stage_timings[f"{sid}_main_call"] = elapsed * 1000
             await self.event_emitter.emit(StageExitEvent(
-                stage_id="s00_harness",
-                stage_name=s00_stage.display_name_ko,
+                stage_id=sid,
+                stage_name=planner_stage.display_name_ko,
                 output=result,
                 step=step,
                 total=self._total_stage_count,
             ))
         except Exception as e:
             await self.event_emitter.emit(ErrorEvent(
-                message=str(e), stage_id="s00_harness", recoverable=False,
+                message=str(e), stage_id=sid, recoverable=False,
             ))
             raise
 
     def _find_loop_s00(self) -> Optional[Stage]:
-        """iterative replan 용 s00_harness 인스턴스 조회.
+        """v0.16.6 — Planner(role="orchestrator_planner") 인스턴스 조회.
 
-        Pipeline.from_config 가 use_planner=True 면 s00 을 ingress 최상단에 prepend
-        한다. Phase B iter 의 replan 은 같은 인스턴스를 재호출해야 Plan 이 누적·갱신
-        된다. Planner 비활성이면 None 반환.
+        Phase B iter 의 replan 은 같은 인스턴스를 재호출해야 Plan 이 누적·갱신.
+        Planner 비활성이면 None 반환. 이름 리터럴 없이 role 로만 검색.
         """
         for stage in self._all_stages:
-            if stage.stage_id == "s00_harness":
+            if stage.role == "orchestrator_planner":
                 return stage
         return None
 
@@ -452,6 +455,26 @@ class Pipeline:
             if s.stage_id == stage.stage_id:
                 return i
         return 0
+
+
+def _find_role_in_registry(reg, config, role: str) -> Optional[Stage]:
+    """레지스트리에서 role 일치 Stage 를 찾아 인스턴스 반환.
+
+    v0.16.6 — Pipeline 이 Stage 이름 리터럴 없이 role 기반으로 특수 분기 찾도록.
+    외부 플러그인 Stage 가 같은 role 로 선언하면 자동으로 잡힌다.
+    """
+    try:
+        for sid in reg._registry.keys():  # type: ignore[attr-defined]
+            try:
+                cls = reg.get(sid, "default")
+                inst = cls()
+                if inst.role == role:
+                    return inst
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
 
     def describe(self) -> list[dict]:
         """파이프라인 스테이지 설명 목록 (API/UI용)"""

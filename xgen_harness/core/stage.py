@@ -114,6 +114,25 @@ class Stage(ABC):
         spec = get_stage_io(self.stage_id)
         return spec.get("output")
 
+    # v0.16.6 — Pipeline Role 체계. Pipeline Orchestrator 가 특정 Stage 를
+    # 이름(stage_id)으로 알고 있던 12 지점을 **Stage 가 자기 역할을 선언** 하는
+    # 방식으로 전환. 외부 기여자가 자기 Stage 를 같은 역할로 바꿔 끼우면 Pipeline
+    # 코드 변경 0. 하드코딩 리터럴 제거의 핵심.
+    #
+    # 엔진이 알고 있는 역할 (확장 자유):
+    #   "orchestrator_planner" — Plan 수립 + ingress 최상단 prepend + bypass 금지.
+    #                            Pipeline Phase B iter 시작에 재실행(replan).
+    #   "main_actor"           — 본문 LLM 호출을 이 Stage **직전** 에 주입.
+    #                            (과거 s07_llm 자리를 planner.main_call 이 메움)
+    #   "scorer"               — StageExit 이벤트의 score 필드에
+    #                            state.validation_score 를 노출.
+    #
+    # 외부 플러그인이 새 role 을 도입해도 Pipeline 은 그 role 을 모르고 단순히
+    # `_find_by_role(name)` 이 None 반환 → 그 분기만 조용히 비활성.
+    @property
+    def role(self) -> str:
+        return ""
+
     @property
     def display_name(self) -> str:
         return STAGE_DISPLAY_NAMES.get(self.stage_id, self.stage_id)

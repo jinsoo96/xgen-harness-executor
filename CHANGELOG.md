@@ -5,6 +5,41 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.6] — 2026-04-22
+
+### 🎯 Pipeline Role 체계 — Stage 이름 리터럴 12 → 0
+
+사용자 감사에서 지적된 잔재: `pipeline.py` 가 `s00_harness`/`s07_act`/`s08_judge` 를 이름으로 직접 알고 있었음 (12 hit). "s07_act → s07_execute 리네임 시 Pipeline 도 고쳐야" 하는 **확장성 위반**.
+
+### 수정
+- `Stage.role` 속성 도입 (`core/stage.py`). 기본 빈 문자열
+- 3 개 Role 정의:
+  - **`orchestrator_planner`** — ingress 최상단 prepend + bypass 금지 + Phase B replan 대상 (s00_harness)
+  - **`main_actor`** — Planner 의 main_call 을 이 Stage **직전** 에 주입 (s07_act)
+  - **`scorer`** — `StageExitEvent.score` 에 `validation_score` 노출 (s08_judge)
+- `pipeline.py` 모든 특수 분기를 role 기반 검색으로 전환
+  - `reg.get("s00_harness", ...)` → `_find_role_in_registry(reg, cfg, "orchestrator_planner")`
+  - `if stage.stage_id == "s07_act"` → `if stage.role == "main_actor"`
+  - `if stage.stage_id == "s08_judge"` → `if stage.role == "scorer"`
+  - `_planner_skips` / `_find_loop_s00` / `_invoke_main_call` 전부 role 기반
+- `planner.py` 의 `stage_id="s00_harness"` 리터럴도 role 조회로 제거
+
+### 자가검증 (grep)
+- `pipeline.py` / `planner.py` 실 로직 Stage 이름 리터럴: **12 → 0** ✅
+- 3 Role 선언 확인: `orchestrator_planner` 1, `main_actor` 1, `scorer` 1 ✅
+- `_find_role_in_registry(reg, cfg, "orchestrator_planner")` = `s00_harness` 인스턴스 반환 ✅
+- `_find_loop_s00()` = role 기반으로 `s00_harness` 인스턴스 반환 ✅
+
+### bench 동반 (외부 어댑터)
+- `bench/prod_schema.py` 신설 — 운영 `functionId` 상수 (`api_loader` / `mcp` / `tools` 등) 단일 파일로 분리
+- `bench/collect_prod_catalog.py` 가 `classify` / `is_extractable` / `extractor_for` 헬퍼만 import
+- 운영 스키마 변경 시 `bench/prod_schema.py` 한 곳만 수정
+
+### 영향
+- 외부 기여자가 `role="orchestrator_planner"` 선언한 자기 Planner Stage 로 바꿔 끼우면 Pipeline 수정 0
+- `main_actor` / `scorer` 도 같은 방식으로 교체 가능
+- v0.16.5 에서 발견된 hot-fix (tool_result content 정규화) 와 독립적 개선
+
 ## [0.16.5] — 2026-04-22 (hot-fix)
 
 ### 🔥 Tool result content string 정규화 — Anthropic 400 + slice TypeError 동시 수정

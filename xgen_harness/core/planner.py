@@ -226,7 +226,24 @@ class HarnessPlanner:
         from .provider_bootstrap import ensure_provider
 
         try:
-            await ensure_provider(state, stage_id="s00_harness")
+            # v0.16.6 — Planner 자신의 stage_id 는 레지스트리에서 role 로 찾아 사용.
+            # 외부 Planner Stage 가 role="orchestrator_planner" 로 선언하면 자동 호환.
+            # 하드코딩 0 — fallback 없이 미발견 시 빈 문자열 (ensure_provider 가 파이프라인
+            # 단계 식별용으로만 사용하므로 무해).
+            _planner_sid = ""
+            try:
+                from .registry import _get_default_registry
+                reg = _get_default_registry()
+                for sid in reg._registry.keys():
+                    try:
+                        if reg.get(sid, "default")().role == "orchestrator_planner":
+                            _planner_sid = sid
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            await ensure_provider(state, stage_id=_planner_sid or "planner")
         except Exception as e:
             logger.warning("[Planner] provider init failed: %s", e)
             return HarnessPlan.fallback_all(f"Provider init failed: {e}")
