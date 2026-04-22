@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.23] — 2026-04-22
+
+### 🎯 options_source 전면 선언 → 이식 수동 매핑 자연 삭제 경로 활성화
+
+사용자 지적 "하드코딩으로 쳐박는 거 / 이식을 안 하려고 발광" 에 대응. v0.11.21 에서 만든 이식 `register_option_source` 자동 역매핑이 엔진 stage_config 에 선언된 `options_source` 2 개만 의존 → 나머지 19 곳은 이식에서 여전히 수동 박혀 있었음. 이번 릴리즈에서 엔진이 UI 선택지 전체를 공식 선언해 수동 매핑이 drift 없이 제거되는 수렴 경로 확보.
+
+**추가 선언 (엔진 stage_config)**:
+- `s01_input.provider` — `options_source="providers"` (provider/model 선택)
+- `s03_prompt.prompt_id` — `options_source="prompt-store"` (저장 템플릿)
+- `s04_tool.custom_tools` — `options_source="tools"` (Custom API Tools)
+- `s04_tool.cli_skills` — `options_source="local-cli-skills"` (Local CLI)
+- `s04_tool.capabilities` — `options_source="capabilities"` (Capability 카탈로그)
+- `s04_tool.node_tags` — `options_source="nodes-tags"` (노드 태그)
+- `s06_context.ontology_collections` — `options_source="ontology-collections"`
+- `s06_context.folders` — `options_source="folders"`
+- `s06_context.files` — `options_source="files"`
+- `s06_context.db_connections` — `options_source="db-connections"`
+
+**효과**: 이식 `harness_options_registry.bootstrap_default_sources` 에서 spec.stage_id/stage_param_key 를 빈 문자열로 둬도 엔진 역매핑으로 자동 채워짐. drift 감지가 동작해 엔진/이식 간 불일치 시 경고 로그. 이식 측에서 11 라인 수동 박음을 안전하게 제거 가능 (v0.11.21 도입 자동 채움 infra 가 실제 효력 발휘).
+
+**frontend**: 필드 추가만으로 자동 렌더 — 엔진이 UI 필드의 단일 진실 소스. 이식/프론트 코드 수정 0.
+
 ## [0.11.22] — 2026-04-22
 
 ### 🎯 확장성·연동성 있는 잔여 부채 해소 (사용자 "빠짐 없이" 후속)

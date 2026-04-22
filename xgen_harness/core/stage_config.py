@@ -55,7 +55,20 @@ STAGE_CONFIGS: dict[str, dict] = {
         "description_ko": "사용자 입력을 검증하고 첨부 파일을 content block 으로 정규화합니다.",
         "description_en": "Validates user input and normalizes attached files to content blocks.",
         "icon": "📥",
-        "fields": [],
+        "fields": [
+            # v0.11.23 — provider/model 선택을 엔진 stage_config 에 공식 선언.
+            # 이전에는 이식 `harness_options_registry.py` 가 stage_id="s01_input",
+            # stage_param_key="provider" 를 수동 매핑했다. 이제 엔진 options_source 를
+            # 통해 자동 역매핑된다.
+            {
+                "id": "provider",
+                "label": "LLM Provider / Model",
+                "type": "select",
+                "options_source": "providers",
+                "default": "",
+                "description": "사용할 LLM 프로바이더 + 모델. 옵션은 runtime 등록된 provider 레지스트리에서 자동 로드.",
+            },
+        ],
         "behavior": [
             "빈 입력 거부",
             "파일 첨부: base64 이미지 · 텍스트 블록 변환",
@@ -102,6 +115,15 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "textarea",
                 "placeholder": "에이전트의 역할을 정의하세요...",
                 "default": "",
+            },
+            # v0.11.23 — prompt store / my-prompts 선택. 이전에 이식에 stage_id 수동 매핑.
+            {
+                "id": "prompt_id",
+                "label": "Prompt Store / My Prompts",
+                "type": "select",
+                "options_source": "prompt-store",
+                "default": "",
+                "description": "저장된 프롬프트 템플릿을 선택하면 system_prompt 대신 사용. 비워두면 system_prompt 그대로.",
             },
             {
                 "id": "include_rules",
@@ -182,6 +204,41 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "toggle",
                 "default": False,
                 "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건. rag_tool_mode=tool + rag_ingestion_mode=tool_only 조합 필수.",
+            },
+            # v0.11.23 — 이식 options_source 4종을 엔진 stage_config 에 공식 선언.
+            # 이전까지 이식 `harness_options_registry.py` 에서 stage_id="s04_tool" 을
+            # 수동으로 박아두던 것을 자동 역매핑 경로로 전환.
+            {
+                "id": "custom_tools",
+                "label": "Custom API Tools",
+                "type": "multi_select",
+                "options_source": "tools",
+                "default": [],
+                "description": "사용자 도구 저장소에 등록된 API 도구 선택.",
+            },
+            {
+                "id": "cli_skills",
+                "label": "Local CLI Skills",
+                "type": "multi_select",
+                "options_source": "local-cli-skills",
+                "default": [],
+                "description": "Local CLI skill 도구 선택.",
+            },
+            {
+                "id": "capabilities",
+                "label": "Capabilities",
+                "type": "multi_select",
+                "options_source": "capabilities",
+                "default": [],
+                "description": "Capability 카탈로그 선택 — 도구 자동 바인딩.",
+            },
+            {
+                "id": "node_tags",
+                "label": "Node Tags",
+                "type": "multi_select",
+                "options_source": "nodes-tags",
+                "default": [],
+                "description": "xgen 노드 태그 기반 도구 그룹.",
             },
         ],
         "behavior": [
@@ -267,6 +324,39 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "toggle",
                 "default": False,
                 "description": "켜면 xgen-documents 리랭커로 검색 결과 재정렬. provider 는 서버 기동 시 설정된 값 사용",
+            },
+            # v0.11.23 — 이식 options_source 5종 공식 선언. 이전에 harness_options_registry 수동 매핑.
+            {
+                "id": "ontology_collections",
+                "label": "Ontology / GraphRAG",
+                "type": "multi_select",
+                "options_source": "ontology-collections",
+                "default": [],
+                "description": "GraphRAG / ontology 검색용 컬렉션.",
+            },
+            {
+                "id": "folders",
+                "label": "Folders (컬렉션 그룹)",
+                "type": "multi_select",
+                "options_source": "folders",
+                "default": [],
+                "description": "스토리지 폴더 선택 — 폴더 안 컬렉션 자동 확장.",
+            },
+            {
+                "id": "files",
+                "label": "Files (업로드 파일)",
+                "type": "multi_select",
+                "options_source": "files",
+                "default": [],
+                "description": "업로드된 파일 개별 선택.",
+            },
+            {
+                "id": "db_connections",
+                "label": "DB Connections",
+                "type": "multi_select",
+                "options_source": "db-connections",
+                "default": [],
+                "description": "DB 연결 선택 — 스키마 요약이 system_prompt 에 주입.",
             },
             {
                 "id": "enhance_prompt",

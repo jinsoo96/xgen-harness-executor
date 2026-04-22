@@ -98,7 +98,7 @@ from .compile import (
     get_gallery,
 )
 
-__version__ = "0.11.22"
+__version__ = "0.11.23"
 
 __all__ = [
     # Core
