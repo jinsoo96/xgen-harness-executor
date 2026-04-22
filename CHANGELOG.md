@@ -5,6 +5,20 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2] — 2026-04-22 (hot-fix)
+
+### 🔥 streaming transport UnboundLocalError 수정
+
+실 LLM 스모크 테스트에서 발견된 치명 버그:
+```
+cannot access local variable 'call_count' where it is not associated with a value
+```
+
+- `core/llm_call.py:74` — 초기화되지 않은 `call_count += 1` 제거
+- `state.llm_call_count` 가 실제 누적 카운터, 반환값의 `call_count=1` 은 단일 호출 고정
+- 영향: Auto 모드에서 응답은 나왔지만 마무리 단계에서 에러 이벤트 2 건 발생 (사용자 경험 저하)
+- 실측 검증: `한국의 수도?` 스모크 PASS (Planner 3 Stage 선택 + 답변 "서울")
+
 ## [0.16.1] — 2026-04-22
 
 ### 🎯 하드코딩 제거 감사 + Sandbox 리소스 하드닝 + 통합 매니페스트

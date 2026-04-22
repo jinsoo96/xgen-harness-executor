@@ -70,8 +70,9 @@ async def _call_main_llm(
     has_tool_calls = False
 
     # 단일 LLM 호출. 도구 루프는 Pipeline 이 반복 (s00.main_call ↔ s07_act).
+    # v0.16.2 — 죽은 변수 `call_count += 1` 제거 (UnboundLocalError 원인).
+    # state.llm_call_count 가 실제 누적 카운터, 반환값의 call_count=1 은 단일 호출 표시.
     result_text, tool_calls, usage = await _call_with_retry(state, stage_id=stage_id, stream=stream)
-    call_count += 1
     state.llm_call_count += 1
 
     # 토큰 사용량 업데이트
