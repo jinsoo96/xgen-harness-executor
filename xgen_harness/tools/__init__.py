@@ -22,6 +22,12 @@ logger = logging.getLogger("harness.tools")
 
 _TOOL_SOURCES: list = []
 _ENTRY_POINTS_DISCOVERED = False
+_MANIFEST_PRELOADED = False
+
+# v0.16.3 자동 연동 — 환경 변수에 매니페스트 파일 경로가 지정되면, 첫 조회 시
+# `compile.local_manifest.LocalManifest` 를 통해 SynthesizedTool 을 자동 등록.
+# 여러 파일은 OS path separator(`:` on posix, `;` on windows) 또는 JSON list 로.
+ENV_PRELOAD_MANIFEST = "XGEN_HARNESS_PRELOAD_MANIFEST"
 
 
 @runtime_checkable
@@ -56,9 +62,11 @@ def get_tool_sources() -> list:
     """등록된 모든 도구 소스 반환 (복사본).
 
     v0.15.2 — 첫 호출 시 `xgen_harness.tool_sources` entry_points 자동 스캔.
+    v0.16.3 — `XGEN_HARNESS_PRELOAD_MANIFEST` env 의 LocalManifest 파일도 자동 로드.
     외부 패키지가 `pyproject.toml` 에 선언만 해도 엔진 무수정 합류.
     """
     _discover_from_entry_points_once()
+    _preload_manifest_once()
     return list(_TOOL_SOURCES)
 
 
@@ -114,3 +122,36 @@ def _register_entry_point_result(result) -> None:
         for item in result:
             if isinstance(item, ToolSource):
                 register_tool_source(item)
+
+
+def _preload_manifest_once() -> None:
+    """`XGEN_HARNESS_PRELOAD_MANIFEST` env 에 지정된 LocalManifest 파일을 자동 로드.
+
+    v0.16.3 자동 연동 자동 확장성 — 운영/이식 측이 매니페스트 파일 경로만
+    환경변수로 주입하면 엔진 코드 변경 0. Tool Synthesis Loop 로 만든 도구
+    번들을 다른 프로세스 / 다른 인스턴스에 그대로 주입 가능.
+
+    여러 경로는 OS path separator (`os.pathsep`) 로 구분.
+    """
+    global _MANIFEST_PRELOADED
+    if _MANIFEST_PRELOADED:
+        return
+    _MANIFEST_PRELOADED = True
+    import os
+    env_val = os.environ.get(ENV_PRELOAD_MANIFEST, "").strip()
+    if not env_val:
+        return
+    paths = [p.strip() for p in env_val.split(os.pathsep) if p.strip()]
+    try:
+        from ..tools.synthesis import load_synthesized_from_gallery
+    except Exception as e:
+        logger.debug("[tools] preload: synthesis import failed: %s", e)
+        return
+    for p in paths:
+        try:
+            restored = load_synthesized_from_gallery(p)
+            for tool in restored:
+                register_tool_source(tool.as_source())
+            logger.info("[tools] preload manifest %s: %d tools", p, len(restored))
+        except Exception as e:
+            logger.warning("[tools] preload %s failed: %s", p, e)

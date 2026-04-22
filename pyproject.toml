@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.16.2"
-description = "XGEN Harness — v0.16.1 + hot-fix UnboundLocalError in llm_call (streaming transport)"
+version = "0.16.3"
+description = "XGEN Harness — XGEN_HARNESS_PRELOAD_MANIFEST env 기반 도구 자동 주입 (Tool Synthesis 번들 이식)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

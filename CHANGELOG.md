@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.3] — 2026-04-22
+
+### 🎯 Tool Synthesis 번들 자동 주입 훅
+
+**확장성·연동성 — 하드코딩 금지 준수**: `XGEN_HARNESS_PRELOAD_MANIFEST` 환경 변수만 지정하면 프로세스 시작 시 LocalManifest 파일을 읽어 SynthesizedTool 을 자동 등록.
+
+- `tools/__init__.py` 에 `ENV_PRELOAD_MANIFEST = "XGEN_HARNESS_PRELOAD_MANIFEST"` 단일 상수
+- `get_tool_sources()` 첫 조회 시 idempotent 로드
+- 다중 파일은 OS path separator (`os.pathsep`) 로 구분
+- `compile.local_manifest` 스키마 재사용 — synthesis 가 만든 파일을 운영·이식 프로세스에 **그대로** 주입
+- 활용: 홈쇼핑 5 개 HTTP API (cj/gs/hs/lotte/naver keywords) 를 SynthesizedTool 로 wrap → manifest 저장 → env 주입 → 하네스 프로세스가 자동 인식
+
+### 자가검증
+- `XGEN_HARNESS_PRELOAD_MANIFEST=/path/to.json` 설정 후 `get_tool_sources()` → 5 도구 자동 등록 PASS
+- 프로세스 간 tool 전파 — synthesis 프로세스가 만든 manifest 를 다른 프로세스(하네스 서버) 가 재사용 PASS
+
 ## [0.16.2] — 2026-04-22 (hot-fix)
 
 ### 🔥 streaming transport UnboundLocalError 수정
