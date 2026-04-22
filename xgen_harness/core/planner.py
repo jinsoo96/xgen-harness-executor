@@ -63,6 +63,11 @@ class HarnessPlan:
     done: bool = False
     source: str = "llm"
     planner_model: str = ""
+    # v0.15.0 — 자율주행 확장. LLM 이 이번 요청에 "몇 번 돌면 충분한지"와
+    # "어떤 실행 패턴이 어울리는지" 를 직접 판단해 주입한다.
+    # None / "" 이면 config 기본값 유지.
+    max_iterations: Optional[int] = None
+    orchestrator_hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -125,17 +130,63 @@ PLAN_TOOL_INPUT_SCHEMA: dict[str, Any] = {
                 "돌리면 Pipeline 이 즉시 종료한다."
             ),
         },
+        "max_iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": (
+                "이번 요청에 **적정한 최대 반복 횟수**. 단발성 질의는 1~2, "
+                "도구 연쇄·reflection 필요한 복잡 요청은 5~10, 리서치/리포트는 10~20. "
+                "미지정 시 HarnessConfig.max_iterations 기본값(10) 사용."
+            ),
+        },
+        "orchestrator_hint": {
+            # enum 은 `build_plan_tool()` 이 런타임에 OrchestratorRegistry 에서 동적 주입.
+            # 여기에 리터럴 목록을 박지 않아 외부 플러그인이 즉시 합류 가능.
+            "type": "string",
+            "description": (
+                "실행 패턴 힌트. 빈 문자열이면 이식측 기본 dispatcher. "
+                "유효 값은 OrchestratorRegistry 에서 동적 발견 — 엔진 기본 + 외부 플러그인 합산."
+            ),
+        },
     },
     "required": ["chosen", "reasoning"],
 }
 
 
 def build_plan_tool() -> dict[str, Any]:
-    """provider.chat(tools=[...]) 에 넘길 도구 정의. Anthropic 포맷 기준 — OpenAI 변환은 provider 내부."""
+    """provider.chat(tools=[...]) 에 넘길 도구 정의.
+
+    v0.15.0 자동 연동 자동 확장성 — `orchestrator_hint.enum` 을 매 호출마다
+    OrchestratorRegistry 에서 **런타임 조회**해 주입한다. 외부 패키지가
+    `register_orchestrator("my_pattern")` 한 줄만 해도 즉시 LLM 선택지에 합류.
+    """
+    from .orchestrator_registry import list_orchestrators, get_orchestrator_specs
+
+    # 얕은 복사로 동적 enum 주입 — 원본 상수는 불변.
+    props = {k: dict(v) if isinstance(v, dict) else v
+             for k, v in PLAN_TOOL_INPUT_SCHEMA["properties"].items()}
+    orch_names = list_orchestrators()
+    if orch_names:
+        orch_field = dict(props.get("orchestrator_hint") or {})
+        orch_field["enum"] = orch_names
+        # 각 enum 값의 설명을 description 에 합성 — LLM 이 고를 때 무슨 의미인지 바로 봄.
+        specs = get_orchestrator_specs()
+        legend = "; ".join(f"{s['name']}={s['description']}" for s in specs if s.get("description"))
+        if legend:
+            orch_field["description"] = (
+                (orch_field.get("description") or "") + " 유효 값: " + legend
+            )
+        props["orchestrator_hint"] = orch_field
+
+    schema = {
+        **PLAN_TOOL_INPUT_SCHEMA,
+        "properties": props,
+    }
     return {
         "name": PLAN_TOOL_NAME,
         "description": PLAN_TOOL_DESCRIPTION,
-        "input_schema": PLAN_TOOL_INPUT_SCHEMA,
+        "input_schema": schema,
     }
 
 
@@ -304,6 +355,21 @@ class HarnessPlanner:
         reasoning = tool_input.get("reasoning") or ""
         done = bool(tool_input.get("done"))
 
+        # v0.15.0 자율주행 — LLM 이 적정 반복 수 / 오케스트레이터 힌트 결정
+        raw_max_iter = tool_input.get("max_iterations")
+        max_iterations: Optional[int] = None
+        if isinstance(raw_max_iter, int) and 1 <= raw_max_iter <= 50:
+            max_iterations = raw_max_iter
+        orchestrator_hint = tool_input.get("orchestrator_hint") or ""
+        if not isinstance(orchestrator_hint, str):
+            orchestrator_hint = ""
+        # v0.15.0 — 레지스트리 기반 검증. 하드코딩 리터럴 없음. 외부 플러그인이
+        # 등록한 이름도 즉시 허용된다 (자동 연동 자동 확장성).
+        if orchestrator_hint:
+            from .orchestrator_registry import list_orchestrators
+            if orchestrator_hint not in list_orchestrators():
+                orchestrator_hint = ""
+
         if not isinstance(chosen, list):
             chosen = []
         if not isinstance(skipped, dict):
@@ -343,4 +409,6 @@ class HarnessPlanner:
             reasoning=reasoning,
             done=done,
             source="llm",
+            max_iterations=max_iterations,
+            orchestrator_hint=orchestrator_hint,
         )

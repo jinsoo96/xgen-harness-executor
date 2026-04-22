@@ -187,6 +187,8 @@ class PlanningEvent(HarnessEvent):
     source: str = "llm"                                 # "llm" | "fallback_all" | "error"
     iteration: int = 0                                  # 몇 번째 replan 인지 (0=Phase A 첫 Plan, 1~=iterative)
     done: bool = False                                  # Planner 가 "이 iter 로 종료" 선언
+    max_iterations: int = 0                             # v0.15.0 — LLM 이 제시한 이번 요청 적정 반복 수 (0=기본값 유지)
+    orchestrator_hint: str = ""                         # v0.15.0 — "linear"|"iterative"|"react"|"plan_execute"|"dag"
 
 
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:

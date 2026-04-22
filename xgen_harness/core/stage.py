@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 # v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 LLM 통제탑.
 STAGE_DISPLAY_NAMES: dict[str, str] = {
-    "s00_harness":    "Harness",
+    "s00_harness":    "Auto",
     "s01_input":      "Input",
     "s02_history":    "History",
     "s03_prompt":     "Prompt",
@@ -34,7 +34,7 @@ STAGE_DISPLAY_NAMES: dict[str, str] = {
 }
 
 STAGE_DISPLAY_NAMES_KO: dict[str, str] = {
-    "s00_harness":    "하네스",
+    "s00_harness":    "Auto",
     "s01_input":      "입력",
     "s02_history":    "이력",
     "s03_prompt":     "프롬프트",

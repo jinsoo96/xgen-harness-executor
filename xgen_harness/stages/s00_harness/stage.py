@@ -149,6 +149,8 @@ class HarnessStage(Stage):
                 source=plan.source,
                 iteration=getattr(state, "loop_iteration", 0),
                 done=plan.done,
+                max_iterations=plan.max_iterations or 0,
+                orchestrator_hint=plan.orchestrator_hint or "",
             ))
 
         logger.info(
@@ -191,7 +193,7 @@ class HarnessStage(Stage):
     # ── helpers ─────────────────────────────────────────────────────
 
     def _merge_plan_into_config(self, state: PipelineState, plan: "HarnessPlan") -> None:  # type: ignore  # noqa: F821
-        """Plan 의 params/strategies 를 `state.config` 에 덮어씌운다.
+        """Plan 의 params/strategies/max_iterations 를 `state.config` 에 덮어씌운다.
 
         이미 사용자가 UI 에서 지정한 값보다 Plan 이 우선. 하지만 Plan 이 언급하지
         않은 파라미터는 기존 값 유지 (부분 override). 이게 "환경만 주어주고 알아서
@@ -213,3 +215,18 @@ class HarnessStage(Stage):
         for sid, strategy_name in (plan.strategies or {}).items():
             if isinstance(strategy_name, str) and strategy_name:
                 config.active_strategies[sid] = strategy_name
+
+        # v0.15.0 재귀적 자율주행 — LLM 이 이번 요청 적정 반복 수 판단.
+        # Plan 이 명시하지 않으면 (None) config 기본값(10) 유지.
+        if isinstance(getattr(plan, "max_iterations", None), int) and plan.max_iterations > 0:
+            logger.info(
+                "[Harness] Plan.max_iterations=%d 적용 (기존 %d → override)",
+                plan.max_iterations, config.max_iterations,
+            )
+            config.max_iterations = plan.max_iterations
+
+        # orchestrator_hint 는 엔진에서는 메타데이터로만 기록.
+        # 이식측 dispatcher / 프론트 PlanningCard 가 해석.
+        hint = getattr(plan, "orchestrator_hint", "") or ""
+        if hint:
+            state.metadata["orchestrator_hint"] = hint

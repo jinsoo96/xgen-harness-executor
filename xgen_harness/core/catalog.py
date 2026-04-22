@@ -136,6 +136,7 @@ def get_catalog(
 
     catalog["stages"] = _collect_stages(config)
     catalog["required_stages"] = _collect_required_stages()
+    catalog["orchestrators"] = _collect_orchestrators()
 
     if include_capabilities:
         catalog["capabilities"] = _collect_capabilities()
@@ -183,6 +184,7 @@ def _collect_stages(config) -> list[dict[str, Any]]:
         raw_cfg = get_stage_config(entry["stage_id"]) or {}
         stages.append({
             "stage_id": entry["stage_id"],
+            "display_name": entry.get("display_name", ""),
             "display_name_ko": entry.get("display_name_ko", entry.get("display_name", "")),
             "phase": entry.get("phase", ""),
             "order": entry.get("order", 0),
@@ -190,6 +192,8 @@ def _collect_stages(config) -> list[dict[str, Any]]:
             "active": entry.get("active", True),
             "artifacts": entry.get("artifacts", []),
             "current_artifact": entry.get("current_artifact", "default"),
+            # v0.15.0 — Strategy 상세(name + description + is_default) 포함.
+            # Planner 가 "이 Stage 에 어떤 impl 들이 있고 각각 뭘 하는지" 알고 고름.
             "strategies": entry.get("strategies", []),
             "description_ko": cfg.get("description_ko", ""),
             # v0.12.0 self-describing — Stage 저자가 직접 선언한 사용/제외 기준.
@@ -198,6 +202,10 @@ def _collect_stages(config) -> list[dict[str, Any]]:
             "cost_hint": raw_cfg.get("cost_hint", ""),
             "fields": _clean_fields(cfg.get("fields", [])),
             "behavior": cfg.get("behavior", []),
+            # v0.15.0 재귀적 자율주행 — 파라미터로 전달되는 **도구 슬롯** 설명을
+            # Stage 별로 자기서술 필드(tool_slots)로 뽑아 Planner 에게 노출.
+            # Planner 가 이걸 보고 "이 요청엔 rag_collections=[X] 를 쓰자" 결정.
+            "tool_slots": raw_cfg.get("tool_slots", []),
         })
     return stages
 
@@ -232,6 +240,20 @@ def _collect_required_stages() -> list[str]:
     """Planner 가 함부로 제외하지 못하게 막을 필수 Stage 집합."""
     from .config import REQUIRED_STAGES
     return sorted(REQUIRED_STAGES)
+
+
+def _collect_orchestrators() -> list[dict[str, Any]]:
+    """OrchestratorRegistry 전수 — LLM 이 orchestrator_hint 고를 때 근거로 사용.
+
+    엔진 기본 5개 + entry_points 로 등록된 외부 패턴이 여기 합산된다.
+    하드코딩된 목록이 이 함수 안에 0 개이며, 레지스트리 상태 변화가 즉시 반영.
+    """
+    try:
+        from .orchestrator_registry import get_orchestrator_specs
+        return get_orchestrator_specs()
+    except Exception as e:
+        logger.debug("orchestrator registry unavailable: %s", e)
+        return []
 
 
 # ───────────────────────────────────────────────────────────────────

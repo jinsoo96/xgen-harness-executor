@@ -5,6 +5,64 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] — 2026-04-22
+
+### 🎯 재귀적 자율주행 완성 — LLM 이 반복 수·오케스트레이터까지 자율 결정 + display_name=Auto
+
+사용자 확정 기조: **"LLM 은 골조만 파악. 파일 디렉토리 바라보고 Stage 선택 → 선택된 Stage 안의 구조 뒤져 도구·설정 자율 → 오케스트레이터·반복 횟수까지 자율 주행. 하드코딩 절대 안 된다. 자동 연동 자동 확장성이 중요"**.
+
+**🔴 1. HarnessPlan 스키마 확장 (`core/planner.py`)**:
+- `HarnessPlan.max_iterations: Optional[int]` — LLM 이 이번 요청 적정 반복 수 (1~50) 를 직접 판단. 과거 `HarnessConfig.max_iterations = 10` 상수를 Plan 이 override.
+- `HarnessPlan.orchestrator_hint: str` — 실행 패턴 힌트 (`linear / iterative / react / plan_execute / dag` + 외부 플러그인 등록 이름). 이식측 dispatcher 가 해석.
+- `PLAN_TOOL_INPUT_SCHEMA` 에 두 필드 + 설명 / 범위(1~50) / enum 동적 주입 추가.
+- `_build_plan_from_tool_input` 이 범위 밖 값(999 / garbage) 자동 거부.
+
+**🟢 2. OrchestratorRegistry — 자동 연동 자동 확장성 (`core/orchestrator_registry.py` 신설)**:
+- `register_orchestrator(name, description=..., dispatch_key=...)` 공개 API.
+- 엔진 기본 5개 (`linear / iterative / react / plan_execute / dag`) 는 `_ensure_defaults_registered` 가 idempotent 등록. 외부에서 `unregister_orchestrator` 로 덜어낼 수 있음.
+- `entry_points` 그룹 `xgen_harness.orchestrators` 자동 발견 — pip install 로 새 패턴이 즉시 합류.
+- `build_plan_tool()` 이 매 호출마다 `list_orchestrators()` 로 enum 동적 주입 + `get_orchestrator_specs()` 설명을 enum description 에 합성. LLM 이 "무슨 의미인지" 바로 이해.
+- `_build_plan_from_tool_input` 검증도 레지스트리 기반 — 리터럴 목록 0.
+- `planner.py` / `catalog.py` 안에 orchestrator 이름 리터럴 0 개 (자가검증 grep 통과). 기본 5개 정의는 `orchestrator_registry.py` 한 곳에만.
+
+**🟢 3. s00_harness Plan 병합 확장 (`stages/s00_harness/stage.py`)**:
+- `_merge_plan_into_config` 가 `plan.max_iterations > 0` 일 때 `state.config.max_iterations` 즉시 override + 로그.
+- `orchestrator_hint` 는 `state.metadata["orchestrator_hint"]` 기록 — 이식측 dispatcher / 프론트 PlanningCard 가 해석.
+- `PlanningEvent` 방출 시 두 필드 추가 전달.
+
+**🟢 4. display_name = "Auto" 통일 (`core/stage.py` + 프론트 stage-list)**:
+- `STAGE_DISPLAY_NAMES["s00_harness"] = "Auto"` / `_KO` 동일. 내부 ID `s00_harness` 유지 → 엔진/SSE/이식 계약 무손상.
+- catalog `_collect_stages` 에 `display_name` 필드 노출.
+- 프론트 `stage-list.tsx` 배지 "HARNESS" → "AUTO".
+
+**🟢 5. catalog 심화 (`core/catalog.py`)**:
+- `catalog["orchestrators"]` 최상위 노출 — 레지스트리 전수, 프론트/이식이 "어떤 패턴들이 가능한지" 한 번에 읽음.
+- `stages[].tool_slots` 키 노출 — Stage 저자가 선언한 도구 슬롯 설명을 LLM 에게 전달 (Phase 2 에서 s04_tool 등에 채움).
+- `stages[].strategies` 는 이미 `{name, description, is_default}` 심화 — Planner 가 "어떤 impl 들이 있고 각각 뭘 하는지" 보고 고른다.
+
+**🟢 6. PlanningEvent 확장 (`events/types.py`)**:
+- `max_iterations: int` + `orchestrator_hint: str` 필드 추가 → SSE 로 프론트 전달 → PlanningCard 배지 렌더용.
+
+### 자가검증 grep (8 / 8 PASS)
+
+1. `HarnessPlan.max_iterations` / `.orchestrator_hint` 존재 ✅
+2. Schema `max_iterations` 범위 1~50 ✅
+3. PlanningEvent 확장 필드 수용 ✅
+4. SYSTEM_PROMPT 228 chars ≤ 300 ✅
+5. Plan 파싱 — 정상값 복원 + 잘못된 값 거부 ✅
+6. s00 display_name = "Auto" (en+ko) ✅
+7. 플러그인 `register_orchestrator` 등록 → 즉시 enum 합류 + Plan 파싱 수용 ✅
+8. `planner.py` / `catalog.py` 안 orchestrator 이름 리터럴 0 개 ✅
+
+### 설계 문서
+- `docs/harness/2026-04-22-autonomous-driving.md` — 4 Layer 재설계 (Directory-as-Catalog / Deep PD / Plan 스키마 확장 / Plan 우선 규칙) + 자가검증 축 박제.
+
+### 다음 턴 (Phase 2)
+- 이식측 `endpoints/harness.py` 가 `state.metadata["orchestrator_hint"]` 로 dispatcher 전환.
+- 프론트 `PlanningCard` 에 `max_iterations` / `orchestrator_hint` 배지 + `catalog.orchestrators` 설명 툴팁.
+- `core/registry.py` 서브디렉토리 스캔 (`stages/*/strategies/*.py` 자동 등록).
+- `core/pipeline.py` Phase B 에 `orchestrator_hint` 분기 (react/plan_execute 본격 구현).
+
 ## [0.14.0] — 2026-04-22
 
 ### 🎯 s00_harness 통제탑 승격 — s07_llm 삭제 + 번호 시프트 + 재귀적 자율주행
