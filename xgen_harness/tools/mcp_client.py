@@ -94,7 +94,8 @@ class MCPClient:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 resp = await client.get(url)
                 return resp.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.debug("check_session(%s) failed: %s", session_id, e)
             return False
 
 

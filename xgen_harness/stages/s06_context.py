@@ -522,7 +522,8 @@ class ContextStage(Stage):
             )
             try:
                 full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
-            except Exception:
+            except Exception as e:
+                logger.debug("[Context] L4 collapse 메시지 %d JSON 직렬화 실패, str() fallback: %s", i, e)
                 full_repr = str(msg)
             state.pd_store(
                 kind="history",
@@ -583,7 +584,8 @@ class ContextStage(Stage):
             role = msg.get("role", "?") if isinstance(msg, dict) else "?"
             try:
                 full_repr = _json.dumps(msg, ensure_ascii=False, default=str)
-            except Exception:
+            except Exception as e:
+                logger.debug("[Context] L5 autocompact 메시지 %d JSON 직렬화 실패, str() fallback: %s", i, e)
                 full_repr = str(msg)
             state.pd_store(
                 kind="history", resource_id=rid,

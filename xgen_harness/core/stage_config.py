@@ -7,6 +7,10 @@
 - 기술적 동작 설명
 """
 
+import logging
+
+_sc_logger = logging.getLogger("harness.core.stage_config")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Stage ID Alias — v0.11.0 리네이밍 하위호환 레이어
 # 구 저장 워크플로우 / 외부 갤러리 wheel 이 구 id 를 보내와도 내부에서 새 id 로 변환.
@@ -619,7 +623,8 @@ def _inject_dynamic_options(cfg: dict) -> dict:
         return cfg
     try:
         from ..providers import list_providers, get_default_model
-    except Exception:
+    except Exception as e:
+        _sc_logger.debug("providers registry import 실패, stage_config provider 옵션 정적 유지: %s", e)
         return cfg
 
     fields = cfg.get("fields")
@@ -677,8 +682,8 @@ def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
         try:
             from ..stages.strategies.discovery import get_progressive_threshold
             cfg = {**cfg, "progressive_threshold": get_progressive_threshold()}
-        except Exception:
-            pass
+        except Exception as e:
+            _sc_logger.debug("progressive_threshold 조회 실패, 기본값 유지: %s", e)
     return cfg
 
 

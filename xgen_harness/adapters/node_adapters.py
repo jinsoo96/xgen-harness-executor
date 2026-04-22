@@ -104,8 +104,8 @@ def bootstrap_default_node_adapters() -> None:
                     logger.info("[NodeAdapter] plugin registered: %s", ep.name)
             except Exception as e:
                 logger.warning("[NodeAdapter] plugin load failed %s: %s", ep.name, e)
-    except Exception:
-        pass  # entry_points 자체 실패 무시
+    except Exception as e:
+        logger.debug("[NodeAdapter] entry_points discovery skipped: %s", e)
 
 
 # ── 빌트인 빌더 ──────────────────────────────────────────────
@@ -140,7 +140,8 @@ def _build_api_tool(node: dict, registry: "ResourceRegistry") -> None:
     if isinstance(input_schema, str):
         try:
             input_schema = json.loads(input_schema)
-        except Exception:
+        except Exception as e:
+            logger.debug("[NodeAdapter] input_schema JSON 파싱 실패 (%s), 빈 schema 사용: %s", tool_name, e)
             input_schema = {"type": "object", "properties": {}}
 
     registry._tool_defs.append({

@@ -230,7 +230,8 @@ class Pipeline:
             # 커스텀 Stage / 외부 플러그인이 raise 한 일반 예외도 on_error 복구 기회 제공
             try:
                 recovery = await stage.on_error(e, state)
-            except Exception:
+            except Exception as on_err_exc:
+                logger.debug("[Pipeline] stage.on_error(%s) itself raised: %s", stage.stage_id, on_err_exc)
                 recovery = None
             if recovery is not None:
                 logger.info("[Pipeline] Stage %s recovered from generic error", stage.stage_id)

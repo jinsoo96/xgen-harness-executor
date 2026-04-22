@@ -114,7 +114,8 @@ def _provider_env_vars() -> set[str]:
     """엔진이 아는 provider API key 환경변수 집합 — 스캐너가 secret 로 확정하는 근거."""
     try:
         from ..providers import PROVIDER_API_KEY_MAP
-    except Exception:
+    except Exception as _e:
+        # providers 모듈 자체 로드 실패 — 스캐너는 env 추정 없이 제공된 선언에만 의존.
         return set()
     return set(PROVIDER_API_KEY_MAP.values())
 

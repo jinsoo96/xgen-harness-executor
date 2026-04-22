@@ -11,10 +11,13 @@ override 가능하다. 신규 공급자가 추가될 때 엔진 소스 수정이
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from .snapshot import WorkflowSnapshot
+
+logger = logging.getLogger("harness.compile.deps")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -102,8 +105,10 @@ class DependencyResolver:
                     if not pkg:
                         continue
                     result.setdefault(pkg, ver or "")
-            except Exception:
+            except Exception as e:
                 # 룰 실패가 전체 컴파일을 막지 않도록 방어적 (외부 룰 대응).
+                # 외부 기여 룰을 디버깅하려면 이 로그가 첫 단서.
+                logger.warning("[deps] rule %s raised, skipped: %s", getattr(rule, "name", "?"), e)
                 continue
 
         # snapshot.dependencies 가 있으면 최우선 override.
@@ -160,7 +165,8 @@ def _rule_provider_pkg(snapshot: WorkflowSnapshot) -> list[tuple[str, str]]:
         return []
     try:
         from .. import providers as _providers
-    except Exception:
+    except Exception as e:
+        logger.debug("[deps] providers 모듈 import 실패, provider SDK 의존성 비어있음: %s", e)
         return []
     table = getattr(_providers, "PROVIDER_SDK_REQUIREMENTS", None)
     if not isinstance(table, dict):
@@ -208,14 +214,16 @@ def _rule_capability_extras(snapshot: WorkflowSnapshot) -> list[tuple[str, str]]
     try:
         from ..capabilities import get_default_registry
         reg = get_default_registry()
-    except Exception:
+    except Exception as e:
+        logger.debug("[deps] capability registry 로드 실패, extras 스킵: %s", e)
         return []
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for name in declared:
         try:
             spec = reg.get(name)
-        except Exception:
+        except Exception as e:
+            logger.debug("[deps] capability '%s' 조회 실패: %s", name, e)
             spec = None
         if not spec:
             continue

@@ -1,10 +1,23 @@
-"""ContextCompactor 구현체들"""
+"""Stateless ContextCompactor 구현체 (messages/system_prompt 만 입출력).
+
+state/pd_stores/provider 접근이 필요한 PD 기반 compactor 는 `compactor_pd.py` 로 이주.
+이 모듈은 순수 (messages, system_prompt, budget, max_tokens) → tuple 시그니처만 담는다.
+"""
 
 import logging
-from abc import ABC, abstractmethod
-from typing import Any
 
-from ..interfaces import ContextCompactor, Strategy
+from ..interfaces import ContextCompactor
+
+# Advanced* 는 compactor_pd 로 이주했지만 기존 import 경로 유지 위해 re-export.
+# 외부 코드가 `from xgen_harness.stages.strategies.compactor import CascadeCompactor` 쓰던 경우
+# 그대로 동작하도록 하위 호환.
+from .compactor_pd import (  # noqa: F401 — re-export for backward compat
+    AdvancedContextCompactor,
+    MicrocompactCompactor,
+    ContextCollapseOverlayCompactor,
+    AutocompactLLMCompactor,
+    CascadeCompactor,
+)
 
 logger = logging.getLogger("harness.strategy.compactor")
 
@@ -91,97 +104,3 @@ class SlidingWindowCompactor(ContextCompactor):
             return messages, system_prompt, False
         messages = messages[-self._window:]
         return messages, system_prompt, True
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Advanced compactor — state/pd_stores/provider 접근이 필요한 전략
-#  (L3 Microcompact · L4 Context Collapse · L5 Autocompact · Cascade)
-#
-#  v0.11.21 — Code review B+ 지적 "context_collapse_overlay 가 s06 내부 if/elif 라
-#  외부 교체 불가" 해소. 여기 정의된 이름이 register_strategy slot="compactor" 로
-#  등록되어 UI dropdown/외부 override 경로가 열림.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-class AdvancedContextCompactor(Strategy, ABC):
-    """state 전체를 받아 pd_stores·provider 를 조작하는 compactor.
-
-    기존 `ContextCompactor` 는 (messages, system_prompt, budget, max_tokens) → tuple
-    시그니처라 L3/L4/L5 처럼 pd_stores 에 원본 보존하거나 child LLM 을 호출하는
-    전략을 표현 못 한다. Advanced 는 state + stage 를 그대로 받아 side-effect 를 일으킨다.
-
-    외부 기여자 훅: 새 `AdvancedContextCompactor` 구현체를 만들고
-    `register_strategy("s06_context", "compactor", "<name>", MyCls)` 로 등록하면
-    사용자가 `stage_params.s06_context.strategy="<name>"` 로 활성화할 수 있다.
-    """
-
-    @abstractmethod
-    async def apply(
-        self,
-        *,
-        state: Any,
-        stage: Any,
-        budget_used: float,
-        results: dict,
-    ) -> None:
-        """state 를 in-place 로 수정하고 results dict 에 요약 필드를 기록."""
-        ...
-
-
-class MicrocompactCompactor(AdvancedContextCompactor):
-    """L3 — 오래된 tool_result 블록만 placeholder 로 교체 (비파괴)."""
-
-    @property
-    def name(self) -> str:
-        return "microcompact"
-
-    @property
-    def description(self) -> str:
-        return "L3 — 오래된 tool_result 만 placeholder 로 교체 (pd_stores 원본 보존)"
-
-    async def apply(self, *, state, stage, budget_used, results) -> None:
-        stage._try_microcompact(state, budget_used, results)
-
-
-class ContextCollapseOverlayCompactor(AdvancedContextCompactor):
-    """L4 — 중간 메시지를 overlay 로 접고 원본은 pd_stores['history'] 에 보존."""
-
-    @property
-    def name(self) -> str:
-        return "context_collapse_overlay"
-
-    @property
-    def description(self) -> str:
-        return "L4 — 중간 메시지 overlay 압축 (비파괴, fetch_pd 로 복원 가능)"
-
-    async def apply(self, *, state, stage, budget_used, results) -> None:
-        stage._try_context_collapse(state, budget_used, results)
-
-
-class AutocompactLLMCompactor(AdvancedContextCompactor):
-    """L5 — child LLM 9-section 요약으로 교체 (비파괴, 회로 차단)."""
-
-    @property
-    def name(self) -> str:
-        return "autocompact_llm"
-
-    @property
-    def description(self) -> str:
-        return "L5 — child LLM 9-section 요약 (비파괴, 실패 3회 시 circuit breaker)"
-
-    async def apply(self, *, state, stage, budget_used, results) -> None:
-        await stage._try_autocompact(state, budget_used, results)
-
-
-class CascadeCompactor(AdvancedContextCompactor):
-    """Claude Code cascade — 임계별 L3→L4→L5 자동 에스컬레이션."""
-
-    @property
-    def name(self) -> str:
-        return "cascade"
-
-    @property
-    def description(self) -> str:
-        return "임계별 L3→L4→L5 자동 에스컬레이션 (Claude Code 패턴, 한 턴 1 전략)"
-
-    async def apply(self, *, state, stage, budget_used, results) -> None:
-        await stage._try_cascade(state, budget_used, results)

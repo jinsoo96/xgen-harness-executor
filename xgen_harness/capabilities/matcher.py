@@ -11,6 +11,7 @@ CapabilityMatcher — intent → CapabilitySpec 매칭
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -18,6 +19,8 @@ from typing import Awaitable, Callable, Optional
 
 from .registry import CapabilityRegistry, get_default_registry
 from .schema import CapabilityMatch, CapabilitySpec
+
+logger = logging.getLogger("harness.capabilities.matcher")
 
 
 class MatchStrategy(str, Enum):
@@ -117,7 +120,8 @@ class CapabilityMatcher:
         specs = [m.spec for m in pool]
         try:
             llm_scores = await self.llm_fn(intent, specs)
-        except Exception:
+        except Exception as e:
+            logger.debug("llm_fn matcher fallback: %s", e)
             return results[:limit]
 
         score_map = dict(llm_scores)

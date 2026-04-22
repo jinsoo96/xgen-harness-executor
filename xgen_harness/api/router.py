@@ -201,7 +201,8 @@ try:
                 async for event in emitter.stream():
                     try:
                         await websocket.send_json(_ws_event(event))
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("[WS] send_json 실패 (client disconnected?): %s", e)
                         break
 
                 await task

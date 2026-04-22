@@ -75,7 +75,8 @@ class XgenAdapter:
             try:
                 from ..integrations.xgen_services import XgenServiceProvider
                 self._services = XgenServiceProvider.create()
-            except Exception:
+            except Exception as e:
+                logger.debug("[Adapter] XgenServiceProvider.create 실패, NullServiceProvider 사용: %s", e)
                 self._services = NullServiceProvider()
 
     @staticmethod

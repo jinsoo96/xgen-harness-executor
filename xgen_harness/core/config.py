@@ -5,10 +5,13 @@ HarnessConfig — 파이프라인 설정
 workflow_data.harness_config에서 로드.
 """
 
+import logging
 from dataclasses import dataclass, field, fields
 from typing import Any, Optional
 
 from .stage_config import canonical_stage_id as _canonical, canonical_stage_id_map as _alias_map
+
+_cfg_logger = logging.getLogger("harness.core.config")
 
 
 # 전체 12 스테이지 (기본 전부 활성)
@@ -299,7 +302,8 @@ def _extract_agent_config_from_nodes(workflow_data: dict) -> dict[str, Any]:
                 from ..providers import get_default_model
                 per_provider_key = f"{provider}_model"
                 model = _get(per_provider_key) or get_default_model(provider)
-            except Exception:
+            except Exception as e:
+                _cfg_logger.debug("default model resolution failed (provider=%s): %s", provider, e)
                 model = ""
 
         # 프로바이더별 폴백 모델 (하드코딩 제거) — 레지스트리 기반
@@ -309,7 +313,8 @@ def _extract_agent_config_from_nodes(workflow_data: dict) -> dict[str, Any]:
                 f"{p}_model": _get(f"{p}_model") or get_default_model(p)
                 for p in list_providers()
             }
-        except Exception:
+        except Exception as e:
+            _cfg_logger.debug("providers registry unavailable, per_provider_defaults 비움: %s", e)
             per_provider_defaults = {}
 
         return {

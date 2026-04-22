@@ -85,6 +85,26 @@ class LLMProvider(ABC):
     def supports_thinking(self) -> bool:
         ...
 
+    # v0.11.22 — output_tokens 보정 확장점.
+    # 일부 OpenAI 호환 프록시 / vLLM / LangChain adapter 조합에서는 stream 응답의 usage 가
+    # 도달하지 않아 `MetricsEvent.output_tokens=0` 이 고정된다. Provider 별로 자기에게
+    # 가장 적절한 카운터를 주입할 수 있도록 확장점을 공개한다.
+    #   - 기본 구현: chars/3 추정 (영어 ≈ 4, 한국어 ≈ 2. override 로 조정)
+    #   - Anthropic: tokenizer endpoint 나 `cl100k_base` 근사
+    #   - OpenAI: tiktoken 설치 시 실제 인코딩. 없으면 기본 추정 유지
+    # 반환값은 `(tokens, source)` — `source` 는 "usage" | "tiktoken" | "estimate" 같은
+    # 메타로 관측자가 metric 에 표시 가능하게.
+
+    def count_tokens(self, text: str) -> tuple[int, str]:
+        """`text` 의 토큰 수와 추정 출처를 반환. 기본은 chars/3 휴리스틱.
+
+        override 한 provider 가 실제 tokenizer 를 쓰면 `source="tiktoken"` 등으로 반환.
+        빈 문자열은 (0, "empty"). 휴리스틱 하한은 1 토큰.
+        """
+        if not text:
+            return 0, "empty"
+        return max(1, len(text) // 3), "estimate_chars_3"
+
 
 def normalize_base_url(base_url: str, *, api_path: str, version: str = "v1") -> str:
     """LLM provider base_url 을 endpoint 까지 자동 조립.

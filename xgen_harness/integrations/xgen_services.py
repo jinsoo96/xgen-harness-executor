@@ -128,7 +128,8 @@ class XgenDatabaseService:
                 tables = inspector.get_table_names(schema=connection_name)[:max_tables]
                 if tables:
                     return f"[DB:{connection_name}] tables ({len(tables)}): {', '.join(tables)}"
-            except Exception:
+            except Exception as e:
+                logger.debug("[DB] introspect(%s) via %s 실패: %s", connection_name, attr, e)
                 continue
 
         logger.info(
@@ -200,8 +201,8 @@ class XgenConfigService:
             await self._event_emitter.emit(ServiceLookupEvent(
                 key=key, source=source, hit=hit, provider=provider,
             ))
-        except Exception:
-            pass  # 이벤트 발행은 조회 실패에 영향 주지 않음
+        except Exception as e:
+            logger.debug("ServiceLookupEvent emit 실패 (관찰 이벤트, 실행에 영향 없음): %s", e)
 
     async def get_value(self, key: str, default: str = "") -> str:
         url = f"{self._base_url}/api/data/config/get-value"
@@ -359,7 +360,8 @@ class XgenDocumentService:
             ctx_uid = get_extra("user_id", "") or ""
             ctx_admin = str(get_extra("user_is_admin", "true"))
             ctx_super = str(get_extra("user_is_superuser", "true"))
-        except Exception:
+        except Exception as e:
+            logger.debug("ExecutionContext 미초기화, 기본 헤더 사용: %s", e)
             ctx_uid, ctx_admin, ctx_super = "", "true", "true"
         uid = user_id or ctx_uid
         return {

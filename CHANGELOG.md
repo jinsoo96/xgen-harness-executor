@@ -5,6 +5,34 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.22] — 2026-04-22
+
+### 🎯 확장성·연동성 있는 잔여 부채 해소 (사용자 "빠짐 없이" 후속)
+
+v0.11.21 에서 유예했던 3 부채 (OpenAI output_tokens 환경차이 / PipelineState 도메인 분해 / bare except 전수) 를 일괄 해소. 모두 **확장 지점을 공개하는 방향** 으로 설계.
+
+**🟢 Provider 확장점 — output_tokens 보정 (T2c 완전 해소)**:
+- `providers/base.py::LLMProvider.count_tokens(text) -> (tokens, source)` 공식 확장점. 기본 구현은 chars/3 휴리스틱, `source="estimate_chars_3"`.
+- `providers/openai.py::count_tokens` — tiktoken 설치 감지 시 `encoding_for_model` → `o200k_base` 순 자동 선택, `source="tiktoken"`. 미설치 환경은 base 로 폴백.
+- `stages/s07_llm.py` — USAGE/STOP 이벤트 모두에서 output_tokens 수신 실패 시 `provider.count_tokens(result_text)` 로 보정. `state.metadata["output_tokens_sources"]` 에 출처(`usage`/`tiktoken`/`estimate_chars_3`) 남겨 관측자가 추정 여부 판단 가능.
+- 외부 provider 가 자기 tokenizer 를 갖고 있으면 `count_tokens` 만 override → 자동 참여.
+
+**🟢 PipelineState 도메인 그룹 (code review 안티패턴 #1 해소)**:
+- `core/state.py` — `ToolGroup` / `ValidationGroup` dataclass 신설. `tool_definitions`/`tool_index`/`tool_schemas`/`pending_tool_calls`/`tool_results`/`tools_executed_count` 6 필드를 `state.tool.*` 로 재구성. `validation_score`/`validation_feedback`/`retry_count` 3 필드를 `state.validation.*` 로 재구성.
+- 기존 경로 `state.tool_definitions` 등은 **property shim (getter+setter)** 으로 유지 → Stage 코드 0 라인 수정. `add_tool_result` / `flush_tool_results` 내부는 `state.tool.results`/`state.tool.pending_calls` 로 이주.
+- 외부 기여자가 ToolGroup / ValidationGroup 을 서브클래싱해 캐시 정책 / 평가 메타를 확장 가능.
+
+**🟢 s06_context 물리 분해 (code review 안티패턴 #2 1 단계)**:
+- `stages/strategies/compactor_pd.py` 신설 — `AdvancedContextCompactor` ABC 와 4 구현체 (Microcompact/ContextCollapseOverlay/AutocompactLLM/Cascade) 이관. compactor.py 는 stateless (TokenBudget/SlidingWindow) 만 남김.
+- `compactor.py` 가 4 구현체를 re-export 해 하위 호환 유지 → 기존 import 경로 무영향.
+
+**🟢 bare except 전수 정리 (code review 안티패턴 #3)**:
+- `tools/mcp_client.py` / `capabilities/matcher.py` / `adapters/node_adapters.py` (2건) / `adapters/resource_registry.py` / `adapters/xgen.py` / `orchestrator/dag.py` / `providers/openai.py` (3건) / `stages/s06_context.py` (2건) / `integrations/xgen_services.py` (3건) / `core/config.py` (2건) / `core/stage_config.py` (2건) / `core/strategy_resolver.py` (2건) / `core/pipeline.py` / `api/router.py` / `compile/snapshot.py` / `compile/wheel.py` (2건) / `compile/external_inputs.py` / `compile/gallery.py` (2건) / `compile/deps.py` (4건) — 전부 `except Exception as e:` + `logger.debug/warning` 또는 명시적 `_e` 바인딩으로 교체.
+- `core/config.py` / `core/stage_config.py` / `compile/deps.py` / `capabilities/matcher.py` 에 모듈 로거 신규 추가.
+- 남은 유일한 swallow 는 `events/emitter.py::EventEmitter.emit` 의 subscriber 콜백 (이미 `logger.exception` 적용됨).
+
+**무침범**: 기존 Stage/이식/프론트 코드는 0 라인 수정. property shim + re-export 로 backward compat 유지.
+
 ## [0.11.21] — 2026-04-22
 
 ### 🎯 이식 연결선 + 확장성 보강 (사용자 10 블록 지시)

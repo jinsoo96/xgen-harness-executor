@@ -59,7 +59,8 @@ def _engine_requires_python() -> str:
         req = meta.get("Requires-Python")
         if req:
             return str(req).strip()
-    except Exception:
+    except Exception as _e:
+        # 설치된 metadata 가 없는 실행 경로 (editable install 일부 조합) → pyproject 파일 직접 스캔 폴백.
         pass
     # 소스 체크아웃에서 실행 중인 경우 (테스트/개발).
     try:
@@ -72,7 +73,8 @@ def _engine_requires_python() -> str:
                 if line.startswith("requires-python") and "=" in line:
                     val = line.split("=", 1)[1].strip()
                     return val.strip('"').strip("'")
-    except Exception:
+    except Exception as _e:
+        # 두 경로 모두 실패하면 보수적 default 반환 — compile 중단 금지.
         pass
     return DEFAULT_REQUIRES_PYTHON_FALLBACK
 

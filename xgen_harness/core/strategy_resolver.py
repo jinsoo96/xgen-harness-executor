@@ -36,9 +36,10 @@ def _ensure_defaults_registered() -> None:
     _DEFAULTS_REGISTERED = True
     try:
         _register_defaults()
-    except Exception:
-        # 등록 실패해도 레지스트리 자체는 사용 가능해야 함
-        pass
+    except Exception as e:
+        # 등록 실패해도 레지스트리 자체는 사용 가능해야 함.
+        # 디버그 로그로 흔적만 남기고 빈 레지스트리 상태 유지.
+        logger.debug("strategy _register_defaults 실패, 레지스트리는 빈 상태 유지: %s", e)
 
 
 class StrategyResolver:
@@ -199,5 +200,5 @@ def _discover_plugin_strategies() -> None:
                 )
             except Exception as e:
                 logger.warning("Failed to load plugin strategy %s: %s", ep.name, e)
-    except Exception:
-        pass  # entry_points 자체 실패 시 무시
+    except Exception as e:
+        logger.debug("Plugin strategy discovery skipped (no entry_points backend): %s", e)

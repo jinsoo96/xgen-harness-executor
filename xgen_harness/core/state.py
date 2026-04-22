@@ -37,8 +37,41 @@ class TokenUsage:
 
 
 @dataclass
+class ToolGroup:
+    """도구 관련 state 서브-그룹 — v0.11.22 에서 PipelineState 에서 분리.
+
+    모든 Stage 는 여전히 `state.tool_definitions` 같은 flat 경로로 접근 가능 (property shim 유지).
+    새 코드는 `state.tool.definitions` 를 선호. 외부 기여자가 ToolGroup 을 서브클래싱해
+    인덱스 구조나 캐시 정책을 커스터마이즈할 수 있도록 독립 dataclass 유지.
+    """
+    definitions: list[dict[str, Any]] = field(default_factory=list)   # Anthropic API 포맷
+    index: list[dict[str, str]] = field(default_factory=list)         # Level 1 메타데이터
+    schemas: dict[str, dict] = field(default_factory=dict)            # Level 2 (on-demand)
+    pending_calls: list[dict[str, Any]] = field(default_factory=list)
+    results: list[dict[str, Any]] = field(default_factory=list)
+    executed_count: int = 0
+
+
+@dataclass
+class ValidationGroup:
+    """검증 관련 state 서브-그룹 — v0.11.22 에서 PipelineState 에서 분리.
+
+    EvaluationStrategy 결과 + retry 카운터 보관. 외부 EvaluationStrategy 가
+    score/feedback 시그니처를 공유하므로 그룹으로 묶어두면 결과 전달 DX 개선.
+    """
+    score: Optional[float] = None
+    feedback: str = ""
+    retry_count: int = 0
+
+
+@dataclass
 class PipelineState:
-    """파이프라인 실행 상태 — 모든 스테이지가 읽고 쓴다"""
+    """파이프라인 실행 상태 — 모든 스테이지가 읽고 쓴다.
+
+    v0.11.22 — code review B+ 지적 "100+ flat 필드 / tool_* 3 중 중복" 해소 착수.
+    `tool` / `validation` 두 도메인 그룹으로 분리. 기존 Stage 코드는 `state.tool_definitions`
+    같은 flat 경로로 그대로 동작하도록 property shim 을 추가 (migrate 기간).
+    """
 
     # --- 실행 식별자 ---
     execution_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -59,12 +92,9 @@ class PipelineState:
     messages: list[dict[str, Any]] = field(default_factory=list)
     system_prompt: str = ""
 
-    # --- 도구 ---
-    tool_definitions: list[dict[str, Any]] = field(default_factory=list)   # Anthropic API 포맷
-    tool_index: list[dict[str, str]] = field(default_factory=list)         # Level 1 메타데이터
-    tool_schemas: dict[str, dict] = field(default_factory=dict)            # Level 2 (on-demand)
-    pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_results: list[dict[str, Any]] = field(default_factory=list)
+    # --- 도메인 그룹 (v0.11.22 도입) ---
+    tool: ToolGroup = field(default_factory=ToolGroup)
+    validation: ValidationGroup = field(default_factory=ValidationGroup)
 
     # --- 메모리 ---
     conversation_history: list[dict[str, Any]] = field(default_factory=list)
@@ -77,17 +107,11 @@ class PipelineState:
     loop_iteration: int = 0
     loop_decision: str = "continue"    # "continue" | "complete" | "retry"
 
-    # --- 검증 ---
-    validation_score: Optional[float] = None
-    validation_feedback: str = ""
-    retry_count: int = 0
-
     # --- 토큰/비용 ---
     token_usage: TokenUsage = field(default_factory=TokenUsage)
     turn_usages: list[TokenUsage] = field(default_factory=list)
     cost_usd: float = 0.0
     llm_call_count: int = 0
-    tools_executed_count: int = 0
 
     # --- 타이밍 ---
     start_time: float = field(default_factory=time.time)
@@ -115,6 +139,83 @@ class PipelineState:
     #                                                     full 이 복원용 원본.
     pd_stores: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
+    # === 도메인 그룹 → flat 속성 shim (backward compat) ===
+    # Stage 코드는 `state.tool_definitions`, `state.validation_score` 처럼 기존 경로를
+    # 사용한다. 아래 property 들이 그 경로를 ToolGroup/ValidationGroup 로 투명하게 위임.
+    # 신규 코드는 `state.tool.definitions` / `state.validation.score` 를 권장.
+
+    @property
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return self.tool.definitions
+
+    @tool_definitions.setter
+    def tool_definitions(self, value: list[dict[str, Any]]) -> None:
+        self.tool.definitions = value
+
+    @property
+    def tool_index(self) -> list[dict[str, str]]:
+        return self.tool.index
+
+    @tool_index.setter
+    def tool_index(self, value: list[dict[str, str]]) -> None:
+        self.tool.index = value
+
+    @property
+    def tool_schemas(self) -> dict[str, dict]:
+        return self.tool.schemas
+
+    @tool_schemas.setter
+    def tool_schemas(self, value: dict[str, dict]) -> None:
+        self.tool.schemas = value
+
+    @property
+    def pending_tool_calls(self) -> list[dict[str, Any]]:
+        return self.tool.pending_calls
+
+    @pending_tool_calls.setter
+    def pending_tool_calls(self, value: list[dict[str, Any]]) -> None:
+        self.tool.pending_calls = value
+
+    @property
+    def tool_results(self) -> list[dict[str, Any]]:
+        return self.tool.results
+
+    @tool_results.setter
+    def tool_results(self, value: list[dict[str, Any]]) -> None:
+        self.tool.results = value
+
+    @property
+    def tools_executed_count(self) -> int:
+        return self.tool.executed_count
+
+    @tools_executed_count.setter
+    def tools_executed_count(self, value: int) -> None:
+        self.tool.executed_count = value
+
+    @property
+    def validation_score(self) -> Optional[float]:
+        return self.validation.score
+
+    @validation_score.setter
+    def validation_score(self, value: Optional[float]) -> None:
+        self.validation.score = value
+
+    @property
+    def validation_feedback(self) -> str:
+        return self.validation.feedback
+
+    @validation_feedback.setter
+    def validation_feedback(self, value: str) -> None:
+        self.validation.feedback = value
+
+    @property
+    def retry_count(self) -> int:
+        return self.validation.retry_count
+
+    @retry_count.setter
+    def retry_count(self, value: int) -> None:
+        self.validation.retry_count = value
+
     # === 헬퍼 메서드 ===
 
     def add_message(self, role: str, content: Any) -> None:
@@ -130,14 +231,14 @@ class PipelineState:
         }
         if is_error:
             result_block["is_error"] = True
-        self.tool_results.append(result_block)
+        self.tool.results.append(result_block)
 
     def flush_tool_results(self) -> None:
         """축적된 도구 결과를 user 메시지로 밀어넣고 클리어"""
-        if self.tool_results:
-            self.add_message("user", self.tool_results.copy())
-            self.tool_results.clear()
-            self.pending_tool_calls.clear()
+        if self.tool.results:
+            self.add_message("user", list(self.tool.results))
+            self.tool.results.clear()
+            self.tool.pending_calls.clear()
 
     # --- Progressive Disclosure 헬퍼 ---
     def pd_store(

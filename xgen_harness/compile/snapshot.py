@@ -197,7 +197,7 @@ def _current_harness_spec() -> str:
     """
     try:
         from .. import __version__
-    except Exception:
+    except Exception as _e:  # pragma: no cover — 엔진 import 자체 실패는 극단 상황
         return ""
     return f">={__version__}"
 

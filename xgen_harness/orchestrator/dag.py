@@ -263,8 +263,8 @@ class DAGOrchestrator:
             # 반드시 sub-emitter 를 닫아야 forward_task 가 stream() 루프를 빠져나옴.
             try:
                 await emitter.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("[DAG] sub-emitter close suppressed: %s", e)
         try:
             await asyncio.wait_for(forward_task, timeout=2.0)
         except asyncio.TimeoutError:

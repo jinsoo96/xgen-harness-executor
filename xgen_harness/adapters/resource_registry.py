@@ -235,7 +235,8 @@ class ResourceRegistry:
         if isinstance(result, (dict, list)):
             try:
                 return json.dumps(result, ensure_ascii=False, default=str)[:10000]
-            except Exception:
+            except Exception as e:
+                logger.debug("[ResourceRegistry] result JSON 직렬화 실패, str() fallback: %s", e)
                 return str(result)[:10000]
         return str(result)[:10000]
 

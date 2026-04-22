@@ -43,6 +43,26 @@ class OpenAIProvider(LLMProvider):
     def supports_thinking(self) -> bool:
         return False
 
+    # v0.11.22 — stream_options 를 수신하지 못하는 프록시/호환 엔드포인트에서
+    # output_tokens=0 이 고정되는 문제를 tiktoken 으로 보정. tiktoken 미설치 환경은
+    # base class 의 chars/3 휴리스틱으로 fallback.
+    def count_tokens(self, text: str) -> tuple[int, str]:
+        if not text:
+            return 0, "empty"
+        try:
+            import tiktoken  # type: ignore
+            try:
+                enc = tiktoken.encoding_for_model(self._model)
+            except Exception as e:
+                # 알 수 없는 모델은 o200k_base (gpt-4o 계열) 로 fallback
+                logger.debug("tiktoken.encoding_for_model(%s) 미등록, o200k_base 사용: %s",
+                             self._model, e)
+                enc = tiktoken.get_encoding("o200k_base")
+            return len(enc.encode(text)), "tiktoken"
+        except Exception as e:
+            logger.debug("tiktoken 미설치/초기화 실패, chars/3 휴리스틱으로 폴백: %s", e)
+            return super().count_tokens(text)
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -235,7 +255,9 @@ def _convert_messages(messages: list[dict], system: Optional[str] = None) -> lis
                     args = block.get("input") or {}
                     try:
                         args_str = json.dumps(args, ensure_ascii=False)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("tool_use input JSON 직렬화 실패 (%s), 빈 객체로 fallback: %s",
+                                     block.get("name", "?"), e)
                         args_str = "{}"
                     tool_calls.append({
                         "id": block.get("id", ""),

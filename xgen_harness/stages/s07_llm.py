@@ -329,6 +329,24 @@ class LLMStage(Stage):
                     _output_tokens_recorded = True
 
         result_text = "".join(text_parts)
+
+        # v0.11.22 — output_tokens 보정 fallback.
+        # 일부 OpenAI 호환 엔드포인트(vLLM / 사내 프록시 / LangChain adapter 일부)가
+        # stream 응답에 usage payload 를 포함하지 않아 `_output_tokens_recorded=False` 로 끝난다.
+        # 이 때 provider.count_tokens 확장점을 호출해 보정. 기본 구현은 chars/3 휴리스틱이고,
+        # OpenAI provider 는 tiktoken 이 깔려 있으면 실제 인코딩으로 계산.
+        # 보정이 수행되면 state.metadata 에 출처(source)를 남겨 리포트에서 추적 가능.
+        if not _output_tokens_recorded and result_text:
+            try:
+                estimated, source = provider.count_tokens(result_text)
+            except Exception as e:
+                logger.warning("[LLM] provider.count_tokens fallback 실패: %s", e)
+                estimated, source = 0, "failed"
+            if estimated > 0:
+                usage.output_tokens = estimated
+                # 관측자가 추정인지 실제인지 구분할 수 있도록 flag.
+                state.metadata.setdefault("output_tokens_sources", []).append(source)
+
         return result_text, tool_calls, usage
 
     @staticmethod

@@ -85,8 +85,8 @@ def discover_galleries(*, on_error: Optional[Callable[[str, Exception], None]] =
             if on_error is not None:
                 try:
                     on_error(ep.name, e)
-                except Exception:
-                    pass
+                except Exception as cb_e:
+                    logger.debug("gallery on_error callback raised (ignored): %s", cb_e)
             continue
 
         # manifest 는 dict 이거나 callable().
@@ -99,8 +99,8 @@ def discover_galleries(*, on_error: Optional[Callable[[str, Exception], None]] =
                 if on_error is not None:
                     try:
                         on_error(ep.name, e)
-                    except Exception:
-                        pass
+                    except Exception as cb_e:
+                        logger.debug("gallery on_error callback raised (ignored): %s", cb_e)
                 continue
         elif isinstance(resolver, dict):
             manifest = resolver
