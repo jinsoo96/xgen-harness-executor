@@ -88,6 +88,40 @@ class ToolIndexStage(Stage):
             for td in available:
                 if td.get("name") in selected_custom_tools and td.get("name") not in existing_names:
                     state.tool_definitions.append(td)
+        # 1.7. v0.16.4 — 전역 tool_sources 편입.
+        #   `tools.register_tool_source()` 또는 `XGEN_HARNESS_PRELOAD_MANIFEST` env 로
+        #   등록된 모든 ToolSource 의 `list_tools()` 결과를 tool_definitions 에 자동 주입.
+        #   s07_act 는 이미 tool_sources 를 순회해 실행하므로, s04_tool 이 LLM prompt 의
+        #   도구 스키마까지 실어주면 end-to-end 실행이 완성된다. 하드코딩 0.
+        try:
+            from ...tools import get_tool_sources
+            existing_names = {td.get("name") for td in state.tool_definitions}
+            source_count = 0
+            for src in get_tool_sources():
+                try:
+                    listed = await src.list_tools()
+                except Exception as e:
+                    logger.debug("[Tool Index] tool_source list_tools failed: %s", e)
+                    continue
+                for t in listed or []:
+                    if not isinstance(t, dict):
+                        continue
+                    nm = t.get("name")
+                    if not nm or nm in existing_names:
+                        continue
+                    td = {
+                        "name": nm,
+                        "description": t.get("description", ""),
+                        "input_schema": t.get("input_schema") or {"type": "object"},
+                    }
+                    state.tool_definitions.append(td)
+                    existing_names.add(nm)
+                    source_count += 1
+            if source_count:
+                logger.info("[Tool Index] tool_sources bridge: %d tool(s) injected", source_count)
+        except Exception as e:
+            logger.debug("[Tool Index] tool_sources bridge skipped: %s", e)
+
         # node_tags 필터: 선택 태그가 있으면 해당 태그 메타가 있는 tool 만 통과 (매치 0 면 필터 적용 안함)
         if selected_node_tags:
             tagged = []

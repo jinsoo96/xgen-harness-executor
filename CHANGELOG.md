@@ -5,6 +5,20 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.4] — 2026-04-22
+
+### 🎯 s04_tool 브릿지 — 전역 tool_sources 가 LLM tool_definitions 로 자동 전파
+
+v0.16.3 에서 `get_tool_sources()` 로 등록된 도구가 **s07_act 실행 경로엔 합류** 하지만 **LLM prompt 의 `tools` 배열에 안 실리는** 문제 발견. `s04_tool` Stage 가 MCP 세션 / custom_tools / RAG 경로만 `state.tool_definitions` 로 변환하고 있었음.
+
+- `s04_tool/stage.py` 에 "1.7 전역 tool_sources 편입" 블록 추가
+- 모든 `ToolSource.list_tools()` 결과를 `state.tool_definitions` 에 자동 주입 (중복 이름 skip)
+- 하드코딩 0, 레지스트리 기반. `register_tool_source` / `XGEN_HARNESS_PRELOAD_MANIFEST` 양쪽 경로 모두 반영
+
+### 검증 시나리오
+- 운영 xgen.x2bee.com 전수 스캔 매니페스트 (21 NOMNode: api_loader 5 / mcp 7 / builtin 9) 를 env 로 주입
+- 하네스 Auto 가 홈쇼핑 쿼리 실행 → LLM 에게 도구 스키마 전달 → 실 tool_call 발생 → 5 API 호출 결과 종합
+
 ## [0.16.3] — 2026-04-22
 
 ### 🎯 Tool Synthesis 번들 자동 주입 훅

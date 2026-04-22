@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.16.3"
-description = "XGEN Harness — XGEN_HARNESS_PRELOAD_MANIFEST env 기반 도구 자동 주입 (Tool Synthesis 번들 이식)"
+version = "0.16.4"
+description = "XGEN Harness — s04_tool 브릿지: 전역 tool_sources 가 LLM tool_definitions 로 자동 전파 (end-to-end 도구 실행)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
