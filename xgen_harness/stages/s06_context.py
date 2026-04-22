@@ -170,15 +170,12 @@ class ContextStage(Stage):
                         logger.warning("[Context] DocumentService.search failed for %s: %s", col, e)
                 rag_context = "\n\n".join(parts)
             else:
-                # 폴백 — ServiceProvider 미주입 환경에서 라이브러리만 단독 사용 시
-                rag_context = await self._fetch_rag(
-                    collections=rag_collections,
-                    query=state.user_input,
-                    user_id=state.user_id or "0",
-                    top_k=top_k,
-                    score_threshold=float(self.get_param("score_threshold", state, 0.2)),
-                    use_model_prompt=bool(self.get_param("use_model_prompt", state, True)),
-                )
+                # v0.11.25 — httpx 직접 호출 폴백 제거. 엔진은 xgen-documents API 스키마를
+                # 모른다. DocumentService 가 ServiceProvider 로 주입되지 않았으면 RAG 는
+                # graceful skip — 외부 조직이 독립 실행 시 자기 ServiceProvider 를 붙이거나
+                # RAG 를 비활성화하면 된다.
+                logger.info("[Context] DocumentService not injected — RAG search skipped")
+                rag_context = ""
             # rerank — DocumentService.rerank 위임.
             # Protocol: rerank(query, documents: list[str], top_k, user_id) -> [{"index", "score"}, ...]
             # xgen-documents 의 reranker provider 는 서버 기동 시 설정되므로, 본 Stage 는
@@ -684,55 +681,6 @@ class ContextStage(Stage):
             logger.warning("[Context] L5 summarize LLM 호출 실패: %s", e)
             return ""
         return ""
-
-    async def _fetch_rag(
-        self, collections: list[str], query: str, user_id: str,
-        top_k: int = 4, score_threshold: float = 0.2, use_model_prompt: bool = True,
-    ) -> str:
-        """xgen-documents API로 RAG 검색.
-
-        파라미터는 모두 stage_params override 가능:
-          - top_k / score_threshold / use_model_prompt
-        임베딩 모델은 컬렉션 생성 시 박혀 있어 자동 사용.
-        """
-        import httpx
-
-        parts = []
-        docs_url = get_service_url('documents')
-        if not docs_url:
-            logger.info("documents service not registered, skipping RAG")
-            return []
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(15)) as client:
-                for col_name in collections:
-                    try:
-                        body = {
-                            "collection_name": col_name,
-                            "query_text": query,
-                            "limit": top_k,
-                            "score_threshold": score_threshold,
-                            "use_model_prompt": use_model_prompt,
-                        }
-                        from ..core.execution_context import get_xgen_auth_headers
-                        resp = await client.post(
-                            f"{docs_url}/api/retrieval/documents/search",
-                            json=body,
-                            headers=get_xgen_auth_headers(user_id),
-                        )
-                        if resp.status_code == 200:
-                            results = resp.json().get("results", [])
-                            if results:
-                                part = f"## {col_name} ({len(results)}건)\n\n"
-                                for i, r in enumerate(results):
-                                    part += f"[{i+1}] {r.get('file_name', '')} ({r.get('score', 0):.3f})\n{r.get('chunk_text', '')}\n\n"
-                                parts.append(part)
-                    except Exception as e:
-                        logger.warning("[Context] RAG search failed for %s: %s", col_name, e)
-                        continue
-        except Exception as e:
-            logger.error("[Context] RAG client error: %s", e)
-
-        return "\n\n".join(parts)
 
     def list_strategies(self) -> list[StrategyInfo]:
         # v0.11.20 — dispatcher 와 완전 동기. stage_config.options 와 이 목록은 단일 진실 원본이어야 함.

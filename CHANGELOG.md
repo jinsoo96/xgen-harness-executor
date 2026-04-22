@@ -5,6 +5,39 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.25] — 2026-04-22
+
+### 🎯 엔진 독립성 완결 — xgen-documents API 스키마 직접 참조 전면 제거
+
+v0.11.24 가 호스트 import 만 제거하고 내부 httpx 직접 호출은 그대로 남겨뒀던 모순을 마저 닫는 릴리즈. 엔진은 더 이상 `xgen-documents` API 경로(`/api/retrieval/documents/search` · `/api/retrieval/documents/collections`)를 알지 못한다.
+
+**🔴 엔드포인트 침범 제거 (A)**:
+- `api/router.py` — `GET /options/mcp-sessions`, `GET /options/rag-collections` 2 개 엔드포인트 삭제. 엔진이 xgen-mcp-station / xgen-documents 를 httpx 로 직접 쿼리하던 경로. 이식측 `harness_options_registry.py` 의 `/harness/options/<name>` 이 단일 진입점 (v0.11.23 단일 진실 소스). 이식/프론트 어디도 엔진의 이 엔드포인트를 호출하지 않아 제거가 안전.
+- 외부 조직이 MCP stdio / CLI 로 단독 실행할 때 옵션이 필요하면 `register_option_source()` 로 자체 서비스에 붙이는 구조로 수렴.
+
+**🔴 RAG Tool 자동 연동 (B)**:
+- `tools/rag_tool.py::RAGSearchTool` — 생성자에 `doc_service: Optional[DocumentService] = None` 추가. 실제 검색은 **주입된 DocumentService.search() 만** 호출하며, `/api/retrieval/documents/search` URL 하드코딩 + httpx 클라이언트 블록 완전 삭제.
+- DocumentService 미주입 시 `ToolError("DocumentService is not available...")` — 엔진은 호스트가 붙여주지 않은 서비스를 상상으로 부르지 않는다.
+- `stages/s04_tool.py` / `stages/s08_act.py` — RAGSearchTool 생성 시 `state.metadata["services"].documents` 자동 주입.
+
+**🔴 s02_history embedding_search (C)**:
+- `stages/s02_history.py::_search_via_http` 완전 삭제. ServiceProvider.documents 미주입 시 `logger.info("embedding_search skipped")` 로 graceful skip.
+- `get_service_url` / `_auth_headers` import 도 함께 제거.
+
+**🔴 s06_context RAG fallback (D)**:
+- `stages/s06_context.py::_fetch_rag` 메서드 전체 삭제 (약 50 라인). ServiceProvider.documents 미주입 시 `rag_context=""` 로 graceful skip.
+- 엔진이 xgen-documents API 경로를 아는 유일한 남은 지점이었던 `/api/retrieval/documents/search` 스키마 호출이 완전히 사라짐.
+
+**확인 — 엔진이 xgen-documents API 를 알지 않음**:
+```
+grep -r "/api/retrieval" xgen_harness/   # → 0 hits
+grep -r "docs_url" xgen_harness/         # → 0 hits (provider / MCP 제외)
+```
+
+**기존 사용자 영향**:
+- ServiceProvider.documents 를 등록하지 않은 독립 실행 환경에서는 RAG 검색 + embedding_search 가 graceful skip (에러 아님). xgen-workflow 이식측은 `XgenAdapter` 가 자동 주입하므로 영향 없음.
+- RAGSearchTool 을 외부에서 직접 인스턴스화하던 코드는 `doc_service=` 를 넘겨야 실제 검색 가능 (기존 인자 호환 — doc_service 생략 시 조용히 실패만 함).
+
 ## [0.11.24] — 2026-04-22
 
 ### 🎯 감사 리포트 C+ 지적 9건 — 3대 기조 복원 (레거시 무침범 / 확장 끼워넣기 / 기여자 생태계)

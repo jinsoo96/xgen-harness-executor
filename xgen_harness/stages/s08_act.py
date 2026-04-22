@@ -374,7 +374,14 @@ class ExecuteStage(Stage):
 
         from ..tools.rag_tool import RAGSearchTool
         rag_top_k = state.metadata.get("rag_top_k", 4)
-        fallback_tool = RAGSearchTool(collections=rag_collections, default_top_k=rag_top_k)
+        # v0.11.25 — DocumentService 주입. 없으면 RAGSearchTool 이 ToolError 반환.
+        _services = state.metadata.get("services")
+        _doc_service = getattr(_services, "documents", None) if _services else None
+        fallback_tool = RAGSearchTool(
+            collections=rag_collections,
+            default_top_k=rag_top_k,
+            doc_service=_doc_service,
+        )
         result = await fallback_tool.execute(tool_input)
         return result.content if hasattr(result, "content") else str(result)
 

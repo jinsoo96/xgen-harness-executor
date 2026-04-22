@@ -65,72 +65,21 @@ try:
             s["behavior"] = cfg.get("behavior", [])
         return {"stages": stages, "required": list(REQUIRED_STAGES), "all": ALL_STAGES}
 
-    # === 동적 옵션 (MCP 세션, RAG 컬렉션) ===
-
-    @harness_router.get("/options/mcp-sessions")
-    async def list_mcp_sessions():
-        """사용 가능한 MCP 세션 목록 (UI multi_select 옵션 제공)"""
-        import httpx as _httpx
-        from ..core.service_registry import get_service_url
-        mcp_url = get_service_url("mcp")
-        try:
-            async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
-                resp = await client.get(f"{mcp_url}/api/mcp/sessions")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # 응답이 list거나 dict의 sessions 키 안에 있을 수 있음
-                    sessions = data if isinstance(data, list) else data.get("sessions", [])
-                    if isinstance(sessions, list):
-                        result = []
-                        for s in sessions:
-                            if isinstance(s, dict):
-                                sid = s.get("session_id", s.get("id", ""))
-                                name = s.get("session_name", s.get("name", sid))
-                                if sid:
-                                    result.append({"id": sid, "name": name})
-                        logger.info("[API] MCP sessions: %d found", len(result))
-                        return {"sessions": result}
-        except Exception as e:
-            logger.warning("[API] MCP sessions fetch failed: %s", e)
-        return {"sessions": []}
-
-    @harness_router.get("/options/rag-collections")
-    async def list_rag_collections():
-        """사용 가능한 RAG 문서 컬렉션 (UI multi_select 옵션 제공)"""
-        import httpx as _httpx
-        from ..core.service_registry import get_service_url as _get_url
-        from ..core.execution_context import get_xgen_auth_headers
-        docs_url = _get_url("xgen-documents")
-        try:
-            async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
-                # 인증 헤더는 ExecutionContext 가 있으면 그 값, 없으면 익명(admin=false).
-                # 호스트 게이트웨이가 익명 옵션 조회를 허용해둔 경우만 응답이 온다.
-                resp = await client.get(
-                    f"{docs_url}/api/retrieval/documents/collections",
-                    headers=get_xgen_auth_headers(),
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # 응답 구조: {"collections": [...]} 또는 직접 list
-                    cols = data.get("collections", data) if isinstance(data, dict) else data
-                    if isinstance(cols, list):
-                        result = []
-                        for c in cols:
-                            if isinstance(c, dict):
-                                name = c.get("name", c.get("collection_name", ""))
-                                desc = c.get("description", "")
-                                if name:
-                                    entry = {"name": name}
-                                    if desc:
-                                        entry["description"] = desc
-                                    result.append(entry)
-                            elif isinstance(c, str) and c:
-                                result.append({"name": c})
-                        logger.info("[API] RAG collections: %d found", len(result))
-                        return {"collections": result}
-        except Exception as e:
-            logger.warning("[API] RAG collections fetch failed: %s", e)
-        return {"collections": []}
+    # === 동적 옵션 (v0.11.25 제거) ===
+    #
+    # 엔진이 MCP 세션 / RAG 컬렉션 조회용 엔드포인트를 제공하던 경로는 삭제됨.
+    # 이유:
+    # 1. 엔진(라이브러리) 은 xgen 인프라 (xgen-documents / xgen-mcp-station) API 스키마
+    #    (`/api/retrieval/documents/collections`, `/api/mcp/sessions`) 를 알 필요 없음.
+    #    라이브러리 ≠ 인프라 원칙 (0.1 기조) 위반이었음.
+    # 2. 이식측 `xgen-workflow` 가 `OptionSource` 레지스트리 기반 `/harness/options/<name>`
+    #    단일 진입점을 이미 제공 (v0.11.23 단일 진실 소스). 두 곳에서 같은 데이터를
+    #    내리면 응답 스키마 drift 가 발생.
+    # 3. 이식/프론트 어느 쪽도 엔진의 이 엔드포인트를 호출하지 않아 제거가 안전.
+    #
+    # 외부 조직이 엔진만 단독 실행 (MCP stdio / CLI) 할 때 옵션 조회가 필요하면
+    # `register_option_source()` 패턴으로 자기 ServiceProvider 또는 레지스트리에
+    # 직접 붙이는 것을 권장.
 
     # === SSE 실행 ===
 

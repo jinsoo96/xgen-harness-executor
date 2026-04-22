@@ -11,8 +11,6 @@ import logging
 
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
-from ..core.service_registry import get_service_url
-from ..core.execution_context import get_xgen_auth_headers as _auth_headers
 
 logger = logging.getLogger("harness.stage.memory")
 
@@ -82,31 +80,24 @@ class MemoryStage(Stage):
         # 기본 전략도 함께 실행 (대화 이력 주입)
         base_result = await self._execute_default(state)
 
-        # documents 서비스가 없으면 스킵
-        docs_url = get_service_url("documents")
-        if not docs_url:
-            logger.info("[Memory] documents service not registered, embedding_search skipped")
+        # v0.11.25 — ServiceProvider.documents 만 의존. 엔진은 xgen-documents API
+        # 스키마 (/api/retrieval/documents/search) 를 모른다. ServiceProvider 가 없거나
+        # documents 가 등록 안 돼 있으면 graceful skip.
+        services = state.metadata.get("services")
+        doc_service = getattr(services, "documents", None) if services else None
+        if not (doc_service and hasattr(doc_service, "search")):
+            logger.info("[Memory] DocumentService not injected — embedding_search skipped")
             base_result["strategy"] = "embedding_search"
             base_result["embedding_results"] = 0
             return base_result
 
-        # ServiceProvider 경로 (어댑터가 등록)
-        services = state.metadata.get("services")
         memories = []
-        if services and hasattr(services, "documents") and services.documents:
-            try:
-                memories = await self._search_via_service(
-                    services.documents, collection, state.user_input, top_k, score_threshold
-                )
-            except Exception as e:
-                logger.warning("[Memory] ServiceProvider embedding search failed: %s", e)
-
-        # ServiceProvider 실패 시 HTTP 직접 호출 폴백
-        if not memories:
-            memories = await self._search_via_http(
-                docs_url, collection, state.user_input, state.user_id or "0",
-                top_k, score_threshold,
+        try:
+            memories = await self._search_via_service(
+                doc_service, collection, state.user_input, top_k, score_threshold
             )
+        except Exception as e:
+            logger.warning("[Memory] embedding search via DocumentService failed: %s", e)
 
         # 검색 결과를 시스템 프롬프트에 추가
         if memories:
@@ -125,7 +116,11 @@ class MemoryStage(Stage):
         return base_result
 
     async def _search_via_service(self, doc_service, collection: str, query: str, top_k: int, threshold: float) -> list:
-        """ServiceProvider.documents를 통한 검색"""
+        """ServiceProvider.documents 를 통한 검색.
+
+        v0.11.25 — HTTP 폴백 제거. 엔진은 URL / API 스키마를 모른다. DocumentService
+        구현체가 자체 전송 계층을 책임진다.
+        """
         results = await doc_service.search(
             collection_name=collection,
             query_text=query,
@@ -133,28 +128,6 @@ class MemoryStage(Stage):
             score_threshold=threshold,
         )
         return results if isinstance(results, list) else []
-
-    async def _search_via_http(self, docs_url: str, collection: str, query: str, user_id: str, top_k: int, threshold: float) -> list:
-        """HTTP 직접 호출 폴백"""
-        import httpx
-
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
-                resp = await client.post(
-                    f"{docs_url}/api/retrieval/documents/search",
-                    json={
-                        "collection_name": collection,
-                        "query_text": query,
-                        "limit": top_k,
-                        "score_threshold": threshold,
-                    },
-                    headers=_auth_headers(user_id),
-                )
-                if resp.status_code == 200:
-                    return resp.json().get("results", [])
-        except Exception as e:
-            logger.debug("[Memory] HTTP embedding search failed: %s", e)
-        return []
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [

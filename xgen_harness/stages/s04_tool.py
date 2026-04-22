@@ -127,9 +127,14 @@ class ToolIndexStage(Stage):
             # RAG tool mode: 에이전트가 직접 호출할 수 있는 rag_search 도구 등록
             rag_tool_mode: str = self.get_param("rag_tool_mode", state, "both")
             if rag_tool_mode in ("tool", "both"):
+                # v0.11.25 — ServiceProvider.documents 를 생성 시 주입해야 도구가 실제로 검색 가능.
+                # 엔진은 URL/API 스키마를 모르고, Tool 은 주입된 DocumentService 만 쓴다.
+                _services = state.metadata.get("services")
+                _doc_service = getattr(_services, "documents", None) if _services else None
                 rag_tool = RAGSearchTool(
                     collections=rag_collections,
                     default_top_k=rag_top_k,
+                    doc_service=_doc_service,
                 )
                 # 중복 방지
                 if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
