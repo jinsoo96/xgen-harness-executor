@@ -185,6 +185,8 @@ class PlanningEvent(HarnessEvent):
     reasoning: str = ""                                 # 선택 근거 (explainability)
     planner_model: str = ""                             # Plan 을 만든 모델 식별자
     source: str = "llm"                                 # "llm" | "fallback_all" | "error"
+    iteration: int = 0                                  # 몇 번째 replan 인지 (0=Phase A 첫 Plan, 1~=iterative)
+    done: bool = False                                  # Planner 가 "이 iter 로 종료" 선언
 
 
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:

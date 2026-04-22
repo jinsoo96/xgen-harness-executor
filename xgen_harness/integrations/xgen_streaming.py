@@ -53,6 +53,11 @@ def convert_to_xgen_event(event: HarnessEvent) -> Optional[dict[str, Any]]:
                 "phase": event.phase,
                 "step": event.step,
                 "total": event.total,
+                # v0.12.2 — Pipeline._emit_bypass 가 설정하는 "bypassed" 마커.
+                # 프론트가 이 필드를 보고 Planner skip 여부를 판정. 누락 시 모든 stage 가
+                # executed 로 표시되어 Plan.chosen 의 실효 확인 불가.
+                "description": event.description,
+                "bypassed": event.description == "bypassed",
             },
         }
 
@@ -243,7 +248,7 @@ def convert_to_xgen_event(event: HarnessEvent) -> Optional[dict[str, Any]]:
             "type": "log",
             "data": {
                 "level": "INFO",
-                "message": f"[HARNESS] Plan 확정 ({event.source}, {len(event.chosen)} stages)",
+                "message": f"[HARNESS] Plan#{event.iteration} 확정 ({event.source}, {len(event.chosen)} stages{', done' if event.done else ''})",
                 "node_name": "Harness",
                 "timestamp": event.timestamp,
                 "event_kind": "planning",
@@ -254,6 +259,8 @@ def convert_to_xgen_event(event: HarnessEvent) -> Optional[dict[str, Any]]:
                 "reasoning": event.reasoning,
                 "planner_model": event.planner_model,
                 "source": event.source,
+                "iteration": event.iteration,
+                "done": event.done,
             },
         }
 

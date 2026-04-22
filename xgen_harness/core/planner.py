@@ -47,6 +47,9 @@ class HarnessPlan:
         stage_id → Strategy 이름. state.config.active_strategies 에 병합.
     reasoning : str
         선택 근거. 사람 납득용 (explainability).
+    done : bool
+        iterative planning 종료 신호. Planner 가 "이제 더 이상 돌 필요 없다" 판단하면
+        True. Pipeline.Phase B 가 이 값을 보고 loop 를 끊는다.
     source : str
         "llm" | "fallback_all" | "error". Plan 출처 추적.
     planner_model : str
@@ -57,6 +60,7 @@ class HarnessPlan:
     params: dict[str, dict[str, Any]] = field(default_factory=dict)
     strategies: dict[str, str] = field(default_factory=dict)
     reasoning: str = ""
+    done: bool = False
     source: str = "llm"
     planner_model: str = ""
 
@@ -112,6 +116,15 @@ PLAN_TOOL_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "왜 이 조합·파라미터·도구를 선택했는지 사람이 납득할 수 있도록.",
         },
+        "done": {
+            "type": "boolean",
+            "description": (
+                "이번 iter 이후 **더 이상 루프를 돌 필요가 없다** 판단 시 true. "
+                "첫 Plan 에서는 보통 false. 이전 실행 결과(messages/tool_results/"
+                "validation_score)가 충분히 사용자 요청을 만족한다고 보이면 true 로 "
+                "돌리면 Pipeline 이 즉시 종료한다."
+            ),
+        },
     },
     "required": ["chosen", "reasoning"],
 }
@@ -141,11 +154,13 @@ class HarnessPlanner:
     DEFAULT_MAX_TOKENS = 2048
     DEFAULT_TEMPERATURE = 0.1
 
-    # 시스템 프롬프트 최소화 — 역할 1줄 + 규약 1줄. 선택 기준은 카탈로그가 말한다.
+    # 시스템 프롬프트 최소화 — 역할 + iterative 맥락 + 규약. 선택 기준은 카탈로그가 말한다.
     SYSTEM_PROMPT = (
         "당신은 XGEN Harness Planner 입니다. "
-        "아래 카탈로그의 each stage 의 when_to_use / when_to_skip / cost_hint 를 읽고 "
-        "submit_plan 도구로 이번 턴 실행 계획을 제출하세요."
+        "카탈로그의 각 stage 가 선언한 when_to_use / when_to_skip / cost_hint 를 읽고 "
+        "submit_plan 도구로 이번 turn 실행 계획을 제출하세요. "
+        "이전 실행 결과(previous_results)가 있으면 그걸 참고해 **다음에 무엇을 할지** "
+        "결정하고, 사용자 요청을 충분히 만족했다면 done=true 로 종료하세요."
     )
 
     async def plan(
@@ -175,6 +190,12 @@ class HarnessPlanner:
             workflow_hints=workflow_hints,
         )
 
+        # v0.13.0 iterative planning — 이전 실행 결과를 Planner 에 주입해
+        # "이미 뭐 했는지" 보고 다음 행동 결정. 첫 iter 에서는 빈 dict 라 영향 없음.
+        previous = self._collect_previous_results(state)
+        if previous:
+            catalog["previous_results"] = previous
+
         tool_input = await self._invoke_tool(provider, user_input, catalog)
         if tool_input is None:
             return HarnessPlan.fallback_all("Planner did not call submit_plan")
@@ -182,6 +203,37 @@ class HarnessPlanner:
         plan = self._build_plan_from_tool_input(tool_input, catalog)
         plan.planner_model = getattr(provider, "model_name", "")
         return plan
+
+    def _collect_previous_results(self, state: "PipelineState") -> dict[str, Any]:
+        """iterative replan 용 이전 실행 snapshot.
+
+        첫 호출(loop_iteration=1) 에서는 빈 dict 반환 → LLM 은 "처음 실행" 으로 판단.
+        두 번째 이후 호출에서는 messages 요약·tool_results·validation_score·token_usage
+        등을 실어 보내 "이미 뭐 했는지" 를 기반으로 다음 Plan 을 세우도록 한다.
+        """
+        if getattr(state, "loop_iteration", 0) <= 1:
+            return {}
+        try:
+            last_msg = state.messages[-1] if state.messages else None
+            last_assistant = state.last_assistant_text[:400] if state.last_assistant_text else ""
+            tool_summary = [
+                {"name": r.get("tool_name", ""), "is_error": bool(r.get("is_error"))}
+                for r in (state.tool.results or [])[-5:]
+            ]
+            return {
+                "iteration": state.loop_iteration,
+                "last_assistant_preview": last_assistant,
+                "tool_calls_so_far": len(state.tool.results or []),
+                "recent_tool_calls": tool_summary,
+                "validation_score": state.validation.score,
+                "validation_feedback": (state.validation.feedback or "")[:200],
+                "retry_count": state.validation.retry_count,
+                "total_tokens": state.token_usage.total,
+                "rag_snippet_loaded": bool(state.rag_context),
+            }
+        except Exception as e:
+            logger.debug("[Planner] previous_results 수집 실패: %s", e)
+            return {}
 
     # ── LLM 호출 (Tool-Use) ────────────────────────────────────────
 
@@ -250,6 +302,7 @@ class HarnessPlanner:
         params = tool_input.get("params") or {}
         strategies = tool_input.get("strategies") or {}
         reasoning = tool_input.get("reasoning") or ""
+        done = bool(tool_input.get("done"))
 
         if not isinstance(chosen, list):
             chosen = []
@@ -288,5 +341,6 @@ class HarnessPlanner:
             params=params,
             strategies=strategies,
             reasoning=reasoning,
+            done=done,
             source="llm",
         )

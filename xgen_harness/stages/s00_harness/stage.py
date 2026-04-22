@@ -100,12 +100,15 @@ class HarnessStage(Stage):
                 reasoning=plan.reasoning,
                 planner_model=plan.planner_model,
                 source=plan.source,
+                iteration=getattr(state, "loop_iteration", 0),
+                done=plan.done,
             ))
 
         logger.info(
-            "[Harness] Plan 확정 source=%s chosen=%d skipped=%d params=%d strategies=%d",
+            "[Harness] Plan%s 확정 source=%s chosen=%d skipped=%d params=%d strategies=%d done=%s",
+            f"#{state.loop_iteration}" if state.loop_iteration > 0 else "",
             plan.source, len(plan.chosen), len(plan.skipped),
-            len(plan.params), len(plan.strategies),
+            len(plan.params), len(plan.strategies), plan.done,
         )
 
         return {
@@ -114,6 +117,8 @@ class HarnessStage(Stage):
             "skipped": dict(plan.skipped),
             "reasoning": plan.reasoning,
             "planner_model": plan.planner_model,
+            "done": plan.done,
+            "iteration": getattr(state, "loop_iteration", 0),
         }
 
     # ── helpers ─────────────────────────────────────────────────────

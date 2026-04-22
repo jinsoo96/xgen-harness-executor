@@ -299,6 +299,10 @@ class XgenAdapter:
                 config_kwargs["thinking_budget_tokens"] = int(hc["thinking_budget_tokens"])
             except (TypeError, ValueError):
                 pass
+        # v0.12.2 — REAL HARNESS Planner 토글 전달. 누락 시 Pipeline 이 s00_harness 를
+        # 주입하지 않아 프론트 토글을 켜도 계획(Plan) 이 전혀 생성되지 않는 bug 였음.
+        if hc.get("use_planner") is not None:
+            config_kwargs["use_planner"] = bool(hc["use_planner"])
 
         config = HarnessConfig(**config_kwargs)
 

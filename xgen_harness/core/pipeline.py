@@ -84,12 +84,25 @@ class Pipeline:
         return cls(config, stages, event_emitter)
 
     async def run(self, state: PipelineState) -> PipelineState:
-        """파이프라인 실행 — 3 Phase"""
+        """파이프라인 실행 — 3 Phase (v0.13.0 단일 provider + iterative planning)."""
         state.event_emitter = self.event_emitter
         state.config = self.config
         state.start_time = time.time()
 
         try:
+            # ━━━━ v0.13.0 — LLM provider 1 회 선초기화 ━━━━
+            # "한 번 설정하고 그 핸들을 쭉 재사용" — state.provider 를 Pipeline 진입부에서
+            # 미리 띄워 s00_harness/s07_llm/s09_judge/Planner 가 전부 **같은 인스턴스** 를
+            # 재활용. ensure_provider 는 idempotent (state.provider 있으면 재사용) 이라
+            # 이후 어디서 호출돼도 재초기화 비용 0.
+            from .provider_bootstrap import ensure_provider
+            try:
+                await ensure_provider(state, stage_id="pipeline")
+            except Exception as e:
+                # provider 초기화 실패해도 s01_input 등 provider 불필요 단계는 돌아야 하므로
+                # 여기서 abort 하지 않는다. 실제로 provider 가 필요한 Stage 에서 재시도.
+                logger.debug("[Pipeline] provider 선초기화 보류: %s", e)
+
             # Phase A: Ingress (1회)
             logger.info("[Pipeline] Phase A: Ingress (%d stages)", len(self.ingress_stages))
             for stage in self.ingress_stages:
@@ -101,11 +114,25 @@ class Pipeline:
                     continue
                 await self._execute_stage(stage, state)
 
-            # Phase B: Agentic Loop
+            # Phase B: Agentic Loop — v0.13.0 iterative planning
+            # 매 iter 시작에 s00_harness 를 다시 호출해 **Plan 을 갱신**. 이전 iter 의
+            # 결과(tool_results / validation_score / rag_context / messages)를 s00 이
+            # 카탈로그 + 누적 state 로 다시 보고 "이제 뭐 해야 할지" 재결정. 첫 iter 는
+            # Phase A 에서 이미 s00 실행했으므로 skip (loop_iteration == 0 → 1 전환 직후).
+            s00_stage = self._find_loop_s00()
             logger.info("[Pipeline] Phase B: Agentic Loop (max %d iterations)", self.config.max_iterations)
             while state.loop_decision == "continue" and not state.is_over_iterations and not state.is_over_budget:
                 state.loop_iteration += 1
                 logger.info("[Pipeline] Loop iteration %d", state.loop_iteration)
+
+                # iterative replan — 2번째 iter 부터. Plan 이 done 플래그를 세우면 즉시 종료.
+                if state.loop_iteration > 1 and s00_stage is not None:
+                    await self._execute_stage(s00_stage, state)
+                    plan = state.metadata.get("harness_plan") or {}
+                    if plan.get("done"):
+                        logger.info("[Pipeline] Planner 가 done 선언 — Phase B 종료")
+                        state.loop_decision = "complete"
+                        break
 
                 for stage in self.loop_stages:
                     if self._planner_skips(stage, state):
@@ -331,6 +358,18 @@ class Pipeline:
         if reason:
             return f"Planner: {reason}"
         return "Planner 가 이번 턴에는 불필요하다고 판단"
+
+    def _find_loop_s00(self) -> Optional[Stage]:
+        """iterative replan 용 s00_harness 인스턴스 조회.
+
+        Pipeline.from_config 가 use_planner=True 면 s00 을 ingress 최상단에 prepend
+        한다. Phase B iter 의 replan 은 같은 인스턴스를 재호출해야 Plan 이 누적·갱신
+        된다. Planner 비활성이면 None 반환.
+        """
+        for stage in self._all_stages:
+            if stage.stage_id == "s00_harness":
+                return stage
+        return None
 
     def _get_step_number(self, stage: Stage) -> int:
         for i, s in enumerate(self._all_stages, 1):

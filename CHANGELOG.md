@@ -5,6 +5,71 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-04-22
+
+### 🌌 REAL HARNESS Phase 2 — 단일 Provider + Iterative Planning (진짜 자율 주행)
+
+사용자 요구 핵심: **"LLM 프로바이더를 한 번만 설정하고 그 주체가 이후 과정 전체를 통제하는 고결한 구조"** — v0.12.x 의 rigid 실행(Plan 한 번 세우고 그대로) 에서 v0.13.0 iterative 자율 주행으로 승격.
+
+**🔴 1. 단일 Provider 통제 (`core/pipeline.py`)**:
+- `Pipeline.run()` 진입부에서 `ensure_provider(state, stage_id="pipeline")` 1 회 선초기화. s07_llm / s09_judge / s00_harness(Planner) 가 모두 **동일 state.provider 인스턴스** 를 재활용. 실패 시 logger.debug 로 보류 (provider 불필요 Stage 는 정상 진행).
+- 결과: LLM API 클라이언트가 파이프라인 1 회 life-cycle 동안 1 인스턴스로 고정. 불필요한 재생성·비용 0.
+
+**🔴 2. Iterative Planning (`core/pipeline.py` Phase B)**:
+- Pipeline Phase B(agentic loop) 의 매 iter 시작에 **s00_harness 를 재호출** 해 Plan 을 갱신. 첫 iter 는 Phase A 에서 실행한 Plan 그대로, iter 2 부터 replan.
+- `HarnessPlan.done=True` 면 `state.loop_decision="complete"` 로 즉시 Phase B 종료 — Planner 가 "이제 충분" 을 선언하면 불필요 iteration 절감.
+- `_find_loop_s00()` 헬퍼 추가: 기존 Pipeline 조립된 Stage 리스트에서 s00 인스턴스를 찾아 재사용 (신규 인스턴스 안 만듦, Plan 히스토리 연속성 보장).
+
+**🔴 3. Previous Results 주입 (`core/planner.py::_collect_previous_results`)**:
+- iter >= 2 에서 Planner.plan() 이 자동으로 `catalog["previous_results"]` 에 다음 snapshot 을 싣는다:
+  - iteration / last_assistant_preview (400자) / tool_calls_so_far / recent_tool_calls[-5] / validation_score / validation_feedback / retry_count / total_tokens / rag_snippet_loaded
+- LLM 이 **"이미 뭐 했는지" 보고 다음 조립 결정**. 시스템 프롬프트에도 iterative 맥락 1 줄 추가 ("previous_results 있으면 참고해 다음 행동 결정, 만족했다면 done=true").
+
+**🔴 4. Plan.done 필드 + schema**:
+- `HarnessPlan.done: bool` 추가. `PLAN_TOOL_INPUT_SCHEMA.properties.done` 에 설명 박제: "이전 실행이 사용자 요청 만족하면 true 로 loop 종료".
+- `PlanningEvent.done` + `iteration` 필드 추가. `xgen_streaming.convert_to_xgen_event(PlanningEvent)` 가 payload 에 두 필드 실어 이식/프론트로 전달.
+- s00_harness/stage.py 가 PlanningEvent emit 시 `state.loop_iteration` + `plan.done` 을 싣고 execute() 반환 dict 에도 포함.
+
+**🟡 5. adapter use_planner 전달 + StageEnter bypassed 플래그** (v0.12.3 에서 누락됐던 것 포함):
+- `adapters/xgen.py::XgenAdapter.execute` 가 harness_config.use_planner 를 HarnessConfig 에 전달.
+- `integrations/xgen_streaming.convert_to_xgen_event(StageEnterEvent)` 가 description + bypassed: bool 플래그를 payload 에 추가 → 프론트 Plan.skipped 시각화.
+
+**🟡 6. 디렉토리화 sed 누락 함수 내부 import 수정** (v0.12.2 에서 누락됐던 잔재):
+- s04_tool / s05_strategy / s06_context / s07_llm / s08_act / s09_judge 의 함수 내부 들여쓰기 `from ..X` → `from ...X` (깊이 +1). `from .strategies.X` → `from ..strategies.X` (형제). 기존 에러 "No module named 'xgen_harness.stages.core'" 해소.
+
+**실증** (컨테이너 내 직접 adapter.execute 경로):
+- A(단순 인사): replan 1 회, Planner 첫 Plan 에서 `done=true` → executed=5, bypassed=8, **즉시 종료**.
+- B(저작권 리스크): replan **3 회**. iter3 에서 Plan 이 축소 (s09_judge + s11_save 제거). s00 인스턴스 3 회 호출. **"이전 결과 보고 다음 조각 재조립"** 동작 확인.
+
+**기존 사용자 영향**:
+- `use_planner=False` (기본) 사용자는 동작 변화 0. 파이프라인 진입부 provider 선초기화만 추가되지만 idempotent 이라 외부 영향 없음.
+- `use_planner=True` 사용자는 같은 요청에 Plan 이 iter 마다 갱신 — 기존보다 LLM 비용 증가 가능 (max_iterations 로 상한).
+
+**프론트 (xgen-frontend feature/harness-v2)**:
+- PlanningCard 에 `ITER #N` 파란 배지 + `done` 초록 배지 표시. iteration=0 은 배지 숨김 (첫 Plan).
+- store.mapLogToPipelineEvent 의 planning kind 에 iteration / done 필드 보존.
+
+**이식 (xgen-workflow feature/harness-v2)**:
+- `pyproject.toml` pin `xgen-harness>=0.13.0`.
+
+## [0.12.3] — 2026-04-22
+
+### 🩹 hot-fix — XgenAdapter use_planner 누락 + StageEnter bypassed 플래그 전달
+
+v0.12.2 배포 직후 실 adapter 경로 (XgenAdapter.execute → Pipeline.from_config) 에서 Planner 가 전혀 활성화되지 않는 regression 2 건 발견:
+
+**1. `adapters/xgen.py::XgenAdapter.execute` 의 harness_config 파싱에서 `use_planner` 키 누락**:
+- 프론트 `harness_config: {use_planner: true}` 를 보내도 adapter 가 HarnessConfig 에 전달하지 않아 Pipeline.from_config 에서 s00_harness 주입 분기가 안 탐.
+- 결과: 토글을 켜도 LLM Planner 가 돌지 않고 12 Stage 고정 파이프라인만 실행. 사용자 시점에선 "s00 로그 안 뜨고 Plan 생성 안 됨".
+- 수정: `hc.get("use_planner")` 를 `config_kwargs` 로 전달하는 분기 추가 (v0.11.26 의 admin/superuser 플래그 전달과 동일 패턴).
+
+**2. `integrations/xgen_streaming.convert_to_xgen_event(StageEnterEvent)` 가 `description` 필드 누락**:
+- Pipeline.`_emit_bypass` 는 `StageEnterEvent(description="bypassed")` 로 스킵 마커를 싣지만 변환기가 `description` 을 SSE payload 에 안 실어서 프론트가 Planner 의 bypass 여부를 판정 불가.
+- 수정: `description` + `bypassed: bool` 2 필드 추가. 프론트 UI 가 Plan.skipped 표시에 직접 참조.
+
+**실증** (XgenAdapter.execute 경로 · adapter 실제 호출):
+- use_planner=true 로 "안녕" 입력 → PlanningEvent 1 회 emit, chosen=4~6 개, 나머지 Stage 에 `bypassed=true` 플래그 정상 전달.
+
 ## [0.12.2] — 2026-04-22
 
 ### 🩹 hot-fix — 디렉토리화 sed 가 놓친 함수 내부 상대 import 일괄 수정
