@@ -29,7 +29,13 @@ def register_strategy(stage_id: str, slot_name: str, impl_name: str, cls: Type[S
 
 
 def _ensure_defaults_registered() -> None:
-    """기본 Strategy 가 한 번이라도 등록되지 않았으면 트리거."""
+    """기본 Strategy 가 한 번이라도 등록되지 않았으면 트리거.
+
+    v0.15.3 — 엔진 내장 기본(`_register_defaults`) + 파일시스템 스캔(`scan_stage_strategies`)
+    + entry_points(`_discover_plugin_strategies`) 3 경로 모두 idempotent 실행.
+    외부 기여자가 Stage 디렉토리 안에 `strategies/<slot>__<impl>.py` 파일만 드롭해도
+    여기서 자동 합류.
+    """
     global _DEFAULTS_REGISTERED
     if _DEFAULTS_REGISTERED:
         return
@@ -37,9 +43,15 @@ def _ensure_defaults_registered() -> None:
     try:
         _register_defaults()
     except Exception as e:
-        # 등록 실패해도 레지스트리 자체는 사용 가능해야 함.
-        # 디버그 로그로 흔적만 남기고 빈 레지스트리 상태 유지.
         logger.debug("strategy _register_defaults 실패, 레지스트리는 빈 상태 유지: %s", e)
+    # 파일시스템 기반 Stage-local Strategy 자동 등록.
+    try:
+        from .fs_scanner import scan_stage_strategies
+        added = scan_stage_strategies()
+        if added:
+            logger.debug("[strategy_resolver] fs_scanner: %d Stage-local strategies", added)
+    except Exception as e:
+        logger.debug("strategy fs_scanner 실패: %s", e)
 
 
 class StrategyResolver:

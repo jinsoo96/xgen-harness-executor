@@ -5,6 +5,36 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] — 2026-04-22
+
+### 🎯 Phase 2 마무리 — orchestrator_hint 실 분기 + Stage-local Strategy 자동 스캔
+
+사용자 지시: **"다 해 임마"** — 남은 Phase 2 전부 밀어붙이기.
+
+**🟢 1. Pipeline Phase B 에 orchestrator_hint 실 분기 (`core/pipeline.py`)**:
+- `linear`: 첫 iter 1회 실행 후 `loop_decision="complete"` 강제 → 단발 Q&A 에 LLM 이 자율 선택
+- `iterative`: 기본. 매 iter replan 유지
+- `plan_execute`: iter 가 돌아도 replan 생략 — 첫 Plan 고수
+- `react` / `dag`: 엔진 no-op (이식측 dispatcher 에 위임)
+- 로그에 `orchestrator_hint=<value>` 표기로 디버깅 근거 노출
+
+**🟢 2. Stage-local Strategy 자동 스캔 (`core/fs_scanner.py` 확장)**:
+- `scan_stage_strategies()` 신설. 2 convention 지원:
+  - `stages/sNN_xxx/strategies/<slot>__<impl>.py` (평면 밑줄 2 개 구분)
+  - `stages/sNN_xxx/strategies/<slot>/<impl>.py` (슬롯 서브디렉토리)
+- Strategy 서브클래스 export 시 `register_strategy(stage_id, slot, impl, cls)` 자동 호출.
+- `strategy_resolver._ensure_defaults_registered()` 가 3 경로 idempotent 합산 (내장 기본 + fs_scan + entry_points)
+- 외부 기여자는 Stage 디렉토리 안에 파일 드롭만으로 Strategy 확장. 엔진 코드 수정 0.
+
+### 자가검증 (통합 테스트)
+1. Pipeline 소스에 `orchestrator_hint` / `orch_hint` / `linear` / `plan_execute` 문자열 전부 박제 PASS
+2. `scan_stage_strategies()` 동적 테스트 — 임시 파일 드롭 후 `_REGISTRY` 에 `(s05_strategy, dummyslot, dummyimpl)` 키 즉시 생성 PASS
+3. 테스트 완료 후 cleanup — 실 레포에는 영향 없음
+
+### 프론트 동반 변경 (xgen-frontend feature/harness-v2)
+- `StageInfo.source_file?` + `StageStrategy.source_file?` / `slot?` 타입 추가
+- stage-list AUTO 블록 헤더에 소스 파일 약식 경로(마지막 2 세그먼트) 표시 + 풀 경로 툴팁
+
 ## [0.15.2] — 2026-04-22
 
 ### 🎯 파일 구조 자동 연동 — fs_scanner + Tool entry_points + catalog source_file

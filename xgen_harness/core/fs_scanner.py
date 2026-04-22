@@ -131,6 +131,99 @@ def scan_stage_artifacts(
     return count
 
 
+def scan_stage_strategies() -> int:
+    """Stage 내부 `strategies/` 디렉토리를 훑어 Strategy 구현체를 자동 등록 (v0.15.3).
+
+    Convention:
+      1. `stages/sNN_xxx/strategies/<slot>__<impl>.py` — 밑줄 2개로 slot/impl 분리
+      2. `stages/sNN_xxx/strategies/<slot>/<impl>.py` — 슬롯 서브디렉토리 방식
+
+    두 convention 모두 지원. Strategy 서브클래스가 export 되면
+    `register_strategy(stage_id, slot, impl, cls)` 자동 호출.
+
+    외부 기여자는 stage 디렉토리에 파일만 드롭하면 런타임 자동 합류.
+    기존 공용 `stages/strategies/*.py` 는 이 스캔 대상 **아님** (이미 코드에서
+    명시 register 하므로). 이 함수는 "Stage 별 독립 디렉토리" 만 다룬다.
+
+    반환: 등록된 Strategy 수.
+    """
+    from ..stages.interfaces import Strategy
+    from .strategy_resolver import register_strategy
+
+    stages_dir = _locate_stages_dir()
+    if stages_dir is None or not stages_dir.exists():
+        return 0
+
+    count = 0
+    for stage_dir in sorted(stages_dir.iterdir()):
+        if not stage_dir.is_dir() or not _STAGE_DIR_RE.match(stage_dir.name):
+            continue
+        strategies_dir = stage_dir / "strategies"
+        if not strategies_dir.exists() or not strategies_dir.is_dir():
+            continue
+
+        stage_id = stage_dir.name
+
+        # convention 1: 평면 파일 `<slot>__<impl>.py`
+        for py_file in sorted(strategies_dir.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+            stem = py_file.stem
+            if "__" not in stem:
+                # slot 접미사 없는 단일 파일 — 다음 convention 에서 처리하므로 스킵.
+                continue
+            slot, _, impl = stem.partition("__")
+            cls = _import_strategy_class(
+                f"xgen_harness.stages.{stage_id}.strategies.{stem}", Strategy
+            )
+            if cls is None:
+                continue
+            try:
+                register_strategy(stage_id, slot, impl, cls)
+                count += 1
+            except Exception as e:
+                logger.debug(
+                    "[fs_scanner] register_strategy %s/%s/%s failed: %s",
+                    stage_id, slot, impl, e,
+                )
+
+        # convention 2: 슬롯 서브디렉토리 `<slot>/<impl>.py`
+        for slot_dir in sorted(strategies_dir.iterdir()):
+            if not slot_dir.is_dir() or slot_dir.name.startswith("_"):
+                continue
+            slot = slot_dir.name
+            for py_file in sorted(slot_dir.glob("*.py")):
+                if py_file.name.startswith("_"):
+                    continue
+                impl = py_file.stem
+                cls = _import_strategy_class(
+                    f"xgen_harness.stages.{stage_id}.strategies.{slot}.{impl}",
+                    Strategy,
+                )
+                if cls is None:
+                    continue
+                try:
+                    register_strategy(stage_id, slot, impl, cls)
+                    count += 1
+                except Exception as e:
+                    logger.debug(
+                        "[fs_scanner] register_strategy %s/%s/%s failed: %s",
+                        stage_id, slot, impl, e,
+                    )
+
+    return count
+
+
+def _import_strategy_class(module_name: str, base_cls):
+    """지정 모듈을 import 하고 base_cls 서브클래스 하나 반환."""
+    try:
+        mod = importlib.import_module(module_name)
+    except Exception as e:
+        logger.debug("[fs_scanner] import %s failed: %s", module_name, e)
+        return None
+    return _find_stage_class(mod, base_cls)
+
+
 def get_stage_source_file(stage_cls: Type) -> str:
     """Stage 클래스의 소스 파일 경로(프로젝트 기준 상대 경로) 반환.
 

@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.15.2"
-description = "XGEN Harness Pipeline Library — 11-stage dual-abstraction + 파일시스템 자동 스캔(fs_scanner) + 전 확장축 entry_points + catalog source_file 노출"
+version = "0.15.3"
+description = "XGEN Harness Pipeline Library — orchestrator_hint 실분기(linear/plan_execute) + Stage-local strategies 디렉토리 자동 스캔"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

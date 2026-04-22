@@ -115,19 +115,34 @@ class Pipeline:
                     continue
                 await self._execute_stage(stage, state)
 
-            # Phase B: Agentic Loop — v0.13.0 iterative planning
+            # Phase B: Agentic Loop — v0.13.0 iterative planning / v0.15.3 orchestrator_hint 분기
             # 매 iter 시작에 s00_harness 를 다시 호출해 **Plan 을 갱신**. 이전 iter 의
             # 결과(tool_results / validation_score / rag_context / messages)를 s00 이
             # 카탈로그 + 누적 state 로 다시 보고 "이제 뭐 해야 할지" 재결정. 첫 iter 는
             # Phase A 에서 이미 s00 실행했으므로 skip (loop_iteration == 0 → 1 전환 직후).
+            #
+            # v0.15.3 — orchestrator_hint (Plan 이 제시) 가 loop 행동을 조정:
+            #   linear       : 1회만 돌고 즉시 종료 (단발 Q&A)
+            #   iterative    : 기본. 매 iter replan
+            #   plan_execute : 첫 Plan 고수. replan 생략, 반복은 함
+            #   react / dag  : 엔진 no-op (이식측 dispatcher 위임)
             s00_stage = self._find_loop_s00()
-            logger.info("[Pipeline] Phase B: Agentic Loop (max %d iterations)", self.config.max_iterations)
+            orch_hint = (state.metadata.get("orchestrator_hint") or "").strip().lower()
+            logger.info(
+                "[Pipeline] Phase B: Agentic Loop (max %d iterations, orchestrator_hint=%r)",
+                self.config.max_iterations, orch_hint or "iterative(default)",
+            )
             while state.loop_decision == "continue" and not state.is_over_iterations and not state.is_over_budget:
                 state.loop_iteration += 1
                 logger.info("[Pipeline] Loop iteration %d", state.loop_iteration)
 
-                # iterative replan — 2번째 iter 부터. Plan 이 done 플래그를 세우면 즉시 종료.
-                if state.loop_iteration > 1 and s00_stage is not None:
+                # iterative replan — 2번째 iter 부터. linear / plan_execute 는 replan 생략.
+                # Plan 이 done 플래그를 세우면 즉시 종료 (모든 hint 공통).
+                if (
+                    state.loop_iteration > 1
+                    and s00_stage is not None
+                    and orch_hint not in ("linear", "plan_execute")
+                ):
                     await self._execute_stage(s00_stage, state)
                     plan = state.metadata.get("harness_plan") or {}
                     if plan.get("done"):
@@ -153,6 +168,12 @@ class Pipeline:
                     # Decide 스테이지가 loop_decision을 설정
                     if state.loop_decision in ("complete", "abort"):
                         break
+
+                # v0.15.3 — linear hint: 1회만 돌고 강제 종료. replan/iteration 전부 skip.
+                if orch_hint == "linear" and state.loop_decision == "continue":
+                    logger.info("[Pipeline] orchestrator_hint=linear — 1회 실행 후 종료")
+                    state.loop_decision = "complete"
+                    break
 
                 # retry → loop_decision을 continue로 돌리고 재시작
                 if state.loop_decision == "retry":
