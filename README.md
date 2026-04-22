@@ -2,7 +2,7 @@
 
 # xgen-harness
 
-### 12-Stage 에이전트 실행 프레임워크 — 설정만 하면 파이프라인이 자동 조립
+### Harnee Engineering 철학 기반 12-Stage 에이전트 실행 프레임워크 
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
