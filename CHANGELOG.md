@@ -5,6 +5,56 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] — 2026-04-22
+
+### 🚀 비전 6축 Phase 2~5 전면 실증 + 자가증식 도구 루프
+
+사용자 지시: **"쭉 ㄱㄱㄱㄱㄱ 쉬지말고 모든 페이즈 ㄱㄱㄱㄱㄱㄱㄱ 다 해"**. Phase 2~5 를 코드·테스트·리포트까지 완료.
+
+**🟢 1. Phase 2 — Stage Gallery 분리 (`xgen-harness-stage-sample`)**:
+- 샘플 패키지 stage_id 현행화 (`s04_tool_index` → `s04_tool`) + 버전 0.2.0
+- 의존성 pin `>=0.15.0`
+- 실증: `ArtifactRegistry.default()` 에 외부 Stage 가 `(stage_id=s04_tool, artifact=lotte)` 로 자동 합류 PASS
+- "Stage 디렉토리 하나만 빼서 pip 패키지로 배포 → UI 에서 default↔artifact 1 클릭 swap" 최초 완성
+
+**🟢 2. Phase 3 — Sandbox + NOM IR (`core/sandbox.py` · `core/nom.py`)**:
+- `Sandbox`: subprocess 기반 격리 실행기. timeout / stdout cap / `-I` isolated mode / stdin JSON / return_value 자동 파싱. 정상·타임아웃·예외 3 케이스 전부 확인
+- `NOMNode` / `NOMGraph`: Stage / Strategy / Tool / MCP server / legacy Node 를 단일 IR 로 통일. id / kind / source_file / entry / inputs / outputs / tags / version / plugin_package 9 필드
+- `snapshot_current_registry_as_nom()` — 현 엔진 상태 (Stage 12 + Strategy + Orchestrator + Provider) 를 54 노드 NOMGraph 로 한 번에 덤프. 갤러리·샌드박스·컴파일러 공통 입력
+
+**🟢 3. Phase 4 — Node Plugin 매니페스트 (`core/node_plugin.py` · `docs/harness/NODE_PLUGIN_SPEC.md`)**:
+- `NodePluginManifest` / `register_node_plugin` / `load_manifest_file` 공개 API
+- entry_points 그룹 `xgen_harness.node_plugins` 자동 발견 (idempotent)
+- 매니페스트 3 경로: Python dict / YAML·JSON 파일 / entry_points
+- xgen-workflow 레거시 노드(Input String / LLM / Retriever / ...) 를 외부 pip 패키지로 떼어낼 규약 확정. 엔진 무침범
+
+**🟢 4. Phase 5 — Tool Synthesis Loop (`tools/synthesis.py`)**:
+- `SynthesizedTool` / `ToolTestCase` / `SynthesizedToolSource` 데이터 모델
+- `test_synthesized_tool()` — Sandbox 로 test_cases 전수 검증. 하나라도 실패하면 등록 차단
+- `synthesize_and_register()` — 검증 통과 시 자동 `register_tool_source` → 카탈로그 자동 합류 → 다음 Plan 이 재사용
+- **실증**: "slugify" 가상 LLM 생성 도구가 2 test case 통과 → 레지스트리 합류 → 후속 호출 `{"slug":"harness-auto-weave"}` 반환 PASS
+- 비전 5번 축 "자가 증식 도구 에이전트" 첫 실전
+
+**🟢 5. Phase 6 — 벤치마크 자동화 (`bench/run_extension_phase_audit.py`)**:
+- Phase 2~5 실증을 단일 스크립트로 PASS/FAIL 표 + 증거 JSON 출력
+- 리포트: `bench/reports/2026-04-22-extension-phase-audit.md`
+- 결과: **4/4 PASS**
+
+### 자가검증 grep (전 축 총점검)
+- 9 축 × 5 항목 모두 유지 (v0.15.3 기준)
+- 외부 Stage artifact 합류, 외부 NodePlugin 매니페스트 합류, LLM 생성 도구 합류 전부 entry_points / register API 한 줄로 완료
+- 하드코딩 이름 리터럴: 각 레지스트리 기본값 1 파일에만 (planner/catalog/pipeline 본체 = 0)
+
+### 문서
+- `docs/harness/NODE_PLUGIN_SPEC.md` — 매니페스트 규약 신설
+- `docs/worklog/2026-04-22-v0150-extension-audit.md` — 오늘 전체 흐름 박제
+- `bench/reports/2026-04-22-extension-phase-audit.md` — 자동 생성 리포트
+
+### 남은 Phase (Phase 3.5 / 5.1+)
+- Sandbox 리소스 한도 (rlimit / cgroups) 강제
+- Tool Synthesis 의 갤러리 업로드 연동
+- Node Plugin 매니페스트 → catalog 최상위 `nodes` 키 승격
+
 ## [0.15.3] — 2026-04-22
 
 ### 🎯 Phase 2 마무리 — orchestrator_hint 실 분기 + Stage-local Strategy 자동 스캔

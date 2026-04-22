@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.15.3"
-description = "XGEN Harness Pipeline Library — orchestrator_hint 실분기(linear/plan_execute) + Stage-local strategies 디렉토리 자동 스캔"
+version = "0.16.0"
+description = "XGEN Harness — Phase 2~5 완성: Stage Gallery 분리 + Sandbox/NOM IR + Node Plugin 매니페스트 + Tool Synthesis Loop 자가 증식"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
