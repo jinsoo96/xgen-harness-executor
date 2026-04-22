@@ -5,6 +5,54 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.24] — 2026-04-22
+
+### 🎯 감사 리포트 C+ 지적 9건 — 3대 기조 복원 (레거시 무침범 / 확장 끼워넣기 / 기여자 생태계)
+
+외부 감사에서 C+ 등급으로 내린 "must-fix" 9건 중 실 코드 영향 8건 + 문서 규약 1건을 해소. 엔진 독립성·API 권한·확장 지점 공개 계약·에러 계층 실사용·이벤트 누수 차단을 v0.12 이전에 바로잡는 집중 릴리즈.
+
+**🔴 엔진 독립성 복원 (#1)**:
+- `adapters/resource_registry.py` — `from editor.node_composer import get_node_class_by_id` 직접 import 제거.
+- 공식 확장 지점 신설 — `register_xgen_node_resolver(resolver_fn)` / `get_xgen_node_resolver()` / `XgenNodeResolver` 를 public API (`xgen_harness` top-level) 로 노출. 호스트(xgen-workflow) 측 어댑터가 부팅 시 resolver 를 주입하고, 엔진은 등록된 것만 호출.
+- resolver 미등록 환경(독립 실행 / MCP 서버 / 테스트) 에서는 graceful 에러 문자열 반환 — `ResourceRegistry._call_xgen_node` 가 호스트 모듈 존재 여부에 의존하지 않음.
+
+**🔴 API 권한 하드코딩 제거 (#2)**:
+- `api/router.py::list_rag_collections` / `tools/rag_tool.py::_search_documents` / `stages/s02_history.py` / `stages/s06_context.py` / `integrations/xgen_services.py::DocumentService._auth_headers` — `"x-user-admin": "true"` 하드코딩 5곳 전부 `core.execution_context.get_xgen_auth_headers(user_id)` 공용 헬퍼로 수렴.
+- 새 헬퍼의 기본값은 `admin=false` / `superuser=false` — ExecutionContext 에 **명시 주입된 경우에만** 권한 승격. 이전엔 ExecutionContext 미설정 시 모든 서비스 간 호출이 superuser 로 나가던 경로가 닫힘.
+
+**🔴 ErrorEvent 원본 trace 노출 차단 (#3)**:
+- `events/types.py::ErrorEvent` — `error_type` / `category` 필드 추가. `message` 에는 원본 `str(e)` 를 싣지 않도록 api/router.py 의 예외 핸들러를 `HarnessError` 기반 분기로 교체. 내부 트레이스는 `logger.exception` 으로만 기록.
+
+**🔴 Gallery manifest 검증 (#4)**:
+- `compile/gallery.py::discover_galleries` — 외부 패키지가 내려준 `manifest.package_name` / `manifest.dist_name` 을 정규식(`[A-Za-z_][A-Za-z0-9_]{0,63}` / PEP 503 호환) 으로 검증. 위반 시 warning + module_name 안전 폴백. path traversal · 임의 import 경로 주입 차단.
+
+**🔴 AdvancedContextCompactor 공개 계약화 (#5)**:
+- `stages/s06_context.py` 의 `_try_microcompact` / `_try_context_collapse` / `_try_autocompact` / `_try_cascade` 4 private 헬퍼를 `try_*` public 메서드로 승격. 외부 기여자가 `AdvancedContextCompactor` 서브클래싱 시 엔진이 공개한 메서드만 호출하도록 계약 명시.
+- `stages/strategies/compactor_pd.py` docstring 재작성 — Stage private 헬퍼 의존 표기를 제거하고 공개 계약 설명으로 교체.
+
+**🔴 errors 계층 실사용 (#7)**:
+- `tools/rag_tool.py` — `raise RuntimeError(...)` 2건을 `ToolError(tool_name="rag_search")` 로 교체.
+- `tools/mcp_client.py` — `MCPCallResult` dataclass 신설 (`ok`/`text`/`status`/`error_detail`). `call_tool_raw()` 가 구조화 결과 반환, `call_tool()` 은 하위 호환 str 래퍼. `MCPTool.execute` 가 `result.startswith("MCP call failed")` 문자열 매칭 대신 `r.ok` 로 분기.
+
+**🔴 EventEmitter 누수·사용중단 API 제거 (#8)**:
+- `events/emitter.py` — `subscribe()` 가 `Callable[[], None]` unsubscribe 토큰 반환. `unsubscribe(token)` · `clear_subscribers()` 추가.
+- `_queue._queue` 내부 API 직접 접근 제거 → `_last_event` 추적으로 대체.
+- 콜백 예외는 `logger.exception(...)` 으로 트레이스까지 기록 (삼킴 금지).
+
+**🟡 DAG Orchestrator 역할 명시 (#6)**:
+- `orchestrator/dag.py::DAGOrchestrator` docstring 재작성 — 3 진입점(`DAGOrchestrator.run()` / `MultiAgentExecutor` / `MultiAgentPlannerStage`)이 모두 `run()` 한 곳으로 수렴함을 명시. 실제 실행·병렬화·재시도·에러 복구 로직이 단일 지점임을 계약화.
+
+**🟢 라이브러리 src 안 .md 제거 (#9)**:
+- `xgen_harness_executor/docs/harness/00-PHILOSOPHY.md` / `NODE-WRAPPING.md` 를 `harness_xgen/docs/harness/` 로 이관. 엔진 레포 루트에는 README + CHANGELOG 만 남음 (PyPI 페이지용 허용 범위).
+
+**이식측 반영 필요**:
+- `xgen-workflow feature/harness-v2`: `harness.py::_stream_harness_pipeline` 에서 `XgenAdapter` 인스턴스화 직전 `register_xgen_node_resolver(editor.node_composer.get_node_class_by_id)` 1회 호출 추가. pyproject pin `xgen-harness>=0.11.24`.
+
+**기존 사용자 영향**:
+- `MCPClient.call_tool()` 시그니처는 str 반환 그대로 유지 (하위 호환).
+- `ErrorEvent.message` 값이 원본 예외 문자열이 아닌 분류 메시지로 바뀜 — 콘솔에 원본 트레이스를 기대하던 디버깅 흐름은 `logger` (`harness.*`) 출력으로 전환 필요.
+- `x-user-admin` 기본값 false 교정 — ExecutionContext 에 명시 주입 없이 xgen 내부 서비스를 호출하던 코드는 인증 실패할 수 있음 (정상 동작).
+
 ## [0.11.23] — 2026-04-22
 
 ### 🎯 options_source 전면 선언 → 이식 수동 매핑 자연 삭제 경로 활성화

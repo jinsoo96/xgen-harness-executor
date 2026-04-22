@@ -61,3 +61,28 @@ def clear_execution_context() -> None:
     _api_key_var.set("")
     _provider_var.set("")
     _model_var.set("")
+
+
+# ── xgen 서비스 간 호출 인증 헤더 (v0.11.24) ────────────────────────────
+# 엔진은 요청자 권한을 함부로 승격하지 않는다 — 호스트(xgen-workflow gateway) 가
+# 인증한 사용자 컨텍스트를 ExecutionContext 에 담아 내려주고, 엔진은 그 값만 전파.
+# ExecutionContext 에 값이 없으면 빈 익명 헤더로 나가며, 서버측에서 거부된다.
+# 기존 하드코딩 `"true"` 기본값은 v0.11.24 에서 `"false"` 로 교정 — 명시 주입 없이
+# admin 권한을 얻는 경로를 닫는다.
+
+def get_xgen_auth_headers(user_id: str = "") -> dict:
+    """xgen 내부 서비스(documents / core / mcp) 호출용 인증 헤더.
+
+    우선순위: 인자 `user_id` > ExecutionContext `user_id` > 빈 값.
+    admin/superuser 플래그는 명시 주입 시에만 true. 기본값은 모두 false.
+    """
+    ctx_uid = get_extra("user_id", "") or ""
+    ctx_admin = str(get_extra("user_is_admin", "false")).lower()
+    ctx_super = str(get_extra("user_is_superuser", "false")).lower()
+    uid = user_id or ctx_uid
+    return {
+        "x-user-id": str(uid),
+        "x-user-name": get_extra("user_name", "harness") or "harness",
+        "x-user-admin": "true" if ctx_admin == "true" else "false",
+        "x-user-superuser": "true" if ctx_super == "true" else "false",
+    }

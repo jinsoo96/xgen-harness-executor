@@ -112,8 +112,33 @@ def discover_galleries(*, on_error: Optional[Callable[[str, Exception], None]] =
         manifest_dict = manifest if isinstance(manifest, dict) else {}
         # manifest 가 확정값을 내려줬다면 우선 사용 — 엔진이 컴파일 시점 계산한 규약.
         # 없으면 module_name 에서 파생 (예: xgen_gallery_foo → xgen-gallery-foo).
-        pkg_name = manifest_dict.get("package_name") or module_name
-        dist_name = manifest_dict.get("dist_name") or (pkg_name.replace("_", "-") if pkg_name else "")
+        #
+        # 보안 검증 (v0.11.24) — manifest 의 package_name / dist_name 은 외부 패키지가
+        # 내려줄 수 있으므로 신뢰 불가. path traversal · 임의 import 경로 주입을 차단하기 위해
+        # 다음 규칙을 만족할 때만 사용한다. 위반 시 manifest 값을 무시하고 module_name 에서
+        # 파생된 안전한 값으로 폴백.
+        #   - 문자열 타입
+        #   - 길이 1 ~ 64
+        #   - `[A-Za-z_][A-Za-z0-9_-]*` (package_name 은 언더스코어, dist_name 은 하이픈 허용)
+        import re
+        _PKG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+        _DIST_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")   # PEP 503 호환 범위
+        raw_pkg = manifest_dict.get("package_name")
+        raw_dist = manifest_dict.get("dist_name")
+        safe_pkg = raw_pkg if isinstance(raw_pkg, str) and _PKG_RE.match(raw_pkg) else None
+        safe_dist = raw_dist if isinstance(raw_dist, str) and _DIST_RE.match(raw_dist) else None
+        if raw_pkg and not safe_pkg:
+            logger.warning(
+                "gallery %s: manifest.package_name %r rejected (보안 규칙 위반) — module_name 으로 폴백",
+                ep.name, raw_pkg,
+            )
+        if raw_dist and not safe_dist:
+            logger.warning(
+                "gallery %s: manifest.dist_name %r rejected (보안 규칙 위반) — package_name 에서 파생",
+                ep.name, raw_dist,
+            )
+        pkg_name = safe_pkg or module_name
+        dist_name = safe_dist or (pkg_name.replace("_", "-") if pkg_name else "")
         out.append(InstalledGallery(
             entry_point_name=ep.name,
             manifest=manifest_dict,

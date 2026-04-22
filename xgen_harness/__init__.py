@@ -54,6 +54,11 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 from .tools import ToolSource, register_tool_source, get_tool_sources
+from .adapters.resource_registry import (
+    register_xgen_node_resolver,
+    get_xgen_node_resolver,
+    XgenNodeResolver,
+)
 from .capabilities import (
     CapabilitySpec,
     CapabilityMatch,
@@ -98,7 +103,7 @@ from .compile import (
     get_gallery,
 )
 
-__version__ = "0.11.23"
+__version__ = "0.11.24"
 
 __all__ = [
     # Core
@@ -167,6 +172,10 @@ __all__ = [
     "register_tool_source",
     "get_tool_sources",
     "register_stage",
+    # 호스트 독립성 — xgen 노드 resolver 외부 주입 (v0.11.24)
+    "register_xgen_node_resolver",
+    "get_xgen_node_resolver",
+    "XgenNodeResolver",
     # Capability System
     "CapabilitySpec",
     "CapabilityMatch",

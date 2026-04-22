@@ -97,10 +97,17 @@ class MetricsEvent(HarnessEvent):
 
 @dataclass
 class ErrorEvent(HarnessEvent):
-    """에러 발생"""
+    """에러 발생.
+
+    `message` 는 원본 trace 가 아닌 안전한 요약만 담는다. 호출부가 원본 예외를 그대로
+    `str(e)` 로 밀어넣는 것을 금지 — `error_type` + `category` 만으로 충분한 분류가
+    가능하도록 설계 (v0.11.24).
+    """
     message: str = ""
     stage_id: str = ""
     recoverable: bool = False
+    error_type: str = ""      # 예외 클래스명 (e.g. "RateLimitError")
+    category: str = ""        # ErrorCategory.value (e.g. "rate_limit")
 
 
 @dataclass

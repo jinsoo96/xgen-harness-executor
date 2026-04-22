@@ -12,6 +12,7 @@ import logging
 from ..core.stage import Stage, StrategyInfo
 from ..core.state import PipelineState
 from ..core.service_registry import get_service_url
+from ..core.execution_context import get_xgen_auth_headers as _auth_headers
 
 logger = logging.getLogger("harness.stage.memory")
 
@@ -147,12 +148,7 @@ class MemoryStage(Stage):
                         "limit": top_k,
                         "score_threshold": threshold,
                     },
-                    headers={
-                        "x-user-id": str(user_id),
-                        "x-user-name": "harness",
-                        "x-user-admin": "true",
-                        "x-user-superuser": "true",
-                    },
+                    headers=_auth_headers(user_id),
                 )
                 if resp.status_code == 200:
                     return resp.json().get("results", [])

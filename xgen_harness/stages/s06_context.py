@@ -376,13 +376,13 @@ class ContextStage(Stage):
                 results["compacted"] = True
                 logger.info("[Context] SlidingWindow: kept last %d messages", window_size)
         elif strategy_name == "microcompact":
-            self._try_microcompact(state, budget_used, results)
+            self.try_microcompact(state, budget_used, results)
         elif strategy_name == "autocompact_llm":
-            await self._try_autocompact(state, budget_used, results)
+            await self.try_autocompact(state, budget_used, results)
         elif strategy_name == "context_collapse_overlay":
-            self._try_context_collapse(state, budget_used, results)
+            self.try_context_collapse(state, budget_used, results)
         elif strategy_name == "cascade":
-            await self._try_cascade(state, budget_used, results)
+            await self.try_cascade(state, budget_used, results)
         elif budget_used > compaction_threshold and len(state.messages) > 4:
             # token_budget(기본, 파괴적): first + last 3
             state.messages = [state.messages[0]] + state.messages[-3:]
@@ -398,7 +398,7 @@ class ContextStage(Stage):
 
     # ── L3 / L4 / L5 / Cascade helper methods ──
 
-    async def _try_cascade(
+    async def try_cascade(
         self, state: PipelineState, budget_used: float, results: dict,
     ) -> None:
         """Claude Code Cascade — 압력에 따라 L3 → L4 → L5 자동 선택. 한 턴에 하나만 발동.
@@ -418,17 +418,17 @@ class ContextStage(Stage):
         cascade_applied: list[str] = []
         if budget_used >= l3_th:
             pre_mc = results.get("microcompacted", 0)
-            self._try_microcompact(state, budget_used, results, threshold_override=l3_th)
+            self.try_microcompact(state, budget_used, results, threshold_override=l3_th)
             if results.get("microcompacted", 0) > pre_mc:
                 cascade_applied.append("L3")
         if budget_used >= l5_th:
             pre_ac = results.get("autocompacted", 0)
-            await self._try_autocompact(state, budget_used, results, threshold_override=l5_th)
+            await self.try_autocompact(state, budget_used, results, threshold_override=l5_th)
             if results.get("autocompacted", 0) > pre_ac:
                 cascade_applied.append("L5")
         elif budget_used >= l4_th:
             pre_cc = results.get("context_collapsed", 0)
-            self._try_context_collapse(state, budget_used, results, threshold_override=l4_th)
+            self.try_context_collapse(state, budget_used, results, threshold_override=l4_th)
             if results.get("context_collapsed", 0) > pre_cc:
                 cascade_applied.append("L4")
         if cascade_applied:
@@ -436,7 +436,7 @@ class ContextStage(Stage):
             logger.info("[Context] Cascade dispatched: %s (budget=%.0f%%)",
                         "+".join(cascade_applied), budget_used * 100)
 
-    def _try_microcompact(
+    def try_microcompact(
         self, state: PipelineState, budget_used: float, results: dict,
         threshold_override: float | None = None,
     ) -> None:
@@ -493,7 +493,7 @@ class ContextStage(Stage):
                 replaced, mc_keep,
             )
 
-    def _try_context_collapse(
+    def try_context_collapse(
         self, state: PipelineState, budget_used: float, results: dict,
         threshold_override: float | None = None,
     ) -> None:
@@ -554,7 +554,7 @@ class ContextStage(Stage):
             len(preserved_ids), keep_tail,
         )
 
-    async def _try_autocompact(
+    async def try_autocompact(
         self, state: PipelineState, budget_used: float, results: dict,
         threshold_override: float | None = None,
     ) -> None:
@@ -713,15 +713,11 @@ class ContextStage(Stage):
                             "score_threshold": score_threshold,
                             "use_model_prompt": use_model_prompt,
                         }
+                        from ..core.execution_context import get_xgen_auth_headers
                         resp = await client.post(
                             f"{docs_url}/api/retrieval/documents/search",
                             json=body,
-                            headers={
-                                "x-user-id": str(user_id),
-                                "x-user-name": "harness",
-                                "x-user-admin": "true",
-                                "x-user-superuser": "true",
-                            },
+                            headers=get_xgen_auth_headers(user_id),
                         )
                         if resp.status_code == 200:
                             results = resp.json().get("results", [])

@@ -89,7 +89,18 @@ class DAGResult:
 
 class DAGOrchestrator:
     """
-    DAG 기반 멀티 에이전트 오케스트레이터.
+    DAG 기반 멀티 에이전트 오케스트레이터 — **DAG 실행의 단일 진입점** (v0.11.24).
+
+    엔진 내 DAG 실행 경로는 다음 3 진입점이 **모두 이 클래스의 `run()`** 으로 수렴한다:
+
+    1. `DAGOrchestrator.run()` 직접 호출 — 저수준 API (외부 기여자가 노드/엣지를 직접 구성)
+    2. `orchestrator.multi_agent.MultiAgentExecutor` — `workflow_data` JSON 을 파싱해 DAG 구성
+       후 `DAGOrchestrator.run()` 에 위임 (워크플로우 캔버스 → DAG 변환 전담)
+    3. `stages.multi_agent_planner.MultiAgentPlannerStage` — s05 Strategy 슬롯. 복잡도 감지 시
+       sub-agent 를 build 해서 `DAGOrchestrator.run()` 으로 escalate (런타임 fan-out 전담)
+
+    세 entry 가 모두 이 `run()` 에 수렴하므로 실행·병렬화·재시도·에러 복구 로직은 여기 한
+    곳에서만 관리한다. 한 곳 수정이 누락되면 세 경로 모두 같이 영향을 받는다.
 
     사용법:
         orch = DAGOrchestrator()

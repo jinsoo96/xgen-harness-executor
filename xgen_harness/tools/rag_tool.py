@@ -106,11 +106,12 @@ class RAGSearchTool(Tool):
         """xgen-documents API를 호출하여 검색 결과를 포맷팅하여 반환."""
         import httpx
 
+        from ..errors import ToolError
         docs_url = get_service_url("documents")
         if not docs_url:
-            raise RuntimeError(
-                "Documents service is not registered. "
-                "RAG search is unavailable."
+            raise ToolError(
+                "Documents service is not registered. RAG search is unavailable.",
+                tool_name="rag_search",
             )
 
         url = f"{docs_url}/api/retrieval/documents/search"
@@ -121,22 +122,17 @@ class RAGSearchTool(Tool):
             "limit": top_k,
             "score_threshold": 0.0,
         }
-        # xgen-documents 인증: ExecutionContext의 user_id를 헤더로 전달
-        from ..core.execution_context import get_extra
-        user_id = get_extra("user_id", "") or ""
-        headers = {
-            "Content-Type": "application/json",
-            "x-user-id": str(user_id),
-            "x-user-name": "harness",
-            "x-user-admin": str(get_extra("user_is_admin", "true")),
-            "x-user-superuser": str(get_extra("user_is_superuser", "true")),
-        }
+        # xgen-documents 인증: ExecutionContext의 user_id/admin 플래그를 헤더로 전달.
+        # 기본값은 admin=false — 호스트 어댑터가 명시적으로 주입한 경우에만 승격된다.
+        from ..core.execution_context import get_xgen_auth_headers
+        headers = {"Content-Type": "application/json", **get_xgen_auth_headers()}
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
             resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code != 200:
-                raise RuntimeError(
-                    f"Documents API returned {resp.status_code}: {resp.text[:300]}"
+                raise ToolError(
+                    f"Documents API returned {resp.status_code}: {resp.text[:300]}",
+                    tool_name="rag_search",
                 )
 
             data = resp.json()

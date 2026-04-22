@@ -23,12 +23,39 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from ..core.services import ServiceProvider, NullServiceProvider
 from ..tools.base import Tool, ToolResult
 
 logger = logging.getLogger("harness.resources")
+
+
+# ── Xgen 노드 클래스 resolver 주입 통로 (v0.11.24) ──────────────────────────
+# 엔진 독립성 원칙 — 엔진은 `editor.node_composer` 같은 호스트 모듈을 직접 import 하지 않는다.
+# 호스트(xgen-workflow) 측 어댑터가 부팅 시 resolver 를 등록하고, 엔진은 등록된 것만 호출한다.
+# resolver 미등록 환경(독립 실행 / MCP 서버 / 테스트 등)에서는 graceful 에러 문자열 반환.
+#
+# resolver 시그니처:
+#   (spec_id: str) -> NodeClass | None
+# NodeClass 는 `execute(**kwargs)` 를 가진 (sync/async) 호출 가능 객체를 생성하는 클래스.
+
+XgenNodeResolver = Callable[[str], Any]
+_xgen_node_resolver: Optional[XgenNodeResolver] = None
+
+
+def register_xgen_node_resolver(resolver: XgenNodeResolver) -> None:
+    """호스트 환경에서 spec_id → NodeClass 를 찾아주는 resolver 등록.
+
+    xgen-workflow 측 XgenAdapter 부팅 시 1회 호출. 엔진 본체는 editor.node_composer
+    같은 호스트 모듈을 직접 import 하지 않는다.
+    """
+    global _xgen_node_resolver
+    _xgen_node_resolver = resolver
+
+
+def get_xgen_node_resolver() -> Optional[XgenNodeResolver]:
+    return _xgen_node_resolver
 
 
 @dataclass
@@ -178,21 +205,26 @@ class ResourceRegistry:
         category: str,
         merged_params: dict,
     ) -> str:
-        """xgen 캔버스 노드 클래스를 직접 실행 (editor.node_composer.get_node_class_by_id).
+        """등록된 xgen 노드 resolver 로 spec_id → NodeClass 해석 후 execute.
 
-        라이브러리 독립 실행 환경(xgen-workflow 모듈 없음)에서는 graceful 에러 문자열 반환.
+        엔진은 호스트 모듈을 직접 import 하지 않는다 — `register_xgen_node_resolver()` 로
+        호스트 어댑터가 주입한 resolver 만 사용. 미등록 환경(독립 실행 등)에서는
+        graceful 에러 문자열 반환.
         """
         import inspect
 
-        try:
-            from editor.node_composer import get_node_class_by_id  # type: ignore
-        except Exception as e:
+        resolver = get_xgen_node_resolver()
+        if resolver is None:
             return (
-                f"Error: xgen-workflow editor.node_composer is unavailable "
-                f"(cannot execute '{spec_id}'): {e}"
+                f"Error: xgen node resolver is not registered "
+                f"(cannot execute '{spec_id}'). 호스트 어댑터가 "
+                f"register_xgen_node_resolver() 를 호출하지 않은 환경입니다."
             )
 
-        NodeClass = get_node_class_by_id(spec_id) if spec_id else None
+        try:
+            NodeClass = resolver(spec_id) if spec_id else None
+        except Exception as e:
+            return f"Error resolving xgen node '{spec_id}': {e}"
         if NodeClass is None:
             return f"Error: Node class '{spec_id}' not found in registry"
 

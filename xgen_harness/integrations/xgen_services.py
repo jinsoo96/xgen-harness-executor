@@ -354,22 +354,23 @@ class XgenDocumentService:
 
     @staticmethod
     def _auth_headers(user_id: str = "") -> dict:
-        """ExecutionContext에서 인증 헤더 구성. user_id 명시 시 우선 사용."""
+        """ExecutionContext에서 인증 헤더 구성.
+
+        v0.11.24 부터 공용 `get_xgen_auth_headers()` 로 위임 — admin/superuser 기본값은
+        `false`. 호스트(xgen-workflow gateway) 가 인증한 사용자 정보가 ExecutionContext 에
+        명시 주입된 경우에만 승격된 권한이 전파된다.
+        """
         try:
-            from ..core.execution_context import get_extra
-            ctx_uid = get_extra("user_id", "") or ""
-            ctx_admin = str(get_extra("user_is_admin", "true"))
-            ctx_super = str(get_extra("user_is_superuser", "true"))
+            from ..core.execution_context import get_xgen_auth_headers
+            return get_xgen_auth_headers(user_id)
         except Exception as e:
-            logger.debug("ExecutionContext 미초기화, 기본 헤더 사용: %s", e)
-            ctx_uid, ctx_admin, ctx_super = "", "true", "true"
-        uid = user_id or ctx_uid
-        return {
-            "x-user-id": str(uid),
-            "x-user-name": "harness",
-            "x-user-admin": ctx_admin,
-            "x-user-superuser": ctx_super,
-        }
+            logger.debug("ExecutionContext 미초기화, 익명 헤더로 폴백: %s", e)
+            return {
+                "x-user-id": str(user_id or ""),
+                "x-user-name": "harness",
+                "x-user-admin": "false",
+                "x-user-superuser": "false",
+            }
 
     async def search(
         self,

@@ -99,12 +99,15 @@ try:
         """사용 가능한 RAG 문서 컬렉션 (UI multi_select 옵션 제공)"""
         import httpx as _httpx
         from ..core.service_registry import get_service_url as _get_url
+        from ..core.execution_context import get_xgen_auth_headers
         docs_url = _get_url("xgen-documents")
         try:
             async with _httpx.AsyncClient(timeout=_httpx.Timeout(5)) as client:
+                # 인증 헤더는 ExecutionContext 가 있으면 그 값, 없으면 익명(admin=false).
+                # 호스트 게이트웨이가 익명 옵션 조회를 허용해둔 경우만 응답이 온다.
                 resp = await client.get(
                     f"{docs_url}/api/retrieval/documents/collections",
-                    headers={"x-user-admin": "true", "x-user-superuser": "true"},
+                    headers=get_xgen_auth_headers(),
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -193,7 +196,21 @@ try:
                     try:
                         await pipeline.run(state)
                     except Exception as e:
-                        await emitter.emit(ErrorEvent(message=str(e)))
+                        # 원본 예외 트레이스를 그대로 호스트로 흘리지 않는다 — 내부 로그는 남기고
+                        # 클라이언트에게는 ErrorCategory 기반 메시지와 타입만 전달.
+                        from ..errors import HarnessError, ErrorCategory
+                        logger.exception("[WS] pipeline run failed")
+                        if isinstance(e, HarnessError):
+                            msg = e.message or str(e.__class__.__name__)
+                            category = getattr(e, "category", ErrorCategory.UNKNOWN).value
+                        else:
+                            msg = "Pipeline execution failed"
+                            category = ErrorCategory.UNKNOWN.value
+                        await emitter.emit(ErrorEvent(
+                            message=msg,
+                            error_type=e.__class__.__name__,
+                            category=category,
+                        ))
                         await emitter.emit(DoneEvent(final_output="", success=False))
 
                 task = asyncio.create_task(run())

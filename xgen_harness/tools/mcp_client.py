@@ -11,6 +11,7 @@ Endpoints:
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
@@ -19,6 +20,20 @@ from .base import Tool, ToolResult
 from ..core.service_registry import get_service_url
 
 logger = logging.getLogger("harness.tools.mcp")
+
+
+@dataclass
+class MCPCallResult:
+    """MCP 도구 호출 구조화 결과 (v0.11.24).
+
+    기존 `call_tool` 는 문자열만 반환해 에러/성공을 prefix 매칭으로 구분해야 했고
+    이식측에도 같은 fragility 가 전파되었다. `call_tool_raw` 가 이 dataclass 를 반환해
+    호출부가 status 로 명확히 분기할 수 있게 한다.
+    """
+    ok: bool
+    text: str
+    status: int = 200
+    error_detail: str = ""
 
 
 class MCPClient:
@@ -50,16 +65,17 @@ class MCPClient:
             logger.error("[MCP] list_tools error: %s", e)
             return []
 
-    async def call_tool(self, session_id: str, tool_name: str, arguments: dict) -> str:
-        """MCP 도구 호출"""
+    async def call_tool_raw(self, session_id: str, tool_name: str, arguments: dict) -> MCPCallResult:
+        """MCP 도구 호출 — 구조화 결과 반환 (v0.11.24 신규).
+
+        `MCPTool.execute` 처럼 성공/실패를 명확히 분기해야 하는 호출부에서 사용.
+        레거시 `call_tool(str)` 은 이 위에 얇은 하위 호환 래퍼.
+        """
         url = f"{self._base_url}/api/mcp/mcp-request"
         payload = {
             "session_id": session_id,
             "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments,
-            },
+            "params": {"name": tool_name, "arguments": arguments},
         }
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -67,7 +83,6 @@ class MCPClient:
                 if resp.status_code == 200:
                     data = resp.json()
                     result_data = data.get("data", data.get("result", {}))
-                    # MCP 결과 포맷: {"content": [{"type": "text", "text": "..."}]}
                     content = result_data.get("content", [])
                     if isinstance(content, list):
                         texts = []
@@ -76,16 +91,35 @@ class MCPClient:
                                 texts.append(block.get("text", ""))
                             elif isinstance(block, str):
                                 texts.append(block)
-                        return "\n".join(texts) if texts else json.dumps(result_data, ensure_ascii=False)
-                    return str(content)
+                        text = "\n".join(texts) if texts else json.dumps(result_data, ensure_ascii=False)
+                    else:
+                        text = str(content)
+                    return MCPCallResult(ok=True, text=text, status=200)
                 else:
-                    error_msg = f"MCP call failed ({resp.status_code}): {resp.text[:300]}"
-                    logger.warning("[MCP] %s", error_msg)
-                    return error_msg
+                    detail = resp.text[:300]
+                    logger.warning("[MCP] call failed %d: %s", resp.status_code, detail)
+                    return MCPCallResult(
+                        ok=False,
+                        text=f"MCP call failed ({resp.status_code}): {detail}",
+                        status=resp.status_code,
+                        error_detail=detail,
+                    )
         except Exception as e:
-            error_msg = f"MCP call error: {e}"
-            logger.error("[MCP] %s", error_msg)
-            return error_msg
+            logger.error("[MCP] call error: %s", e)
+            return MCPCallResult(
+                ok=False,
+                text=f"MCP call error: {e}",
+                status=-1,
+                error_detail=str(e),
+            )
+
+    async def call_tool(self, session_id: str, tool_name: str, arguments: dict) -> str:
+        """MCP 도구 호출 — 하위 호환 문자열 반환 래퍼.
+
+        이식측이 이미 str 계약을 쓰고 있어 유지. 새 코드는 `call_tool_raw` 권장.
+        """
+        result = await self.call_tool_raw(session_id, tool_name, arguments)
+        return result.text
 
     async def check_session(self, session_id: str) -> bool:
         """세션 존재 여부 확인"""
@@ -130,10 +164,11 @@ class MCPTool(Tool):
         return not any(kw in name_lower for kw in write_keywords)
 
     async def execute(self, input_data: dict) -> ToolResult:
-        result = await self._mcp_client.call_tool(self._session_id, self.name, input_data)
-        if result.startswith("MCP call failed") or result.startswith("MCP call error"):
-            return ToolResult.error(result)
-        return ToolResult.success(result)
+        # call_tool_raw 는 MCPCallResult 로 성공/실패를 구조화 반환 — prefix 매칭 없이 status 로 분기.
+        r = await self._mcp_client.call_tool_raw(self._session_id, self.name, input_data)
+        if not r.ok:
+            return ToolResult.error(r.text)
+        return ToolResult.success(r.text)
 
 
 async def discover_mcp_tools(
