@@ -5,6 +5,23 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] — 2026-04-22
+
+### 🩹 hot-fix — 디렉토리화 sed 가 놓친 함수 내부 상대 import 일괄 수정
+
+v0.12.0 13 스테이지 디렉토리화 시 최상단 `^from ..` 만 `...` 로 치환 하고 **함수 내부 들여쓰기 된 `from ..` / `from .`** 은 빠뜨렸음. 실행 중 s06_context 등에서 `No module named 'xgen_harness.stages.core'` / `xgen_harness.strategies` ImportError 로 Pipeline abort.
+
+수정 범위 (s04_tool / s05_strategy / s06_context / s07_llm / s08_act / s09_judge):
+- 들여쓰기 된 `from ..X` → `from ...X` (엔진 루트 기준 깊이 +1)
+- 함수 내부 `from .strategies.X` → `from ..strategies.X` (stages/strategies 형제 디렉토리)
+
+**검증**: Pipeline.run() 실 LLM 호출 A/B 시나리오:
+- A(단순 인사): chosen=[s01,s07,s10,s12] → executed=5, bypassed=8 (Plan.chosen 정확 반영)
+- B(RAG+판단): chosen=12개 전체 → executed=20(루프 2회), bypassed=5
+- PlanningEvent SSE 로 `event_kind=planning` + chosen/skipped/reasoning 전체 payload 전달 확인
+
+**기존 사용자 영향**: v0.12.0/0.12.1 사용 중이라면 Planner 활성 시 Pipeline 이 abort 됨. v0.12.2 필수.
+
 ## [0.12.1] — 2026-04-22
 
 ### 🩹 hot-fix — PlanningEvent SSE 변환 누락 수정 (v0.12.0 직후)

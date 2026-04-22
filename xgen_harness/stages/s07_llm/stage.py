@@ -45,7 +45,7 @@ class LLMStage(Stage):
         # v0.9.0+: provider 생성 책임이 s07 로 이관됨 (PHILOSOPHY §2 s07 "담당").
         # v0.12.0: 공용 헬퍼(`core.provider_bootstrap.ensure_provider`) 로 위임 —
         # s00_harness Planner 도 동일 경로를 쓰므로 중복 제거.
-        from ..core.provider_bootstrap import ensure_provider
+        from ...core.provider_bootstrap import ensure_provider
         await ensure_provider(state, stage_id=self.stage_id)
         if not state.provider:
             raise PipelineAbortError("LLM provider not initialized", self.stage_id)
@@ -90,7 +90,7 @@ class LLMStage(Stage):
                 state.add_message("assistant", result_text)
 
         # verbose: LLM 응답 완료
-        from ..events.types import StageSubstepEvent as _StageSubstep
+        from ...events.types import StageSubstepEvent as _StageSubstep
         await state.emit_verbose(_StageSubstep(
             stage_id=self.stage_id, substep="llm_response_complete",
             meta={"has_tool_calls": has_tool_calls, "text_length": len(result_text),
@@ -167,7 +167,7 @@ class LLMStage(Stage):
 
         # 컨텍스트 크기 제한 — 프로바이더별 한도 초과 시 중간 축약.
         # 레지스트리(providers.get_context_limit) 단일 조회 — 하드코딩 금지.
-        from ..providers import get_context_limit
+        from ...providers import get_context_limit
         provider_name = getattr(provider, "provider_name", "") or (state.config.provider if state.config else "")
         context_limit = int(self.get_param(
             "context_limit", state, get_context_limit(provider_name),
@@ -184,7 +184,7 @@ class LLMStage(Stage):
         _output_tokens_recorded = False
 
         # verbose: LLM 요청 시작
-        from ..events.types import StageSubstepEvent
+        from ...events.types import StageSubstepEvent
         import time as _time
         _t_llm = _time.time()
         await state.emit_verbose(StageSubstepEvent(
@@ -338,7 +338,7 @@ class LLMStage(Stage):
 
     def _estimate_cost(self, usage: TokenUsage, model: str) -> float:
         """토큰 사용량으로 비용 추정 (USD) — PRICING 단일 진실 소스 사용"""
-        from .strategies.token_tracker import PRICING
+        from ..strategies.token_tracker import PRICING
 
         # 모델명으로 정확히 매칭, 없으면 부분 매칭
         pricing = PRICING.get(model)

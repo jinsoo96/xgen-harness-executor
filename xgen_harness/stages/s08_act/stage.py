@@ -277,7 +277,7 @@ class ExecuteStage(Stage):
             if cap_name is None:
                 return tool_input
 
-            from ..capabilities import ParameterResolver, get_default_registry
+            from ...capabilities import ParameterResolver, get_default_registry
 
             spec = get_default_registry().get(cap_name)
             if spec is None or not spec.params:
@@ -323,7 +323,7 @@ class ExecuteStage(Stage):
                 result = await search.execute(tool_input)
                 return result.content if hasattr(result, "content") else str(result)
             # 폴백: 인스턴스 없으면 즉시 생성
-            from ..tools.builtin import SearchToolsTool
+            from ...tools.builtin import SearchToolsTool
             search = SearchToolsTool(state.tool_definitions)
             result = await search.execute(tool_input)
             return result.content if hasattr(result, "content") else str(result)
@@ -340,7 +340,7 @@ class ExecuteStage(Stage):
                 return await registry.execute_tool(tool_name, tool_input)
 
         # 플러그인 ToolSource 경로 (register_tool_source로 등록된 소스)
-        from ..tools import get_tool_sources
+        from ...tools import get_tool_sources
         for source in get_tool_sources():
             if source.has_tool(tool_name):
                 result = await source.call_tool(tool_name, tool_input)
@@ -372,7 +372,7 @@ class ExecuteStage(Stage):
         if not rag_collections:
             return "Error: No RAG collections configured. RAG search is not available."
 
-        from ..tools.rag_tool import RAGSearchTool
+        from ...tools.rag_tool import RAGSearchTool
         rag_top_k = state.metadata.get("rag_top_k", 4)
         # v0.11.25 — DocumentService 주입. 없으면 RAGSearchTool 이 ToolError 반환.
         _services = state.metadata.get("services")

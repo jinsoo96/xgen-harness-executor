@@ -205,7 +205,7 @@ class PlanStage(Stage):
         )
 
         # verbose: 자연어 발견으로 바인딩된 capability 각각 발행 (source=discovery)
-        from ..events.types import CapabilityBindEvent
+        from ...events.types import CapabilityBindEvent
         for m in suggested:
             if m.spec.name in report.resolved:
                 await state.emit_verbose(CapabilityBindEvent(

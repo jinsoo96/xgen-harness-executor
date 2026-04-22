@@ -68,7 +68,7 @@ class ValidateStage(Stage):
         # ── Strategy 디스패치 ──
         strategy = self.resolve_strategy("evaluation", state, "llm_judge")
         if strategy:
-            from ..stages.interfaces import EvaluationStrategy
+            from ...stages.interfaces import EvaluationStrategy
             if isinstance(strategy, EvaluationStrategy):
                 # v0.11.27 — LLMJudge 같은 provider 의존 전략은 set_provider 호출이 없으면
                 # self._provider=None 에서 멈춰 noop 으로 빠진다. 평가 전에 현재 provider

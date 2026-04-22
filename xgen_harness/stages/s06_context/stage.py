@@ -70,7 +70,7 @@ class ContextStage(Stage):
 
         if rag_collections and state.user_input:
             # verbose: RAG fetch 시작
-            from ..events.types import StageSubstepEvent as _Sub
+            from ...events.types import StageSubstepEvent as _Sub
             top_k = int(self.get_param("rag_top_k", state, 4))
             await state.emit_verbose(_Sub(
                 stage_id=self.stage_id, substep="rag_fetch_start",
@@ -83,7 +83,7 @@ class ContextStage(Stage):
             rag_context = ""
             if doc_service and hasattr(doc_service, "search"):
                 parts: list[str] = []
-                from ..utils.docs import extract_source, extract_text, extract_score
+                from ...utils.docs import extract_source, extract_text, extract_score
                 score_threshold = float(self.get_param("score_threshold", state, 0.0))
                 # metadata_filter — xgen-documents DocumentSearchRequest.filter 로 전달.
                 # 우선순위: stage_params.metadata_filter (명시) > state.metadata.auto_metadata_filter (RR2 intent routing).
@@ -250,7 +250,7 @@ class ContextStage(Stage):
                     results["rag_ingestion_mode"] = "tool_only"
                     logger.info("[Context] RAG: %d collections, tool_only mode (system prompt skip)",
                                 len(rag_collections))
-            from ..events.types import StageSubstepEvent as _Sub2
+            from ...events.types import StageSubstepEvent as _Sub2
             await state.emit_verbose(_Sub2(
                 stage_id=self.stage_id, substep="rag_fetch_complete",
                 meta={"chunks": results.get("rag_chunks", 0)},
@@ -353,8 +353,8 @@ class ContextStage(Stage):
         # 반환되면 자체 apply() 에 전적으로 위임하고 inline if/elif 는 건너뛴다.
         handled_by_strategy = False
         try:
-            from ..core.strategy_resolver import StrategyResolver
-            from .strategies.compactor import AdvancedContextCompactor
+            from ...core.strategy_resolver import StrategyResolver
+            from ..strategies.compactor import AdvancedContextCompactor
             resolver = StrategyResolver.default()
             compactor = resolver.resolve("s06_context", "compactor", strategy_name)
             if isinstance(compactor, AdvancedContextCompactor):
@@ -667,7 +667,7 @@ class ContextStage(Stage):
                 return await provider.chat_once(prompt, max_tokens=500, temperature=0.0)
             # chat_once 없으면 chat() stream 을 수집
             if hasattr(provider, "chat"):
-                from ..providers.base import MessageBlock
+                from ...providers.base import MessageBlock
                 result_chunks = []
                 async for event in provider.chat(
                     messages=[{"role": "user", "content": prompt}],

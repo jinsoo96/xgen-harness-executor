@@ -55,7 +55,7 @@ class ToolIndexStage(Stage):
         cap_result = self._bind_capabilities(state)
         # verbose: 선언된 capability 각각 발행
         if cap_result.get("_events"):
-            from ..events.types import CapabilityBindEvent
+            from ...events.types import CapabilityBindEvent
             for ev in cap_result["_events"]:
                 await state.emit_verbose(CapabilityBindEvent(
                     name=ev["name"], source=ev["source"], stage_id=self.stage_id,
@@ -65,7 +65,7 @@ class ToolIndexStage(Stage):
         #    stage_params에 mcp_sessions가 있으면 해당 세션만,
         #    없으면 s01_input에서 이미 수집한 tool_definitions 유지 (하위 호환)
         if selected_mcp_sessions:
-            from ..events.types import StageSubstepEvent
+            from ...events.types import StageSubstepEvent
             await state.emit_verbose(StageSubstepEvent(
                 stage_id=self.stage_id, substep="mcp_discover_start",
                 meta={"sessions": selected_mcp_sessions},
@@ -105,7 +105,7 @@ class ToolIndexStage(Stage):
         # 3. Strategy 디스패치로 인덱스 생성 (progressive_3level / eager_load / none)
         strategy = self.resolve_strategy("discovery", state, "progressive_3level")
         if not strategy:
-            from .strategies.discovery import ProgressiveDiscovery
+            from ..strategies.discovery import ProgressiveDiscovery
             strategy = ProgressiveDiscovery()
         tool_index, augmented_defs = await strategy.discover(state.tool_definitions, state)
 
@@ -175,7 +175,7 @@ class ToolIndexStage(Stage):
         if config is None or not getattr(config, "capabilities", None):
             return {"declared": 0, "resolved": 0, "unknown": 0}
 
-        from ..capabilities import materialize_capabilities, merge_into_state
+        from ...capabilities import materialize_capabilities, merge_into_state
 
         declared_names = list(config.capabilities)
         report = materialize_capabilities(
@@ -239,7 +239,7 @@ class ToolIndexStage(Stage):
     ) -> None:
         """선택된 MCP 세션에서만 도구를 디스커버리하여 state에 등록"""
         try:
-            from ..tools.mcp_client import discover_mcp_tools
+            from ...tools.mcp_client import discover_mcp_tools
             mcp_tools = await discover_mcp_tools(session_ids)
 
             tool_mapping = state.metadata.get("mcp_tool_mapping", {})
