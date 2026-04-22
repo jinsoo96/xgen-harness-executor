@@ -123,14 +123,39 @@ def list_all_nodes() -> list[NOMNode]:
 
 
 def load_manifest_file(path: str) -> Optional[NodePluginManifest]:
-    """YAML 또는 JSON 매니페스트 파일을 읽어 등록."""
+    """YAML 또는 JSON 매니페스트 파일을 읽어 등록.
+
+    v0.16.1 — JSON 파일은 `compile.local_manifest.LocalManifest` 통일 스키마
+    우선 시도 후 실패 시 NodePluginManifest 로 fallback. YAML 은 node_plugin 고유.
+    두 경로 모두 최종 NodePluginManifest 로 수렴.
+    """
     p = Path(path)
     if not p.exists():
         logger.warning("[node_plugin] manifest not found: %s", path)
         return None
     text = p.read_text(encoding="utf-8")
+
+    # 1) 통합 LocalManifest 우선 시도 (JSON). Tool Synthesis 와 스키마 공유.
+    if path.lower().endswith(".json"):
+        try:
+            from ..compile.local_manifest import load_manifest as _load_local, SCHEMA_NAME
+            local = _load_local(path)
+            # schema 키 확인: LocalManifest 면 바로 변환
+            import json as _json
+            raw = _json.loads(text)
+            if isinstance(raw, dict) and raw.get("schema") == SCHEMA_NAME:
+                manifest = NodePluginManifest(
+                    name=local.name, version=local.version,
+                    description=local.description,
+                    nodes=list(local.nodes),
+                )
+                register_node_plugin(manifest)
+                return manifest
+        except Exception as e:
+            logger.debug("[node_plugin] local_manifest path failed: %s", e)
+
+    # 2) YAML/JSON legacy — NodePluginManifest.from_dict
     data: Optional[dict] = None
-    # YAML 우선 시도 (optional 의존: pyyaml). 없으면 JSON.
     try:
         import yaml  # type: ignore
         data = yaml.safe_load(text)

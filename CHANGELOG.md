@@ -5,6 +5,55 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] — 2026-04-22
+
+### 🎯 하드코딩 제거 감사 + Sandbox 리소스 하드닝 + 통합 매니페스트
+
+사용자 지시 박제: **"확장성 연동성 하드코딩식 해결 금지"** (`feedback_no_hardcoding_extensibility`).
+이 릴리즈는 v0.16.0 에서 발견한 박제 5 지점 (synthesis prefix/tags/manifest 스키마) 제거 + xgen-sandbox 아이디어 차용한 rlimit 기반 격리 + 대규모 벤치 자동화.
+
+**🟢 1. Sandbox 하드닝 (`core/sandbox.py`)**:
+- `SandboxLimits` dataclass 신설 — `cpu_seconds / address_space_mb / max_open_files / max_file_size_mb / no_core_dump` 5 필드
+- POSIX `preexec_fn` 에서 `resource.setrlimit` 강제 — child 전용, 부모 영향 0
+- 실증: 300MB 할당 → MemoryError 차단, 무한 루프 → SIGKILL(-9) 2초 만료
+- xgen-sandbox 아이디어 차용: per-call 리소스 필드 통합 스펙. 코드 카피 없음
+
+**🟢 2. LocalManifest 통합 스키마 (`compile/local_manifest.py` 신설)**:
+- 과거 `tools/synthesis.py` 가 `{"version":"0.1","nodes":[]}` 스키마를 즉석 박제, `core/node_plugin.py` 는 `NodePluginManifest` 로 따로 → drift 위험 발생
+- `LocalManifest` 단일 dataclass + `SCHEMA_NAME="xgen_harness.local_manifest"` / `SCHEMA_VERSION=1` 단일 상수
+- `load_manifest / save_manifest / upsert_node_in_file` 통합 API
+- synthesis 와 node_plugin 모두 이 모듈 호출만 — 같은 JSON 파일을 양쪽에서 주고받기 가능. drift 원천 차단
+
+**🟢 3. Tool Synthesis 하드코딩 제거 (`tools/synthesis.py`)**:
+- prefix/tags/package/entry 5 군데 박제 → 모듈 상수 (`_NAMESPACE / _ENTRY_PREFIX / _TAGS / _PLUGIN_PACKAGE / _SOURCE_LABEL`) 로 추출
+- `set_synthesis_namespace() / set_synthesis_tags() / get_synthesis_config()` 런타임 교체 API
+- `to_nom_node()` 가 통일 NOMNode 인스턴스 반환 (과거 dict → 타입 안전성)
+- `upload_synthesized_to_gallery()` 는 `compile.local_manifest.upsert_node_in_file` 호출만. 자기 스키마 박제 0
+- `load_synthesized_from_gallery()` 도 동일 모듈 경유
+- 실증: 동일 파일을 synthesis 가 쓰고 NodePlugin 이 읽어 NOMNode 복원 PASS
+
+**🟢 4. NodePlugin ↔ LocalManifest 호환 (`core/node_plugin.py`)**:
+- `load_manifest_file()` 이 `.json` 파일의 `schema=xgen_harness.local_manifest` 를 우선 감지 → LocalManifest 경로로 로드
+- 아니면 기존 YAML/JSON → NodePluginManifest fallback. 완전 호환
+
+**🟢 5. n=30 벤치마크 자동화 (`bench/run_harness_vs_workflow_n30.py`)**:
+- 3 카테고리 × 10 샘플 = 30 케이스 (`bench/cases/n30_cases.jsonl` 외부 파일)
+- 지표 4 종: 정답률 / 평균 지연(ms) / 평균 토큰 / 평균 Stage·도구 수
+- 결정적 모의 executor — 실 LLM 배선 전 **구조/집계 파이프라인** 검증 (다음 릴리즈에서 `--real-llm` 배선)
+- 리포트 표준 포맷 `bench/reports/YYYY-MM-DD-harness-vs-workflow-n30.md` 확정
+- 초회 결과 (stub): simple 에서 토큰 -20%, Stage 수 -50%, 복잡 케이스는 자율 도구 호출 2 회
+
+### 자가검증 (feedback 체크리스트 5 항목)
+1. **레지스트리 기반?** LocalManifest = 통합 모듈 ✅
+2. **entry_points 자동 발견?** 기존 8 축 + tool_sources 유지 ✅
+3. **단일 파일 기본값?** synthesis 상수 1 파일 / local_manifest 상수 1 파일 ✅
+4. **catalog 노출?** stages/orchestrators/providers/phases 변화 없음 (유지) ✅
+5. **스키마 중복 없음?** synthesis/node_plugin/gallery 3 곳이 LocalManifest 단일 포맷 공유 ✅ (이 릴리즈 핵심)
+
+### 문서
+- `docs/harness/NODE_PLUGIN_SPEC.md` — local_manifest 스키마 편입 (다음 패치)
+- `bench/reports/2026-04-22-harness-vs-workflow-n30.md` — 자동 생성 초회
+
 ## [0.16.0] — 2026-04-22
 
 ### 🚀 비전 6축 Phase 2~5 전면 실증 + 자가증식 도구 루프

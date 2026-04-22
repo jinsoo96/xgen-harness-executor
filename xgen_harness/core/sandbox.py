@@ -22,11 +22,42 @@ import os
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("harness.sandbox")
+
+
+@dataclass
+class SandboxLimits:
+    """POSIX rlimit 기반 per-sandbox 리소스 상한 (v0.16.1).
+
+    xgen-sandbox 의 `resources` 필드 아이디어 차용 — per-call 단위로 CPU/메모리/
+    파일·열린파일 상한을 통합 스펙으로. 진짜 격리(cgroups/seccomp)는 Phase 4+ 에서.
+    지금은 POSIX `resource.setrlimit` 로 best-effort.
+
+    Attributes
+    ----------
+    cpu_seconds : int
+        RLIMIT_CPU. child 가 사용할 수 있는 CPU time(초). 초과 시 SIGKILL.
+    address_space_mb : int
+        RLIMIT_AS. 가상 주소 공간(MB). malloc 폭주 차단.
+    max_open_files : int
+        RLIMIT_NOFILE. 동시에 열 수 있는 파일/소켓 수.
+    max_file_size_mb : int
+        RLIMIT_FSIZE. 쓰기 가능한 단일 파일 크기(MB).
+    no_core_dump : bool
+        RLIMIT_CORE=0 으로 core dump 비활성.
+    """
+    cpu_seconds: int = 5
+    address_space_mb: int = 512
+    max_open_files: int = 64
+    max_file_size_mb: int = 16
+    no_core_dump: bool = True
+
+
+DEFAULT_LIMITS = SandboxLimits()
 
 
 @dataclass
@@ -38,6 +69,7 @@ class SandboxResult:
     exit_code: int = 0
     timed_out: bool = False
     duration_ms: int = 0
+    applied_limits: Optional[dict] = None
 
 
 class Sandbox:
@@ -64,12 +96,56 @@ class Sandbox:
         python_executable: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
         cwd: Optional[str] = None,
+        limits: Optional[SandboxLimits] = None,
     ) -> None:
         self.timeout_sec = timeout_sec
         self.max_output_bytes = max_output_bytes
         self.python_executable = python_executable or sys.executable
         self.env = env
         self.cwd = cwd
+        self.limits = limits or DEFAULT_LIMITS
+
+    def _build_preexec_fn(self):
+        """POSIX rlimit 적용 preexec_fn. Windows 는 None 반환 (setrlimit 없음).
+
+        xgen-sandbox 의 resources 필드 아이디어 차용 — 하지만 우리는 K8s 대신
+        resource.setrlimit 로 best-effort. 부모 영향 없이 child 만 제한.
+        """
+        if os.name != "posix":
+            return None
+
+        limits = self.limits
+        mb = 1024 * 1024
+
+        def _apply():  # pragma: no cover — child process 에서만 실행
+            try:
+                import resource
+                # CPU time (soft=hard)
+                if limits.cpu_seconds > 0:
+                    resource.setrlimit(
+                        resource.RLIMIT_CPU,
+                        (limits.cpu_seconds, limits.cpu_seconds),
+                    )
+                # Address space (가상메모리 상한)
+                if limits.address_space_mb > 0:
+                    b = limits.address_space_mb * mb
+                    resource.setrlimit(resource.RLIMIT_AS, (b, b))
+                # 열린 파일 수
+                if limits.max_open_files > 0:
+                    n = limits.max_open_files
+                    resource.setrlimit(resource.RLIMIT_NOFILE, (n, n))
+                # 단일 파일 쓰기 크기
+                if limits.max_file_size_mb > 0:
+                    b = limits.max_file_size_mb * mb
+                    resource.setrlimit(resource.RLIMIT_FSIZE, (b, b))
+                # Core dump
+                if limits.no_core_dump:
+                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            except Exception:
+                # rlimit 실패해도 실행은 계속 (best-effort) — Docker 등 제한 환경 대응.
+                pass
+
+        return _apply
 
     def run_code(
         self,
@@ -100,6 +176,7 @@ class Sandbox:
 
         start = time.time()
         timed_out = False
+        preexec = self._build_preexec_fn()
         try:
             proc = subprocess.run(
                 [self.python_executable, "-I", code_path],
@@ -109,6 +186,7 @@ class Sandbox:
                 timeout=self.timeout_sec,
                 env=self.env,
                 cwd=self.cwd,
+                preexec_fn=preexec,
             )
             stdout = proc.stdout[: self.max_output_bytes]
             stderr = proc.stderr[: self.max_output_bytes]
@@ -148,6 +226,13 @@ class Sandbox:
             exit_code=exit_code,
             timed_out=timed_out,
             duration_ms=duration_ms,
+            applied_limits={
+                "cpu_seconds": self.limits.cpu_seconds,
+                "address_space_mb": self.limits.address_space_mb,
+                "max_open_files": self.limits.max_open_files,
+                "max_file_size_mb": self.limits.max_file_size_mb,
+                "posix": os.name == "posix",
+            },
         )
 
     def run_nom_tool(

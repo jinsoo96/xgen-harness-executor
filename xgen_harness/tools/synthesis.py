@@ -1,24 +1,23 @@
 """
-Tool Synthesis Loop — LLM 이 생성한 도구를 샌드박스에서 검증 후 레지스트리에 등록 (v0.16.0).
+Tool Synthesis Loop — LLM 이 생성한 도구를 샌드박스에서 검증 후 레지스트리에 등록.
 
 비전 원문 (Phase 5): "카탈로그에 없는 도구를 LLM 이 생성 → 샌드박스 → 갤러리 등록 →
 다음 Plan 이 재사용" — **자가 증식 도구 에이전트**.
 
-최소 동작 루프 (Phase 5 기본):
-  1. `SynthesizedTool(name, code, input_schema)` 스펙으로 LLM 소스 수신
-  2. `Sandbox` 에서 `test_cases` 실행 → 전부 통과해야 다음 단계
-  3. 통과 시 `SynthesizedToolSource` 로 래핑 → `register_tool_source` → 카탈로그 자동 합류
-  4. 이후 Planner 호출부터 `catalog["tools"]` 에 새 도구 포함 → Plan 이 선택 가능
+v0.16.1 자가감사 수정:
+  - prefix/tags/manifest 스키마 박제 제거
+  - 갤러리 업로드는 `compile.local_manifest` 단일 모듈 경유
+  - 네임스페이스는 모듈 최상단 상수 한 곳에서만 (외부 override 가능)
+  - 같은 로컬 매니페스트 포맷을 Node Plugin 과 공유 → drift 불가
 
-보안 / 안정성:
-  - `Sandbox` 가 subprocess + timeout + stdout cap 을 걸어 엔진 프로세스 분리
-  - 코드 자체는 `-I` (isolated mode) 로 실행해 site-packages 외 사용자 모듈 간섭 최소화
-  - 실패한 생성 시도는 등록하지 않고 `reasoning` 문자열만 남긴다 (학습용)
+보안:
+  - Sandbox rlimit (CPU/AS/NOFILE/FSIZE) + timeout + `-I` isolated
+  - 실패한 생성 시도는 등록 차단, reasoning 만 기록
 
-다음 단계 (Phase 5.1+):
-  - 샌드박스에 리소스 한도 (cgroups/rlimit) 강제
-  - 생성된 도구를 갤러리에 upload (compile/gallery.py 와 연동)
-  - 다중 LLM 합의 후 등록 (peer review)
+확장 지점:
+  - 네임스페이스: `set_synthesis_namespace("<prefix>")` 로 교체 가능
+  - 태그: `set_synthesis_tags([...])` 로 교체
+  - 실행 격리: 호출자가 `Sandbox(limits=...)` 를 주입하면 임의 정책
 """
 
 from __future__ import annotations
@@ -31,6 +30,40 @@ from ..core.sandbox import Sandbox, SandboxResult
 from . import register_tool_source, ToolSource
 
 logger = logging.getLogger("harness.tool_synthesis")
+
+
+# ────────────────────────────────────────────────────────────────
+#  설정 상수 — 이 모듈에서 유일하게 박는 이름. 외부에서 set_* 로 교체 가능.
+# ────────────────────────────────────────────────────────────────
+
+_NAMESPACE = "synth.tools"          # NOMNode.id prefix → "{namespace}.{tool_name}"
+_ENTRY_PREFIX = "synth"             # NOMNode.entry → "{entry_prefix}:{tool_name}"
+_TAGS: tuple[str, ...] = ("synthesized", "tool")
+_PLUGIN_PACKAGE = "synthesized"
+_SOURCE_LABEL = "synthesized"       # ToolSource.list_tools 의 'source' 값
+
+
+def set_synthesis_namespace(prefix: str) -> None:
+    """NOMNode.id 의 prefix 를 런타임 교체 (기본 'synth.tools')."""
+    global _NAMESPACE
+    _NAMESPACE = prefix
+
+
+def set_synthesis_tags(tags: list[str]) -> None:
+    """NOMNode.tags 를 런타임 교체."""
+    global _TAGS
+    _TAGS = tuple(tags)
+
+
+def get_synthesis_config() -> dict:
+    """현재 synthesis 모듈 네임스페이스·태그 확인 (진단용)."""
+    return {
+        "namespace": _NAMESPACE,
+        "entry_prefix": _ENTRY_PREFIX,
+        "tags": list(_TAGS),
+        "plugin_package": _PLUGIN_PACKAGE,
+        "source_label": _SOURCE_LABEL,
+    }
 
 
 @dataclass
@@ -77,7 +110,7 @@ class SynthesizedToolSource:
             "name": self.spec.name,
             "description": self.spec.description,
             "input_schema": self.spec.input_schema or {"type": "object"},
-            "source": "synthesized",
+            "source": _SOURCE_LABEL,
         }]
 
     async def call_tool(self, name: str, args: dict) -> dict:
@@ -148,8 +181,14 @@ def synthesize_and_register(
     *,
     sandbox: Optional[Sandbox] = None,
     on_pass: Optional[Callable[[SynthesizedToolSource], None]] = None,
+    upload_to_gallery: Optional[str] = None,
 ) -> SynthesisReport:
     """Tool Synthesis Loop 의 단일 step — 검증 후 통과하면 register_tool_source.
+
+    Args:
+        upload_to_gallery: 갤러리 매니페스트 파일 경로. 제공 시 통과한 도구를
+            해당 JSON 에 NOMNode 로 append. pip wheel 갤러리 또는 로컬 파일
+            갤러리 모두 이 규격.
 
     Usage::
 
@@ -159,7 +198,7 @@ def synthesize_and_register(
             code=CODE,
             test_cases=[ToolTestCase({"s": "Hello World"}, expected_return={"slug": "hello-world"})],
         )
-        report = synthesize_and_register(spec)
+        report = synthesize_and_register(spec, upload_to_gallery="gallery/manifest.json")
         if report.registered:
             ...  # 다음 Plan 이 이 도구를 catalog 에서 보게 됨
     """
@@ -176,4 +215,82 @@ def synthesize_and_register(
     except Exception as e:
         report.registered = False
         report.reasoning += f"; register_tool_source failed: {e}"
+        return report
+
+    # v0.16.1 — 갤러리 업로드 연동 (Phase 5.1).
+    if upload_to_gallery:
+        try:
+            saved_to = upload_synthesized_to_gallery(tool, upload_to_gallery)
+            report.reasoning += f"; uploaded to gallery: {saved_to}"
+        except Exception as e:
+            report.reasoning += f"; gallery upload failed: {e}"
+
     return report
+
+
+# ────────────────────────────────────────────────────────────────
+#  Tool Synthesis → NOM → Gallery 배포 경로 (Phase 5.1)
+# ────────────────────────────────────────────────────────────────
+
+def to_nom_node(tool: SynthesizedTool) -> "NOMNode":
+    """SynthesizedTool → NOMNode 변환 (통일 IR).
+
+    prefix/tags/package 는 모듈 상수 참조 — set_synthesis_* 로 런타임 교체 가능.
+    소스 코드는 NOMNode.kind_meta["synthesis_code"] 에 저장하여 갤러리에서 복원 가능.
+    """
+    from ..core.nom import NOMNode, NOMKind
+    return NOMNode(
+        id=f"{_NAMESPACE}.{tool.name}",
+        kind=NOMKind.TOOL,
+        name=tool.name,
+        description=tool.description,
+        source_file="",
+        entry=f"{_ENTRY_PREFIX}:{tool.name}",
+        kind_meta={
+            "synthesis_code": tool.code,
+            "input_schema": tool.input_schema or {},
+            "test_case_count": len(tool.test_cases),
+        },
+        inputs=[],
+        outputs=[],
+        tags=list(_TAGS),
+        version="0.0.1",
+        plugin_package=_PLUGIN_PACKAGE,
+    )
+
+
+def upload_synthesized_to_gallery(tool: SynthesizedTool, manifest_path: str) -> str:
+    """검증 통과 도구를 로컬 매니페스트에 upsert.
+
+    스키마는 `compile.local_manifest.LocalManifest` 단일 포맷 — Node Plugin 과 공유.
+    synthesis 가 자기 스키마 박제하지 않는다 (feedback_no_hardcoding_extensibility).
+
+    반환: 저장된 파일의 절대 경로.
+    """
+    from ..compile.local_manifest import upsert_node_in_file
+    node = to_nom_node(tool)
+    saved = upsert_node_in_file(node, manifest_path, manifest_name="synthesized-tools")
+    logger.info("[synthesis] manifest upsert: %s -> %s", tool.name, saved)
+    return saved
+
+
+def load_synthesized_from_gallery(manifest_path: str) -> list[SynthesizedTool]:
+    """로컬 매니페스트에서 SynthesizedTool 복원.
+
+    `synthesis_code` 키를 보유한 TOOL 노드만 복원 — 다른 kind 는 무시.
+    """
+    from ..compile.local_manifest import load_manifest
+    manifest = load_manifest(manifest_path)
+    out: list[SynthesizedTool] = []
+    for node in manifest.nodes:
+        meta = node.kind_meta or {}
+        code = meta.get("synthesis_code")
+        if not code:
+            continue
+        out.append(SynthesizedTool(
+            name=node.name or node.id,
+            description=node.description,
+            code=code,
+            input_schema=meta.get("input_schema") or {},
+        ))
+    return out
