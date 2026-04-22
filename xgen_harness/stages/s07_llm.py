@@ -346,6 +346,7 @@ class LLMStage(Stage):
                 usage.output_tokens = estimated
                 # 관측자가 추정인지 실제인지 구분할 수 있도록 flag.
                 state.metadata.setdefault("output_tokens_sources", []).append(source)
+                logger.info("[LLM] output_tokens=%d (source=%s, fallback)", estimated, source)
 
         return result_text, tool_calls, usage
 

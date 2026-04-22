@@ -20,7 +20,49 @@ pip install xgen-harness
 
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.
 > 사용자는 **무엇을** 할지 선언, 하네스는 **어떻게** 를 자동 조립.
-> 현재 상태(`v0.11.1`): Stage × Strategy × Capability 3층, 40+ Strategy, 컴파일러(→ wheel), DAG 오케스트레이터.
+> 현재 상태(`v0.11.23`): Stage × Strategy × Capability 3층, 40+ Strategy, **5-Level Cascade Compression** (Claude Code 이식), **tool_choice API** (OpenAI/Anthropic/LangChain 통합), **drift-free 연결선** (엔진↔이식↔프론트 단일 진실), 컴파일러(→ wheel), DAG 오케스트레이터.
+
+---
+
+## 🆕 최신 주요 변경 (v0.11.14 → v0.11.23)
+
+### Claude Code 압축 패턴 이식 (v0.11.14~17)
+
+| 버전 | 핵심 |
+|------|------|
+| `v0.11.14` | **L3 Microcompact** 완성 — Claude Code 5-Level 압축 전부 이식 (L1/L3/L4/L5) |
+| `v0.11.15` | **Strategy Cascade** — `strategy="cascade"` 로 L3→L4→L5 압력별 자동 선택 |
+| `v0.11.16` | Cascade 디폴트 튜닝 (70/85/95 → **80/90/97**) — baseline 동기, 조기 발동 해악 방지 |
+| `v0.11.17` | `citation_mode="auto"` **실험적** auto-router (도메인 감지) |
+
+### Tool Choice / RAG 실전 활로 (v0.11.18~20)
+
+| 버전 | 핵심 |
+|------|------|
+| `v0.11.18` | `rag_ingestion_mode` (`system_prompt` / `tool_only` / `both`) — L3 실전 조건 충족 |
+| `v0.11.19` | **tool_choice API** (`auto`/`required`/`none`/`{name}`) — Provider 4종 통합, `force_tool_use` 옵션 |
+| `v0.11.20` | 코드 감사 후속: 고유명사 하드코딩 제거, `_cascade_*_override` leak 해소, `list_strategies()` 6종 동기, force_tool_use **circuit breaker** (loop ≥1 → auto 격하), Anthropic `none` 처리, LangChain tool_choice forward, `chars_per_token` / `citation_auto_*_tokens` override |
+
+### 이식 연결선 / 확장지점 / drift-free (v0.11.21~23)
+
+| 버전 | 핵심 |
+|------|------|
+| `v0.11.21` | **연결선 3 갭 해소**: (1) `HarnessConfig` top-level `context_window` / `thinking_enabled` / `thinking_budget_tokens` forwarding (Pilot #10 stage_params 우회 근본 제거) (2) s07 `output_tokens` 선착 1회 집계로 MetricsEvent 0 증상 해소 (3) **s06 compactor 외부 교체 개방** — `AdvancedContextCompactor` ABC 신설 + 4 구현체 (Microcompact/ContextCollapseOverlay/AutocompactLLM/Cascade) 레지스트리 등록, 기여자가 `register_strategy` 로 자기 구현 swap. `pyproject.toml` mypy gate 추가 (`core.*` relaxed baseline) |
+| `v0.11.22` | **Provider tokenizer 확장점**: `LLMProvider.count_tokens(text) -> (tokens, source)` 공식 확장점. OpenAI 는 tiktoken 자동 감지. s07 usage 실패 시 자동 보정 + `metadata["output_tokens_sources"]` 출처 남김. **PipelineState 도메인 분해**: `ToolGroup`/`ValidationGroup` dataclass 신설, `state.tool.*` / `state.validation.*` 로 재구성. property shim 으로 기존 경로 (`state.tool_definitions` 등) 자동 위임 → Stage/이식/프론트 0 수정. **compactor 물리 분해** (`strategies/compactor_pd.py`). **bare except 전수** 40+ 건 `logger.debug/warning` 로 교체 |
+| `v0.11.23` | **options_source 전면 선언** — 이식 수동 매핑 자연 삭제 경로. 엔진 `stage_config` 의 11 필드 (s01_input.provider, s03_prompt.prompt_id, s04_tool.custom_tools/cli_skills/capabilities/node_tags, s06_context.ontology_collections/folders/files/db_connections 등) 에 `options_source` 선언 → 이식 `bootstrap_default_sources` 가 엔진 역매핑으로 자동 채움. **엔진이 UI 필드의 단일 진실 소스**, drift 감지 로그 |
+
+**주장 지표 (n=3 replay 확정)**:
+
+| 시나리오 | Harness vs Legacy |
+|---------|-------------------|
+| assort 단답 (e-commerce CS) | kw **+332%**, lat **-37%** |
+| assort_hard L4 필터 | kw **+69%**, lat **-26%** |
+| assort_hard L5/L6 집계·랭킹 | lat **-35~-38%** |
+| krra 문서 인용 | cite **1.94/turn** (legacy 0) |
+| krra 멀티홉 교차 | cite **2.10/turn**, lat **-19%** |
+| 장기 대화 cascade 안정성 | std **½** (89.6 → 44.2) |
+
+**Latency 전 시나리오 Harness 우세** (−12~−38%). 벤치 500+ 턴 근거 — `bench/INFINITE-LOG.md`, `docs/universe-proof*.md` 참조.
 
 ---
 
@@ -105,11 +147,12 @@ pip install xgen-harness
 - **라이브러리 ≠ 인프라**: 라이브러리는 URL·API 키·프로바이더 이름을 모른다 → 어댑터가 주입
 - **Graceful skip**: 미등록 자원은 에러가 아니라 자동으로 건너뜀
 - **무침범**: 새 Stage/Strategy/Tool 추가할 때 기존 코드 1줄도 수정할 필요 없음
-- **하드코딩 0**: `if provider == "..."`, `if stage_id == "..."` 같은 분기 전부 제거 (v0.11.1 까지 이어진 정화)
+- **하드코딩 0**: `if provider == "..."`, `if stage_id == "..."` 같은 분기 전부 제거 — v0.11.20 에서 프로젝트 고유명사(e.g. 회사/컬렉션 토큰) 까지 **전량 제거**, `citation_auto_*_tokens` 로 확장 지점화. v0.11.23 에서 **이식측 수동 매핑** (stage_id/stage_param_key 수동 기입) 도 엔진 `options_source` 단일 선언으로 자연 삭제.
+- **단일 진실 소스 (v0.11.22~23)**: UI 필드·옵션 소스·tokenizer 선택 전부 엔진이 결정, 이식/프론트는 받아서 렌더만. drift 감지 시 경고 로그.
 
 ---
 
-## 확장성 & 안정성 현황 (v0.11.1 기준)
+## 확장성 & 안정성 현황 (v0.11.23 기준)
 
 | 확장 지점 | 방식 | 등급 |
 |----------|------|------|
@@ -127,7 +170,15 @@ pip install xgen-harness
 | **ContentGuard** | 사용자 정의 패턴 + PII(이메일/휴대폰/주민번호/카드) 감지 실구현 (v0.11.1) | **A** |
 | **컴파일러** | `xgen.compile(wf)` → pip 가능 wheel. 외부 SDK 의존성도 `register_dependency_rule()` 로 자동 주입 | **A** |
 | **DAG 오케스트레이터** | 멀티에이전트 SSE 분기/병합 + fan-out Strategy 레지스트리 | **A** |
-| **전체 plug-and-play 성숙도** | | **~97%** |
+| **Context Compression** | 5-Level Cascade (L1/L3/L4/L5) + `strategy=cascade` 자동 선택 + stage_param override (v0.11.15~20) | **A** |
+| **Advanced Compactor 외부 교체** | `AdvancedContextCompactor` ABC + `register_strategy("s06_context","compactor",…)` 슬롯 (v0.11.21) | **A** |
+| **Tool Choice 제어** | OpenAI/Anthropic/LangChain 통합 `tool_choice` API, `force_tool_use` toggle + circuit breaker (v0.11.19~20) | **A** |
+| **RAG 주입 모드** | `rag_ingestion_mode` (system_prompt / tool_only / both) — L3 Microcompact 실전 조건 (v0.11.18) | **A** |
+| **Citation 제어** | `citation_mode` (off/enabled/strict/auto) + `citation_auto_*_tokens` 확장 지점 (v0.11.17~20) | **A-** (auto 실험적) |
+| **Provider tokenizer** | `LLMProvider.count_tokens()` 확장점 + `output_tokens_sources` 관측 (v0.11.22) | **A** |
+| **State 도메인 분해** | `ToolGroup` / `ValidationGroup` dataclass + property shim 하위호환 (v0.11.22) | **A** |
+| **UI 옵션 소스 단일 진실** | 엔진 `stage_config.options_source` 선언 → 이식 `bootstrap_default_sources` 자동 역매핑 (v0.11.23) | **A** |
+| **전체 plug-and-play 성숙도** | | **~98%** |
 
 모든 확장 지점이 **레지스트리 + 팩토리 + ABC/Protocol** 기반. 라이브러리 본체에 하드코딩된 프로바이더/모델/판정 로직 **0건**.
 
@@ -304,9 +355,9 @@ Phase C: 마무리 (1회)
 | 1 | **`s01_input`** | 입력 | Provider 생성, API 키 해석 | provider, model, temperature | default |
 | 2 | **`s02_history`** | 이력 | 대화 이력 로드 | max_history, memory_collection | default, embedding_search |
 | 3 | **`s03_prompt`** | 프롬프트 | 섹션 기반 조립 + RAG + Citation | system_prompt, citation_enabled | section_priority, simple |
-| 4 | **`s04_tool`** | 도구 | MCP / Gallery / RAG 도구 수집 | mcp_sessions, rag_collections, rag_tool_mode | progressive_3level, eager_load |
+| 4 | **`s04_tool`** | 도구 | MCP / Gallery / RAG 도구 수집 + `force_tool_use` (v0.11.19) | mcp_sessions, rag_collections, rag_tool_mode, **force_tool_use** | progressive_3level, eager_load |
 | 5 | **`s05_strategy`** | 전략 | 자동/CoT/ReAct/None | planning_mode (auto/cot/react/none) | auto (complexity 연동) |
-| 6 | **`s06_context`** | 컨텍스트 | RAG 검색 + 토큰 관리 | rag_collections, context_window, window_size | token_budget, sliding_window |
+| 6 | **`s06_context`** | 컨텍스트 | RAG 검색 + **5-Level Cascade Compression** + `rag_ingestion_mode` (v0.11.14~20) | rag_collections, context_window, **rag_ingestion_mode**, **cascade_l3/l4/l5_threshold**, chars_per_token | **6종**: token_budget, sliding_window, **microcompact** (L3), **context_collapse_overlay** (L4), **autocompact_llm** (L5), **cascade** |
 | 7 | **`s07_llm`** | LLM | 스트리밍 + 재시도 + 비용 추적 | max_tokens, max_retries, context_limit | retry: exponential_backoff / no_retry · parser: anthropic / openai · thinking: default / disabled |
 | 8 | **`s08_act`** | 실행 | 도구 디스패치 | timeout, result_budget | sequential, **parallel** |
 | 9 | **`s09_judge`** | 판정 | LLM Judge / Rule-based / None | criteria, threshold | llm_judge, rule_based, none |
@@ -383,6 +434,151 @@ config = HarnessConfig(
 )
 # → LLM 이 [DOC_1], [DOC_2] 형식으로 문서 인용
 ```
+
+---
+
+## 5-Level Context Compression Cascade (Claude Code 이식, v0.11.14~16)
+
+대화가 길어져 `context_window` 에 근접하면 단일 압축으로 부족하고, 과도 압축은 맥락 손실을 유발한다. Claude Code 의 **5-Level Cascade** 를 이식 — **압력 구간별로 서로 다른 전략을 단계적 적용**.
+
+| Level | 전략 | 동작 | `stage_params.s06_context`
+|------|------|------|---|
+| L1 | Tool Result Budget (내재) | 50 KB 이상 tool_result 는 preview + `pd_stores["tool_result"]` 보존 | (항상) |
+| L2 | History Snip | token_budget 의 first + last N 유지 | `strategy="token_budget"` |
+| L3 | **Microcompact** | 오래된 `tool_result` 블록만 placeholder 로 교체 (비파괴, pd_stores 복원) | `strategy="microcompact"` |
+| L4 | **Context Collapse Overlay** | 중간 메시지 → overlay 마커 + 원본 `pd_stores["history"]` 보존, `fetch_pd` 복원 | `strategy="context_collapse_overlay"` |
+| L5 | **Autocompact** | child LLM 이 9-section 구조 요약 생성 → messages 를 [first, summary, last_N] 로 축소 | `strategy="autocompact_llm"` |
+
+### Cascade — 압력에 따른 자동 선택 (v0.11.15+, 기본값 v0.11.16 보정)
+
+```python
+stage_params = {
+    "s06_context": {
+        "strategy": "cascade",
+        # v0.11.16 디폴트 (baseline 동기 80/90/97 — 조기 발동 방지)
+        "cascade_l3_threshold": 80,   # 도달 시 L3 시도 (tool_result 교체)
+        "cascade_l4_threshold": 90,   # 추가 발동 → L4 overlay
+        "cascade_l5_threshold": 97,   # 최후 → L5 child LLM summary
+    }
+}
+```
+
+한 턴당 **L3 + (L4 또는 L5) 최대 2 단계**. 실행 결과는 `results["cascade_applied"] = ["L3", "L5"]` 처럼 기록.
+
+**왜 L3 단독보다 Cascade 인가** — Iter#5 반증 기록 (`bench/INFINITE-LOG.md`):
+- `v0.11.15` 초기 디폴트 70/85/95 는 조기 발동으로 ctx 여유 시 baseline 대비 **ans -19%** 품질 악화
+- `v0.11.16` 디폴트 80/90/97 로 교정 → **baseline 이 자연 compact 할 시점 이후에만 cascade 개입** 원칙
+- Iter#8 n=3 replay: cascade 의 가치는 "평균 품질" 보다 **분산 1/2 (std 89.6 → 44.2) = worst-case 방어**
+
+### RAG 주입 모드 (v0.11.18)
+
+`rag_ingestion_mode` 로 RAG 결과를 **어디에** 주입할지 선택 — L3 를 실전에서 발동시키려면 `tool_only` 가 필수.
+
+| 값 | 설명 | 용도 |
+|----|------|------|
+| `system_prompt` (기본) | RAG chunk 를 system prompt 에 통으로 주입 | 빠른 응답, 도구 호출 불필요 시나리오 |
+| `tool_only` | system prompt 주입 skip, LLM 은 `rag_search` 도구만 사용 | **L3 Microcompact 조건 충족** (tool_result 누적) |
+| `both` | 둘 다 | 양쪽 장점 결합 |
+
+**자동 정정**: `s04_tool.rag_tool_mode="tool"` 이면 `rag_ingestion_mode` 가 자동 `tool_only` 로 전환 (사용자 의도 존중).
+
+---
+
+## Tool Choice 제어 (v0.11.19~20)
+
+OpenAI / Anthropic / LangChain 통합 `tool_choice` API — 특정 tool 호출 강제, 첫 iter 탐색 강제 등.
+
+```python
+stage_params = {
+    "s04_tool": {
+        "rag_tool_mode": "tool",
+        "force_tool_use": True,  # 첫 LLM 호출에 tool_choice="required" 강제
+    }
+}
+```
+
+**내부 동작**:
+- OpenAI: `body["tool_choice"] = "required"` (v0.11.19)
+- Anthropic: `body["tool_choice"] = {"type": "any"}` 로 변환 (v0.11.19)
+- LangChain: `llm.bind_tools(tools, tool_choice="required")` forward (v0.11.20)
+- `none`: Anthropic 은 공식 미지원이라 `tools` 자체 drop 으로 semantics 맞춤 (v0.11.20)
+
+**Circuit Breaker** (v0.11.20) — `force_tool_use=True` 라도 `loop_iteration >= 1` 부터 `tool_choice="auto"` 로 격하. OpenAI `required` 가 매 호출마다 tool 강제로 무한 루프 유발 가능 → **첫 iter 만 강제, 이후 LLM 판단**.
+
+---
+
+## 엔진 ↔ 이식 ↔ 프론트 drift-free 연결선 (v0.11.21~23)
+
+이식측이 엔진 내부를 "베껴쓰는" 지점이 있으면 한쪽을 바꿀 때 drift 가 생긴다. v0.11.21~23 은 이 연결선을 **한 방향 선언** 으로 뒤집었다.
+
+### 1. HarnessConfig top-level forwarding (v0.11.21)
+
+이전: `context_window` / `thinking_enabled` / `thinking_budget_tokens` 는 `stage_params["s07_llm"]` 안쪽에 숨어 있어, 이식측이 stage_params 파싱을 하지 않으면 전달이 실패 (Pilot #10 증상).
+
+지금: `HarnessConfig.from_workflow()` 가 top-level `hc` 에서 바로 수신 (`_safe_int` 유틸 + 최소 1024 가드).
+
+```python
+# adapters/xgen.py
+hc = workflow_data.get("harness_config", {})
+config_kwargs["context_window"] = _safe_int(hc.get("context_window"), default=200000, min_val=1024)
+config_kwargs["thinking_enabled"] = bool(hc.get("thinking_enabled", False))
+config_kwargs["thinking_budget_tokens"] = _safe_int(hc.get("thinking_budget_tokens"), default=10000)
+```
+
+### 2. Provider tokenizer 확장점 (v0.11.22)
+
+이전: OpenAI 가 USAGE 이벤트로 output_tokens 를 안 줄 때 `len(text)/4` 같은 ad-hoc 휴리스틱을 s07 내부에 박아둠.
+
+지금: `LLMProvider.count_tokens(text) -> (tokens, source)` 공식 확장점. OpenAI 는 tiktoken 감지 시 `encoding_for_model` → `o200k_base`. 외부 provider 가 자기 tokenizer 를 갖고 있으면 **이 메서드만 override** → 자동 참여.
+
+```python
+# providers/base.py
+class LLMProvider(ABC):
+    def count_tokens(self, text: str) -> tuple[int, str]:
+        """tokens, source 반환. source 는 'usage' | 'tiktoken' | 'estimate_chars_3' 등."""
+        return max(1, len(text) // 3), "estimate_chars_3"
+```
+
+관측자는 `state.metadata["output_tokens_sources"]` 를 읽어 추정 여부를 판단.
+
+### 3. options_source 단일 선언 (v0.11.23)
+
+이전: 이식 `harness_options_registry.bootstrap_default_sources` 에 11 필드의 `stage_id`/`stage_param_key` 가 **수동으로 박혀 있음**. 엔진이 필드 추가/리네이밍하면 drift.
+
+지금: 엔진 `stage_config` 에 `options_source` 선언 → 이식이 빈 문자열로 둬도 엔진 역매핑으로 자동 채워짐. drift 시 경고 로그.
+
+```python
+# xgen_harness/core/stage_config.py  (엔진)
+StageConfigField(
+    key="prompt_id", stage_id="s03_prompt",
+    options_source="prompt-store",   # ← 이 한 줄이 이식 수동 매핑을 대체
+    ...
+)
+```
+
+**효과**: 이식측 11 라인 수동 박음을 안전하게 제거 가능. UI 필드 추가 시 이식/프론트 수정 0 — 엔진이 UI 의 단일 진실 소스.
+
+### 4. Advanced Compactor 외부 교체 (v0.11.21)
+
+```python
+from xgen_harness.stages.strategies.compactor_pd import AdvancedContextCompactor
+from xgen_harness.core.strategy_resolver import register_strategy
+
+class MyCompactor(AdvancedContextCompactor):
+    async def apply(self, state, stage, budget_used, results):
+        ...  # state/pd_stores/provider 전부 접근 가능
+
+register_strategy("s06_context", "compactor", "my_compactor", MyCompactor)
+
+# stage_params.s06_context.strategy = "my_compactor" → 자동 위임
+```
+
+### 5. PipelineState 도메인 분해 (v0.11.22, 무침범)
+
+`state.tool_definitions` / `state.pending_tool_calls` / `state.tool_results` → `state.tool.*` 로 재그룹.
+`state.validation_score` / `state.validation_feedback` / `state.retry_count` → `state.validation.*` 로 재그룹.
+
+**property shim** 으로 기존 경로 전부 유지 → Stage/이식/프론트 **0 수정**. 외부 기여자는 `ToolGroup` / `ValidationGroup` 서브클래싱으로 캐시·평가 메타 확장 가능.
 
 ---
 
@@ -814,7 +1010,8 @@ xgen_harness/
 │       ├── tool_executor.py     # Sequential / Parallel
 │       ├── evaluation.py        # LLMJudge / RuleBased / NoValidation
 │       ├── discovery.py         # Progressive / Eager
-│       ├── compactor.py         # TokenBudget / SlidingWindow
+│       ├── compactor.py         # TokenBudget / SlidingWindow (stateless)
+│       ├── compactor_pd.py      # AdvancedContextCompactor ABC + L3/L4/L5/Cascade (v0.11.22 분해)
 │       ├── guard.py             # Iteration / Cost / Token / Content (실구현)
 │       ├── _decide.py           # Threshold / AlwaysPass (v0.11.1 진짜 구현)
 │       ├── cache.py             # AnthropicCache / NoCache
@@ -881,6 +1078,14 @@ xgen_harness/
 
 | 버전 | 주요 변경 |
 |------|----------|
+| **0.11.23** | **options_source 전면 선언** — 엔진 `stage_config` 11 필드가 UI 옵션 소스 이름을 선언. 이식 `bootstrap_default_sources` 가 빈 stage_id/stage_param_key 를 엔진 역매핑으로 자동 채움 → 이식 수동 매핑 11 라인 자연 삭제. drift 경고 로그. |
+| **0.11.22** | **확장점 3종 + 품질 정리**. (1) `LLMProvider.count_tokens()` 공식 확장점 + OpenAI tiktoken 자동 감지 + `output_tokens_sources` 관측. (2) `PipelineState` 도메인 분해 (`ToolGroup`/`ValidationGroup`) + property shim 무침범. (3) `strategies/compactor_pd.py` 분해 (stateless vs advanced). bare `except` 40+ 건 `logger.debug/warning` 로 전수 정리. |
+| **0.11.21** | **연결선 3 갭 해소**. (1) `HarnessConfig` top-level `context_window`/`thinking_*` forwarding. (2) s07 `output_tokens` 선착 1회 집계. (3) `AdvancedContextCompactor` ABC + L3/L4/L5/Cascade 4 구현체 `register_strategy("s06_context","compactor",…)` 슬롯 등록 → 외부 교체 개방. `pyproject.toml` mypy gate. |
+| **0.11.20** | 코드 감사 후속 — 고유명사 하드코딩 제거, `_cascade_*_override` leak 해소, `list_strategies()` 6종 동기, `force_tool_use` circuit breaker, Anthropic `none` 처리, LangChain tool_choice forward. |
+| **0.11.19** | **tool_choice API** (OpenAI/Anthropic/LangChain 통합) + s04 `force_tool_use` 옵션. |
+| **0.11.18** | `rag_ingestion_mode` (system_prompt/tool_only/both) — L3 Microcompact 실전 조건 충족. |
+| **0.11.17** | `citation_mode="auto"` 실험적 auto-router. |
+| **0.11.14~16** | **Claude Code 5-Level 압축 전부 이식** (L1/L3/L4/L5) + `strategy="cascade"` 자동 선택 + 디폴트 80/90/97 보정. |
 | **0.11.1** | 🧹 **Strategy 품격 — 하드코딩 제거 / 진짜 구현체**. `ThresholdDecide`/`AlwaysPassDecide` 가 이름표만 있던 마커에서 `DecideStrategy.decide()` 구현체로 승격, `s10_decide` 내부 분기 0줄로 축소. `ContentGuard` 정규식 + PII(이메일/휴대폰/주민번호/카드) 실구현. `ParallelToolExecutor` 공개 API(`__all__`) 승격. |
 | **0.11.0** | ⚡ **Stage ID 리네이밍 + alias 하위호환**. s02_memory→s02_history, s03_system_prompt→s03_prompt, s04_tool_index→s04_tool, s05_plan→s05_strategy, s08_execute→s08_act, s09_validate→s09_judge, s12_complete→s12_finalize. `STAGE_ID_ALIASES` + `canonical_stage_id()` 로 구 id 저장 워크플로우도 계속 동작. |
 | **0.10.4** | **Strategy Variants** — 디폴트 건들지 않고 "복사해서 v2" 로 사용자 정의 변형 노출. `HarnessConfig.strategy_variants` 신규 필드. |
