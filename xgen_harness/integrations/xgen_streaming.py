@@ -23,6 +23,7 @@ from ..events.types import (
     CapabilityBindEvent,
     StageSubstepEvent,
     RetryEvent,
+    PlanningEvent,
 )
 
 
@@ -231,6 +232,28 @@ def convert_to_xgen_event(event: HarnessEvent) -> Optional[dict[str, Any]]:
                 "reason": event.reason,
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
+            },
+        }
+
+    # v0.12.0 — REAL HARNESS Planner. SSE 로 chosen/skipped/params/strategies/reasoning
+    # 전체를 흘려야 프론트가 카드 렌더할 수 있음. v0.12.0 출시 직후 이 변환 누락이
+    # 발견되어 v0.12.1 에서 채움.
+    elif isinstance(event, PlanningEvent):
+        return {
+            "type": "log",
+            "data": {
+                "level": "INFO",
+                "message": f"[HARNESS] Plan 확정 ({event.source}, {len(event.chosen)} stages)",
+                "node_name": "Harness",
+                "timestamp": event.timestamp,
+                "event_kind": "planning",
+                "chosen": list(event.chosen),
+                "skipped": dict(event.skipped),
+                "params": dict(event.params),
+                "strategies": dict(event.strategies),
+                "reasoning": event.reasoning,
+                "planner_model": event.planner_model,
+                "source": event.source,
             },
         }
 

@@ -5,6 +5,15 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] — 2026-04-22
+
+### 🩹 hot-fix — PlanningEvent SSE 변환 누락 수정 (v0.12.0 직후)
+
+v0.12.0 에서 `events/types.py::PlanningEvent` 와 `event_to_dict` 매핑은 추가했으나 **`integrations/xgen_streaming.py::convert_to_xgen_event` 에 변환 분기를 빠뜨려** PlanningEvent 가 SSE 로 전혀 흘러가지 않던 누락. 프론트 카드 렌더 PoC 작업 중 발견.
+
+- `convert_to_xgen_event` 에 `PlanningEvent` 분기 추가 — `event_kind: "planning"` 으로 chosen/skipped/params/strategies/reasoning/planner_model/source 전체 SSE payload 에 실음.
+- 이식측 `harness.py::_harness_stream` 변경 없음. pyproject pin `xgen-harness>=0.12.1` 만 상향.
+
 ## [0.12.0] — 2026-04-22
 
 ### 🎯 REAL HARNESS — Harness Planner 축 A 착수 (LLM 자율 조립)
