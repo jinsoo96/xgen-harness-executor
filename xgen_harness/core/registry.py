@@ -21,7 +21,7 @@ logger = logging.getLogger("harness.registry")
 # alias → stage_id 매핑
 _ALIASES: dict[str, str] = {}
 for sid in STAGE_DISPLAY_NAMES:
-    # "s07_llm" → aliases: "llm", "LLM", "7"
+    # "s07_act" → aliases: "act", "ACT", "7"
     short = sid.split("_", 1)[1] if "_" in sid else sid
     num = sid[1:3] if sid.startswith("s") else ""
     _ALIASES[short] = sid
@@ -153,30 +153,28 @@ class ArtifactRegistry:
 
 
 def _register_default_stages(registry: ArtifactRegistry) -> None:
-    """모든 기본 스테이지를 레지스트리에 등록"""
+    """모든 기본 스테이지를 레지스트리에 등록 (v0.14.0 — 11 스테이지 + s00_harness)"""
     from ..stages.s01_input import InputStage
     from ..stages.s03_prompt import SystemPromptStage
-    from ..stages.s07_llm import LLMStage
-    from ..stages.s08_act import ExecuteStage
-    from ..stages.s10_decide import DecideStage
-    from ..stages.s12_finalize import CompleteStage
+    from ..stages.s07_act import ExecuteStage
+    from ..stages.s09_decide import DecideStage
+    from ..stages.s11_finalize import CompleteStage
 
     registry.register("s01_input", "default", InputStage)
     registry.register("s03_prompt", "default", SystemPromptStage)
-    registry.register("s07_llm", "default", LLMStage)
-    registry.register("s08_act", "default", ExecuteStage)
-    registry.register("s10_decide", "default", DecideStage)
-    registry.register("s12_finalize", "default", CompleteStage)
+    registry.register("s07_act", "default", ExecuteStage)
+    registry.register("s09_decide", "default", DecideStage)
+    registry.register("s11_finalize", "default", CompleteStage)
 
-    # v0.12.0 — Harness Planner 메타 스테이지. HarnessConfig.use_planner=True
-    # 일 때만 Pipeline 이 주입하므로 기본 파이프라인 변화 없음.
+    # s00_harness — 통제탑. Provider/Planner/본문호출/iterative replan 소유.
+    # HarnessConfig.use_planner=True (또는 v0.14.0+ harness_mode) 일 때 Pipeline 이
+    # ingress 최상단에 prepend.
     try:
         from ..stages.s00_harness import HarnessStage
         registry.register("s00_harness", "default", HarnessStage)
     except ImportError:
         pass
 
-    # Phase 2/3 스테이지 (구현되면 추가)
     try:
         from ..stages.s02_history import MemoryStage
         registry.register("s02_history", "default", MemoryStage)
@@ -202,14 +200,14 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
         pass
 
     try:
-        from ..stages.s09_judge import ValidateStage
-        registry.register("s09_judge", "default", ValidateStage)
+        from ..stages.s08_judge import ValidateStage
+        registry.register("s08_judge", "default", ValidateStage)
     except ImportError:
         pass
 
     try:
-        from ..stages.s11_save import SaveStage
-        registry.register("s11_save", "default", SaveStage)
+        from ..stages.s10_save import SaveStage
+        registry.register("s10_save", "default", SaveStage)
     except ImportError:
         pass
 

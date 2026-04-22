@@ -7,13 +7,13 @@ geny-harness의 Stage trait 패턴:
   - Artifact를 갈아끼워도 I/O 계약은 동일
 
 사용:
-    class LLMStage(Stage):
+    class ActStage(Stage):
         input_spec = StageInput(
-            requires=["messages", "system_prompt", "provider"],
-            optional=["tool_definitions", "temperature"],
+            requires=["pending_tool_calls"],
+            optional=["provider"],
         )
         output_spec = StageOutput(
-            produces=["last_assistant_text", "token_usage"],
+            produces=["tool_results"],
             modifies=["messages"],
         )
 """
@@ -62,7 +62,7 @@ class StageOutput:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  12개 스테이지 I/O 계약 레지스트리
+#  11개 스테이지 I/O 계약 레지스트리 (v0.14.0 — s07_llm 삭제 후)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
@@ -128,18 +128,8 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s07_llm": {
-        "input": StageInput(
-            requires=["provider", "messages"],
-            optional=["system_prompt", "tool_definitions"],
-        ),
-        "output": StageOutput(
-            produces=["last_assistant_text"],
-            modifies=["messages", "pending_tool_calls", "token_usage", "cost_usd"],
-            events=["StageEnterEvent", "StageExitEvent", "MessageEvent", "ThinkingEvent"],
-        ),
-    },
-    "s08_act": {
+    # v0.14.0: s07_llm 삭제. 본문 LLM 호출은 s00_harness.main_call 이 담당.
+    "s07_act": {
         "input": StageInput(
             requires=["pending_tool_calls"],
             optional=["provider"],
@@ -150,7 +140,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "ToolCallEvent", "ToolResultEvent"],
         ),
     },
-    "s09_judge": {
+    "s08_judge": {
         "input": StageInput(
             requires=["last_assistant_text"],
             optional=["provider", "user_input"],
@@ -160,7 +150,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "EvaluationEvent"],
         ),
     },
-    "s10_decide": {
+    "s09_decide": {
         "input": StageInput(
             requires=[],
             optional=["pending_tool_calls", "validation_score", "last_assistant_text"],
@@ -170,7 +160,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s11_save": {
+    "s10_save": {
         "input": StageInput(
             requires=[],
             optional=["final_output", "token_usage"],
@@ -179,7 +169,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s12_finalize": {
+    "s11_finalize": {
         "input": StageInput(
             requires=[],
             optional=["final_output", "token_usage", "cost_usd"],
@@ -187,6 +177,21 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
         "output": StageOutput(
             produces=["final_output"],
             events=["StageEnterEvent", "StageExitEvent", "MetricsEvent", "DoneEvent"],
+        ),
+    },
+    # s00_harness — 통제탑. Phase A 에서 Plan 생성, Phase B 루프 안에서 main_call 로 본문 LLM 호출.
+    "s00_harness": {
+        "input": StageInput(
+            requires=["user_input"],
+            optional=["messages", "system_prompt", "tool_definitions"],
+        ),
+        "output": StageOutput(
+            produces=["provider", "last_assistant_text"],
+            modifies=["messages", "pending_tool_calls", "token_usage", "cost_usd"],
+            events=[
+                "StageEnterEvent", "StageExitEvent", "PlanningEvent",
+                "MessageEvent", "ThinkingEvent", "ToolCallEvent",
+            ],
         ),
     },
 }

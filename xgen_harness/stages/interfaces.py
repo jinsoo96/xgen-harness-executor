@@ -49,7 +49,30 @@ class StrategySlot:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  S07 LLM — 재시도 전략
+#  S00 Harness — 본문 LLM 호출 Transport 전략 (v0.14.0)
+#  "streaming" / "batch" 등은 이 인터페이스의 구현체.
+#  외부 패키지가 새 Transport 를 entry_points 로 얹을 수 있음.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class TransportStrategy(Strategy):
+    """s00_harness 의 본문 LLM 호출 전송 전략 인터페이스.
+
+    하드코딩된 "streaming vs batch" 분기를 대체. Pipeline 은 Strategy 인스턴스만
+    받고, 세부는 전적으로 impl 에 위임. 플러그인이 WebSocket / 재시도 정책이
+    다른 전송 / 로깅 wrap 등 임의의 Transport 를 등록 가능.
+    """
+
+    @abstractmethod
+    async def call(self, state: Any) -> dict:
+        """본문 LLM 호출 실행. state.provider 사용, 이벤트 방출, token_usage 갱신.
+
+        Returns: {call_count, has_tool_calls, text_length, input_tokens, output_tokens}
+        """
+        ...
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  LLM 재시도 전략 (Transport 내부에서 사용)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class RetryStrategy(Strategy):

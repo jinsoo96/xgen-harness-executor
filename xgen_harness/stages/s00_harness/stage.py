@@ -46,27 +46,43 @@ class HarnessStage(Stage):
         return "ingress"
 
     def list_strategies(self) -> list[StrategyInfo]:
-        return [
-            StrategyInfo(
-                name="llm",
-                description="LLM 이 카탈로그를 보고 Stage/파라미터/Strategy 를 조립",
-                is_default=True,
-            ),
-            StrategyInfo(
-                name="noop",
-                description="Plan 생성 skip — 전체 Stage 실행 (Planner 비활성과 동일)",
-                is_default=False,
-            ),
-        ]
+        # v0.14.0: Transport Strategy 를 자기서술 — StrategyResolver 에 등록된 모든
+        # impl 을 동적으로 노출. 리터럴 목록 하드코딩 금지 (재귀적 자율주행).
+        from ...core.strategy_resolver import _REGISTRY, _ensure_defaults_registered
+        _ensure_defaults_registered()
+        entries: list[StrategyInfo] = []
+        for (sid, slot, impl), cls in sorted(_REGISTRY.items()):
+            if sid != "s00_harness" or slot != "transport":
+                continue
+            try:
+                inst = cls()
+                entries.append(StrategyInfo(
+                    name=impl,
+                    description=getattr(inst, "description", "") or "",
+                    is_default=(impl == "streaming"),
+                ))
+            except Exception:
+                entries.append(StrategyInfo(name=impl, description="", is_default=(impl == "streaming")))
+        if not entries:
+            # 레지스트리 비어있을 때의 최후 폴백 — 기본 두 개 이름만.
+            entries = [
+                StrategyInfo(name="streaming", description="SSE 스트리밍", is_default=True),
+                StrategyInfo(name="batch", description="비스트리밍 단일 호출"),
+            ]
+        return entries
 
     async def execute(self, state: PipelineState) -> dict:
         from ...core.planner import HarnessPlanner, HarnessPlan
         from ...events.types import PlanningEvent
 
-        # ━━━━ 0. noop 전략: 전체 실행, Plan 없음 ━━━━
-        strategy_name = self.get_param("strategy", state, "llm")
-        if strategy_name == "noop":
-            plan = HarnessPlan.fallback_all("Planner strategy=noop")
+        # ━━━━ 0. harness_mode=off 또는 레거시 noop: 전체 실행, Plan 없음 ━━━━
+        # mode 는 HarnessConfig.harness_mode 를 우선 참조, 없으면 stage_params 폴백.
+        harness_mode = getattr(state.config, "harness_mode", "") if state.config else ""
+        if not harness_mode:
+            harness_mode = self.get_param("strategy", state, "autonomous")
+        # legacy: strategy="noop" 를 off 로 간주
+        if harness_mode in ("off", "noop"):
+            plan = HarnessPlan.fallback_all(f"harness_mode={harness_mode}")
             state.metadata["harness_plan"] = plan.to_dict()
             return {
                 "planner_source": plan.source,
@@ -74,7 +90,38 @@ class HarnessStage(Stage):
                 "skipped_count": 0,
             }
 
-        # ━━━━ 1. Plan 생성 ━━━━
+        # selected: Planner LLM 호출 생략, 사용자 핀(chosen/strategies/params) 그대로 사용
+        if harness_mode == "selected":
+            pinned_chosen = list((state.config.stage_params.get("s00_harness") or {}).get("pinned_chosen") or [])
+            pinned_strategies = dict((state.config.stage_params.get("s00_harness") or {}).get("pinned_strategies") or {})
+            pinned_params = dict((state.config.stage_params.get("s00_harness") or {}).get("pinned_params") or {})
+            plan = HarnessPlan(
+                chosen=pinned_chosen,
+                skipped={},
+                params=pinned_params,
+                strategies=pinned_strategies,
+                reasoning="harness_mode=selected — 사용자 핀 그대로 적용",
+                source="user_pinned",
+                done=False,
+            )
+            state.metadata["harness_plan"] = plan.to_dict()
+            self._merge_plan_into_config(state, plan)
+            if state.event_emitter:
+                await state.event_emitter.emit(PlanningEvent(
+                    chosen=list(plan.chosen), skipped={}, params=dict(plan.params),
+                    strategies=dict(plan.strategies), reasoning=plan.reasoning,
+                    planner_model="", source=plan.source,
+                    iteration=getattr(state, "loop_iteration", 0), done=False,
+                ))
+            return {
+                "planner_source": plan.source,
+                "chosen": list(plan.chosen),
+                "skipped": {},
+                "reasoning": plan.reasoning,
+                "iteration": getattr(state, "loop_iteration", 0),
+            }
+
+        # ━━━━ 1. Plan 생성 (autonomous) ━━━━
         planner = HarnessPlanner()
         workflow_hints = state.metadata.get("workflow_hints") or {}
 
@@ -120,6 +167,26 @@ class HarnessStage(Stage):
             "done": plan.done,
             "iteration": getattr(state, "loop_iteration", 0),
         }
+
+    async def main_call(self, state: PipelineState, *, strategy: str = "streaming") -> dict:
+        """v0.14.0 — 본문 LLM 호출 진입점. Pipeline Phase B 루프에서 호출.
+
+        과거 s07_llm.execute 가 하던 역할. Transport Strategy (streaming/batch/…)
+        를 StrategyResolver 에서 이름으로 해석해 위임. 리터럴 분기 없음.
+        """
+        from ...stages.interfaces import TransportStrategy
+        from ...core.strategy_resolver import StrategyResolver
+
+        resolver = StrategyResolver.default()
+        transport = resolver.resolve("s00_harness", "transport", strategy)
+        if transport is None or not isinstance(transport, TransportStrategy):
+            # 레지스트리에 없는 이름 — 기본값 streaming 으로 재시도
+            transport = resolver.resolve("s00_harness", "transport", "streaming")
+        if transport is None:
+            raise RuntimeError(
+                f"Transport strategy '{strategy}' not registered for s00_harness"
+            )
+        return await transport.call(state)
 
     # ── helpers ─────────────────────────────────────────────────────
 

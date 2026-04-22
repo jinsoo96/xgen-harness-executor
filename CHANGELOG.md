@@ -5,6 +5,55 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] — 2026-04-22
+
+### 🎯 s00_harness 통제탑 승격 — s07_llm 삭제 + 번호 시프트 + 재귀적 자율주행
+
+사용자 확정 기조: **"7 번 껍데기화 하지 말고, 그냥 7을 지워버리고 번호 떙기자. 본문 LLM 호출은 00 에서 한 번 설정하고 플랜·에이전트 실행 모두 거기서 관할"**. 재귀적 자율주행 4 레벨 (구조 파악 → Stage 선택 → Strategy 선택 → 파라미터/도구 선택) 을 전부 s00_harness 단일 지점으로 통일.
+
+**🔴 1. s07_llm Stage 삭제 + 번호 시프트 (11 Stage)**:
+- `xgen_harness/stages/s07_llm/` 디렉토리 완전 제거
+- s08_act→s07_act / s09_judge→s08_judge / s10_decide→s09_decide / s11_save→s10_save / s12_finalize→s11_finalize
+- `ALL_STAGES` 12 → 11, `REQUIRED_STAGES = {s01_input, s09_decide, s11_finalize}` 재정의
+- `STAGE_ID_ALIASES` 하위호환: 구 id 유입되면 새 id 로 정규화 (s07_llm → s00_harness 포함)
+- Stage.phase 경계 재조정: ingress (order ≤4), loop (order ≤9), egress (order ≥10)
+
+**🔴 2. 본문 LLM 호출의 s00 이관 (`core/llm_call.py` + `stages/strategies/transport.py`)**:
+- 과거 s07_llm 이 하던 _call_with_retry / _single_call / streaming / token tracking / cost 추정 로직을 `core/llm_call.py` 헬퍼로 추출
+- **Transport Strategy 패턴**: `StreamingTransport` / `BatchTransport` 가 `TransportStrategy` 인터페이스 구현 → `register_strategy("s00_harness", "transport", "streaming"/"batch", cls)` 로 레지스트리 등록 → 리터럴 "batch" 비교 금지
+- 외부 플러그인이 신규 Transport (websocket / caching_proxy / 로깅 wrap) 를 entry_points 로 얹어도 코드 변경 0
+- `HarnessStage.main_call(state, strategy=...)` 가 StrategyResolver 로 이름 해석 후 `transport.call(state)` 위임
+
+**🔴 3. Pipeline 본문 호출 주입 (`core/pipeline.py`)**:
+- Phase B 루프 안에서 `stage.stage_id == "s07_act"` 직전에 `self._invoke_main_call(state, s00_stage)` 호출 — s07_llm Stage 자리를 정확히 메움
+- StageEnter/Exit 이벤트는 `s00_harness` 이름 + `description="main_call (streaming)"` 으로 발행 → 프론트가 "s00 이 본문 호출 수행 중" 인지 분간
+- 기존 iterative replan (매 iter 시작에 s00 재호출) 로직 유지 — autonomous 모드에서 Plan 갱신
+
+**🔴 4. HarnessConfig.harness_mode (`core/config.py`)**:
+- 3 모드: `"autonomous"` (Planner LLM 자율 조립) / `"selected"` (사용자 핀 그대로 적용) / `"off"` (s00 skip, 전체 Stage 실행 — 레거시 noop)
+- 빈 문자열 기본값 → `__post_init__` 에서 `use_planner=True → autonomous, False → off` 로 파생 (하위 호환)
+- `Pipeline.from_config`: mode != "off" 면 s00_harness 를 ingress 최상단에 주입 (과거 use_planner 체크 대체)
+
+**🔴 5. s00 `list_strategies()` 동적 조회 (하드코딩 0)**:
+- `_REGISTRY` 에서 `(s00_harness, transport, *)` 항목 런타임 조회. 새 Transport 가 등록되면 자동으로 UI/카탈로그에 노출 — "재귀적 자율주행" 원칙 준수
+
+**🟡 6. 교차 참조 일괄 업데이트**:
+- errors/hierarchy.py, core/builder.py, core/artifact.py, core/strategy_resolver.py, core/provider_bootstrap.py, integrations/workflow_bridge.py, integrations/xgen_node_adapters.py, orchestrator/multi_agent_planner.py, stages/s01_input/stage.py, stages/strategies/token_tracker.py, core/presets.py — 구 stage_id 문자열 전수 교체
+- strategy_resolver.py: 구 s07_llm 슬롯 (retry/parser/thinking/token_tracker/cost_calculator) 전부 s00_harness 로 이관
+
+**🟢 자가검증 (grep)**:
+- `grep -rn "s07_llm" xgen_harness/ --include="*.py"` = 0 (comments/docstrings 일부 남음, 로직 0)
+- `register_strategy("s07_llm"...)` = 0 (전부 s00_harness 로 이관)
+- `ALL_STAGES` 길이 = 11, 등록된 Stage = 12 (s00_harness + 11)
+- StrategyResolver → StreamingTransport / BatchTransport 해석 PASS
+
+**⚠ 마이그레이션 가이드**:
+- 기존 workflow_data 에 `use_planner: true` 있으면 그대로 동작 (autonomous 로 파생)
+- 구 id (s07_llm 등) 로 저장된 stage_params / active_strategies 는 STAGE_ID_ALIASES 가 자동 정규화
+- 이식 측 (`xgen-workflow feature/harness-v2`) pin 을 `xgen-harness>=0.14.0` 으로 상향 필요
+
+---
+
 ## [0.13.0] — 2026-04-22
 
 ### 🌌 REAL HARNESS Phase 2 — 단일 Provider + Iterative Planning (진짜 자율 주행)

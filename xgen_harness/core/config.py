@@ -1,7 +1,8 @@
 """
 HarnessConfig — 파이프라인 설정
 
-프리셋 없음. 12개 스테이지 전체 기본 활성, 개별 토글로 on/off.
+프리셋 없음. v0.14.0 에서 s07_llm 삭제 + 번호 시프트로 11개 스테이지 (s00_harness 제외).
+s00_harness 가 Provider/Strategy/본문호출/Planner 를 모두 통제 (재귀적 자율주행).
 workflow_data.harness_config에서 로드.
 """
 
@@ -14,7 +15,8 @@ from .stage_config import canonical_stage_id as _canonical, canonical_stage_id_m
 _cfg_logger = logging.getLogger("harness.core.config")
 
 
-# 전체 12 스테이지 (기본 전부 활성)
+# 전체 11 스테이지 (기본 전부 활성, s00_harness 는 별도 통제탑)
+# v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 본문 LLM 호출 소유.
 ALL_STAGES = [
     "s01_input",
     "s02_history",
@@ -22,16 +24,15 @@ ALL_STAGES = [
     "s04_tool",
     "s05_strategy",
     "s06_context",
-    "s07_llm",
-    "s08_act",
-    "s09_judge",
-    "s10_decide",
-    "s11_save",
-    "s12_finalize",
+    "s07_act",
+    "s08_judge",
+    "s09_decide",
+    "s10_save",
+    "s11_finalize",
 ]
 
-# 비활성화 불가 스테이지
-REQUIRED_STAGES = {"s01_input", "s07_llm", "s10_decide", "s12_finalize"}
+# 비활성화 불가 스테이지 (s00_harness 는 use_planner/harness_mode 로 통제)
+REQUIRED_STAGES = {"s01_input", "s09_decide", "s11_finalize"}
 
 
 @dataclass
@@ -110,23 +111,27 @@ class HarnessConfig:
     # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
     verbose_events: bool = False
 
-    # --- Harness Planner (v0.12.0, REAL_HARNESS §4) ---
-    # True 면 Pipeline 이 s00_harness 를 먼저 돌려 LLM 이 Stage/파라미터를 런타임 조립.
-    # False 면 기존 12 스테이지 고정 파이프라인 그대로. 하위 호환 유지.
+    # --- Harness Planner (v0.12.0 → v0.14.0 확장) ---
+    # use_planner: 레거시 bool. True 면 s00_harness 가 ingress 최상단에 주입됨.
+    # v0.14.0: s00_harness 가 본문 LLM 호출을 소유하므로 사실상 항상 True 가
+    # 권장되는 상태. harness_mode 로 세분화:
+    #   - "autonomous": Planner LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립
+    #   - "selected":   Planner LLM skip, 사용자 핀(pinned_chosen/strategies/params) 그대로
+    #   - "off":        전체 Stage 실행 (레거시 noop 동작과 동일)
+    # 빈 문자열이면 use_planner=True → "autonomous", False → "off" 로 해석.
     use_planner: bool = False
+    harness_mode: str = ""
 
     # 레거시 호환
     preset: str = ""
 
     def __post_init__(self) -> None:
-        """빈 provider 는 레지스트리 기반 기본값으로 해석.
-
-        하드코딩 "anthropic" fallback 을 제거한 자리에 런타임 해석을 건다.
-        env/레지스트리 순서는 providers.get_default_provider() 참조.
-        """
+        """빈 provider 는 레지스트리 기반 기본값. harness_mode 미지정 시 use_planner 에서 파생."""
         if not self.provider:
             from ..providers import get_default_provider
             self.provider = get_default_provider()
+        if not self.harness_mode:
+            self.harness_mode = "autonomous" if self.use_planner else "off"
 
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록"""
@@ -258,6 +263,7 @@ class HarnessConfig:
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
             use_planner=bool(harness_config.get("use_planner", False)),
+            harness_mode=str(harness_config.get("harness_mode", "") or ""),
             # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
             context_window=_safe_int(
                 harness_config.get("context_window"), default=200_000, minimum=1024,

@@ -1,5 +1,5 @@
 """
-S12 Complete — 최종 출력 포맷팅
+S11 Finalize — 최종 출력 포맷팅 (v0.14.0 번호 시프트: s12_finalize → s11_finalize)
 
 - 최종 텍스트 출력 확정
 - 메트릭스 수집 및 이벤트 발행
@@ -20,11 +20,11 @@ class CompleteStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s12_finalize"
+        return "s11_finalize"
 
     @property
     def order(self) -> int:
-        return 12
+        return 11
 
     async def execute(self, state: PipelineState) -> dict:
         # 최종 출력 확정

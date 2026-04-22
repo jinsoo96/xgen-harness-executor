@@ -6,7 +6,7 @@ geny-harness의 Stage×Strategy 이중 추상화를 Python으로 구현.
 
 사용:
     resolver = StrategyResolver.default()
-    retry = resolver.resolve("s07_llm", "retry", "exponential_backoff")
+    retry = resolver.resolve("s00_harness", "retry", "exponential_backoff")
 """
 
 import logging
@@ -118,45 +118,50 @@ def _register_defaults() -> None:
     register_strategy("s06_context", "compactor", "autocompact_llm", AutocompactLLMCompactor)
     register_strategy("s06_context", "compactor", "cascade", CascadeCompactor)
 
-    # s07_llm — retry
-    register_strategy("s07_llm", "retry", "exponential_backoff", ExponentialBackoffRetry)
-    register_strategy("s07_llm", "retry", "no_retry", NoRetry)
+    # s00_harness — transport (본문 LLM 호출; streaming 이 기본)
+    from ..stages.strategies.transport import StreamingTransport, BatchTransport
+    register_strategy("s00_harness", "transport", "streaming", StreamingTransport)
+    register_strategy("s00_harness", "transport", "batch", BatchTransport)
 
-    # s08_act — executor, router
-    register_strategy("s08_act", "executor", "sequential", SequentialToolExecutor)
-    register_strategy("s08_act", "executor", "parallel", ParallelToolExecutor)
-    register_strategy("s08_act", "router", "composite", CompositeToolRouter)
-    register_strategy("s08_act", "router", "mcp", MCPToolRouter)
-    register_strategy("s08_act", "router", "builtin", BuiltinToolRouter)
+    # s00_harness — retry (본문 LLM 호출 실패 재시도)
+    register_strategy("s00_harness", "retry", "exponential_backoff", ExponentialBackoffRetry)
+    register_strategy("s00_harness", "retry", "no_retry", NoRetry)
 
-    # s09_judge — evaluation
-    register_strategy("s09_judge", "evaluation", "llm_judge", LLMJudgeEvaluation)
-    register_strategy("s09_judge", "evaluation", "rule_based", RuleBasedEvaluation)
-    register_strategy("s09_judge", "evaluation", "none", NoValidation)
+    # s07_act — executor, router
+    register_strategy("s07_act", "executor", "sequential", SequentialToolExecutor)
+    register_strategy("s07_act", "executor", "parallel", ParallelToolExecutor)
+    register_strategy("s07_act", "router", "composite", CompositeToolRouter)
+    register_strategy("s07_act", "router", "mcp", MCPToolRouter)
+    register_strategy("s07_act", "router", "builtin", BuiltinToolRouter)
 
-    # s10_decide — decide (간단한 내장 Strategy)
+    # s08_judge — evaluation
+    register_strategy("s08_judge", "evaluation", "llm_judge", LLMJudgeEvaluation)
+    register_strategy("s08_judge", "evaluation", "rule_based", RuleBasedEvaluation)
+    register_strategy("s08_judge", "evaluation", "none", NoValidation)
+
+    # s09_decide — decide (간단한 내장 Strategy)
     from ..stages.strategies._decide import ThresholdDecide, AlwaysPassDecide
-    register_strategy("s10_decide", "decide", "threshold", ThresholdDecide)
-    register_strategy("s10_decide", "decide", "always_pass", AlwaysPassDecide)
+    register_strategy("s09_decide", "decide", "threshold", ThresholdDecide)
+    register_strategy("s09_decide", "decide", "always_pass", AlwaysPassDecide)
 
     # s03 — cache
     from ..stages.strategies.cache import AnthropicCacheStrategy, NoCacheStrategy
     register_strategy("s03_prompt", "cache", "anthropic_cache", AnthropicCacheStrategy)
     register_strategy("s03_prompt", "cache", "no_cache", NoCacheStrategy)
 
-    # s07 — token tracker, thinking processor, response parser
+    # s00_harness — token tracker, thinking processor, response parser (본문 LLM 호출)
     from ..stages.strategies.token_tracker import DefaultTokenTracker, ModelPricingCalculator
-    register_strategy("s07_llm", "token_tracker", "default", DefaultTokenTracker)
-    register_strategy("s07_llm", "cost_calculator", "model_pricing", ModelPricingCalculator)
+    register_strategy("s00_harness", "token_tracker", "default", DefaultTokenTracker)
+    register_strategy("s00_harness", "cost_calculator", "model_pricing", ModelPricingCalculator)
 
     from ..stages.strategies.thinking import DefaultThinkingProcessor, NoThinkingProcessor
-    register_strategy("s07_llm", "thinking", "default", DefaultThinkingProcessor)
-    register_strategy("s07_llm", "thinking", "disabled", NoThinkingProcessor)
+    register_strategy("s00_harness", "thinking", "default", DefaultThinkingProcessor)
+    register_strategy("s00_harness", "thinking", "disabled", NoThinkingProcessor)
 
     from ..stages.strategies.parser import AnthropicResponseParser, OpenAIResponseParser, DefaultCompletionDetector
-    register_strategy("s07_llm", "parser", "anthropic", AnthropicResponseParser)
-    register_strategy("s07_llm", "parser", "openai", OpenAIResponseParser)
-    register_strategy("s07_llm", "completion_detector", "default", DefaultCompletionDetector)
+    register_strategy("s00_harness", "parser", "anthropic", AnthropicResponseParser)
+    register_strategy("s00_harness", "parser", "openai", OpenAIResponseParser)
+    register_strategy("s00_harness", "completion_detector", "default", DefaultCompletionDetector)
 
     # 공통 — scorer (와일드카드)
     register_strategy("*", "scorer", "weighted", WeightedScorer)

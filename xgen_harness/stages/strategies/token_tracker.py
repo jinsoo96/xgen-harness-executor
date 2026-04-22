@@ -5,7 +5,7 @@ geny-harness s07_token 차용:
   TokenTracker: API 응답에서 토큰 사용량 추적
   CostCalculator: 프로바이더/모델별 비용 계산
 
-기존 s07_llm에 하드코딩되어 있던 토큰/비용 로직을 Strategy로 분리.
+기존 s00_harness.main_call 에 하드코딩되어 있던 토큰/비용 로직을 Strategy로 분리.
 프로바이더별 가격 모델이 다를 때 유연하게 대응.
 """
 

@@ -1,5 +1,5 @@
 """
-S10 Decide — 루프 계속/완료 판단
+S09 Decide — 루프 계속/완료 판단 (v0.14.0 번호 시프트: s10_decide → s09_decide)
 
 Strategy 에 전적 위임 — Stage 내부에 분기 로직 없음.
 각 DecideStrategy 구현체가 자기 판단 규칙을 전부 들고 있다.
@@ -41,11 +41,11 @@ class DecideStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s10_decide"
+        return "s09_decide"
 
     @property
     def order(self) -> int:
-        return 10
+        return 9
 
     async def execute(self, state: PipelineState) -> dict:
         strategy = self.resolve_strategy("decide", state, "threshold")

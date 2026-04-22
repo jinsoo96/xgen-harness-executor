@@ -11,7 +11,7 @@ PipelineBuilder — Fluent API로 파이프라인 구성
         .with_rag(collection="docs", top_k=5)
         .with_validate(threshold=0.8)
         .disable("s05_strategy")
-        .with_artifact("s07_llm", "streaming")
+        .with_artifact("s00_harness", "streaming")
         .build())
 """
 
@@ -128,12 +128,12 @@ class PipelineBuilder:
 
     def with_validate(self, threshold: float = 0.7) -> "PipelineBuilder":
         """검증 스테이지 활성화 + threshold 설정"""
-        self.enable("s09_judge")
+        self.enable("s08_judge")
         self._validation_threshold = threshold
         return self
 
     def without_validate(self) -> "PipelineBuilder":
-        self.disable("s09_judge")
+        self.disable("s08_judge")
         return self
 
     # --- Loop ---
@@ -220,7 +220,7 @@ class PipelineBuilder:
             "tools": len(self._tools) + len(self._tool_definitions),
             "mcp_sessions": self._mcp_sessions,
             "rag_collections": [r["collection"] for r in self._rag_collections],
-            "validation": "s09_judge" not in self._disabled,
+            "validation": "s08_judge" not in self._disabled,
             "thinking": self._thinking_enabled,
             "max_iterations": self._max_iterations,
         }

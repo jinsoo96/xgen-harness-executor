@@ -1,0 +1,358 @@
+"""
+Main LLM call helper — v0.14.0
+
+s00_harness 가 소유하는 "본문 LLM 호출" 로직. 과거 s07_llm 이 맡았던
+재시도 / 스트리밍 / tool_use 감지 / 토큰 집계 / 컨텍스트 축약 / 비용 추정을
+하나의 자유 함수 세트로 노출. s00_harness.main_call 이 이 함수를 호출하고
+Pipeline 은 Phase B 루프 안에서 s00_harness.main_call 을 invoke.
+
+이관 이유:
+- v0.14.0 "재귀적 자율주행": Provider 설정 / Strategy(streaming|batch) 선택 /
+  실제 호출을 전부 s00 이 통제. s07 Stage 는 폐지.
+- 호출 로직 자체는 Stage 와 무관한 순수 함수라 헬퍼로 두는 게 자연스럽다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Optional
+
+from .state import PipelineState, TokenUsage
+from ..events.types import MessageEvent, ToolCallEvent, ThinkingEvent
+from ..errors import ProviderError, RateLimitError, OverloadError, PipelineAbortError
+from ..providers.base import ProviderEventType
+
+logger = logging.getLogger("harness.llm_call")
+
+# 재시도 딜레이 (초)
+RETRY_DELAYS = {
+    "rate_limit": [10, 20, 40],
+    "overload": [1, 2, 4],
+    "server": [2, 4, 8],
+}
+DEFAULT_MAX_RETRIES = 3
+
+
+async def call_main_llm_streaming(
+    state: PipelineState,
+    *,
+    stage_id: str = "s00_harness",
+) -> dict:
+    """StreamingTransport.call 의 엔진 헬퍼. stream=True."""
+    return await _call_main_llm(state, stage_id=stage_id, stream=True)
+
+
+async def call_main_llm_batch(
+    state: PipelineState,
+    *,
+    stage_id: str = "s00_harness",
+) -> dict:
+    """BatchTransport.call 의 엔진 헬퍼. stream=False."""
+    return await _call_main_llm(state, stage_id=stage_id, stream=False)
+
+
+async def _call_main_llm(
+    state: PipelineState,
+    *,
+    stage_id: str,
+    stream: bool,
+) -> dict:
+    """본문 LLM 호출 공통 로직. Transport Strategy 에서만 호출.
+
+    Returns: {call_count, has_tool_calls, text_length, input_tokens, output_tokens}
+    """
+    from .provider_bootstrap import ensure_provider
+    await ensure_provider(state, stage_id=stage_id)
+    if not state.provider:
+        raise PipelineAbortError("LLM provider not initialized", stage_id)
+
+    has_tool_calls = False
+
+    # 단일 LLM 호출. 도구 루프는 Pipeline 이 반복 (s00.main_call ↔ s07_act).
+    result_text, tool_calls, usage = await _call_with_retry(state, stage_id=stage_id, stream=stream)
+    call_count += 1
+    state.llm_call_count += 1
+
+    # 토큰 사용량 업데이트
+    state.token_usage += usage
+    state.turn_usages.append(usage)
+    state.cost_usd += _estimate_cost(usage, state.provider.model_name)
+
+    # 텍스트 결과
+    if result_text:
+        state.last_assistant_text = result_text
+
+    # 도구 호출 감지
+    if tool_calls:
+        has_tool_calls = True
+        state.pending_tool_calls = tool_calls
+        content_blocks = []
+        if result_text:
+            content_blocks.append({"type": "text", "text": result_text})
+        for tc in tool_calls:
+            content_blocks.append({
+                "type": "tool_use",
+                "id": tc["tool_use_id"],
+                "name": tc["tool_name"],
+                "input": tc["tool_input"],
+            })
+        state.add_message("assistant", content_blocks)
+    else:
+        if result_text:
+            state.add_message("assistant", result_text)
+
+    # verbose: LLM 응답 완료
+    from ..events.types import StageSubstepEvent
+    await state.emit_verbose(StageSubstepEvent(
+        stage_id=stage_id, substep="llm_response_complete",
+        meta={"has_tool_calls": has_tool_calls, "text_length": len(result_text),
+              "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+              "stream": stream},
+    ))
+
+    return {
+        "call_count": 1,
+        "has_tool_calls": has_tool_calls,
+        "text_length": len(result_text),
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+    }
+
+
+async def _call_with_retry(
+    state: PipelineState,
+    *,
+    stage_id: str,
+    stream: bool,
+) -> tuple[str, list[dict], TokenUsage]:
+    """재시도 로직 포함 LLM 호출."""
+    config = state.config
+
+    def _param(name: str, default):
+        params = (config.stage_params.get(stage_id) if config else None) or {}
+        v = params.get(name)
+        return v if v is not None else default
+
+    max_retries = int(_param("max_retries", DEFAULT_MAX_RETRIES))
+    delays = {
+        "rate_limit": list(_param("retry_delays_rate_limit", RETRY_DELAYS["rate_limit"])),
+        "overload":   list(_param("retry_delays_overload",   RETRY_DELAYS["overload"])),
+        "server":     list(_param("retry_delays_server",     RETRY_DELAYS["server"])),
+    }
+
+    def _pick(kind: str, attempt: int) -> int:
+        seq = delays[kind] or RETRY_DELAYS[kind]
+        return int(seq[min(attempt, len(seq) - 1)])
+
+    last_error: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await _single_call(state, stage_id=stage_id, stream=stream)
+        except RateLimitError as e:
+            last_error = e
+            delay = _pick("rate_limit", attempt)
+            logger.warning("[LLM] Rate limited, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+            await asyncio.sleep(delay)
+        except OverloadError as e:
+            last_error = e
+            delay = _pick("overload", attempt)
+            logger.warning("[LLM] Overloaded, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+            await asyncio.sleep(delay)
+        except ProviderError as e:
+            if e.recoverable and attempt < max_retries:
+                last_error = e
+                delay = _pick("server", attempt)
+                logger.warning("[LLM] Provider error, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+                await asyncio.sleep(delay)
+            else:
+                raise
+
+    raise last_error or PipelineAbortError("LLM call failed after retries", stage_id)
+
+
+async def _single_call(
+    state: PipelineState,
+    *,
+    stage_id: str,
+    stream: bool,
+) -> tuple[str, list[dict], TokenUsage]:
+    """단일 LLM API 호출 (streaming=True/False 공용)."""
+    config = state.config
+    provider = state.provider
+
+    def _param(name: str, default):
+        params = (config.stage_params.get(stage_id) if config else None) or {}
+        v = params.get(name)
+        return v if v is not None else default
+
+    max_tokens = int(_param("max_tokens", config.max_tokens if config else 8192))
+    thinking_enabled = bool(_param("thinking_enabled", config.thinking_enabled if config else False))
+    thinking_budget = int(_param("thinking_budget", config.thinking_budget_tokens if config else 10000))
+    temperature = config.temperature if config else 0.7
+
+    thinking = None
+    if thinking_enabled and provider.supports_thinking():
+        thinking = {"type": "enabled", "budget_tokens": thinking_budget}
+
+    from ..providers import get_context_limit
+    provider_name = getattr(provider, "provider_name", "") or (config.provider if config else "")
+    context_limit = int(_param("context_limit", get_context_limit(provider_name)))
+    state.messages = _truncate_messages_if_needed(state.messages, context_limit)
+
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    usage = TokenUsage()
+    _output_tokens_recorded = False
+
+    from ..events.types import StageSubstepEvent
+    await state.emit_verbose(StageSubstepEvent(
+        stage_id=stage_id, substep="llm_request_start",
+        meta={"provider": provider.provider_name, "model": provider.model_name,
+              "message_count": len(state.messages),
+              "tools_count": len(state.tool_definitions or []),
+              "stream": stream},
+    ))
+
+    # tool_choice circuit breaker (기존 s07 규칙 그대로)
+    _tool_choice = None
+    if state.tool_definitions:
+        _tool_choice = (state.metadata or {}).get("force_tool_choice")
+        if _tool_choice == "required" and getattr(state, "loop_iteration", 0) >= 1:
+            logger.info(
+                "[LLM] force_tool_choice=required → auto (iter=%d, circuit breaker)",
+                getattr(state, "loop_iteration", 0),
+            )
+            _tool_choice = "auto"
+    elif (state.metadata or {}).get("force_tool_choice"):
+        logger.warning("[LLM] force_tool_choice set but no tool_definitions — ignored")
+
+    async for event in provider.chat(
+        messages=state.messages,
+        system=state.system_prompt or None,
+        tools=state.tool_definitions or None,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+        thinking=thinking,
+        tool_choice=_tool_choice,
+    ):
+        if event.type == ProviderEventType.TEXT_DELTA:
+            text_parts.append(event.text)
+            if state.event_emitter:
+                await state.event_emitter.emit(MessageEvent(text=event.text))
+
+        elif event.type == ProviderEventType.THINKING_DELTA:
+            if state.event_emitter:
+                await state.event_emitter.emit(ThinkingEvent(text=event.text))
+
+        elif event.type == ProviderEventType.TOOL_USE:
+            tool_calls.append({
+                "tool_use_id": event.tool_use_id,
+                "tool_name": event.tool_name,
+                "tool_input": event.tool_input,
+            })
+            if state.event_emitter:
+                await state.event_emitter.emit(ToolCallEvent(
+                    tool_use_id=event.tool_use_id,
+                    tool_name=event.tool_name,
+                    tool_input=event.tool_input,
+                ))
+
+        elif event.type == ProviderEventType.USAGE:
+            usage.input_tokens += event.input_tokens
+            usage.cache_creation_tokens += event.cache_creation_tokens
+            usage.cache_read_tokens += event.cache_read_tokens
+            if event.output_tokens and not _output_tokens_recorded:
+                usage.output_tokens += event.output_tokens
+                _output_tokens_recorded = True
+
+        elif event.type == ProviderEventType.STOP:
+            if event.output_tokens and not _output_tokens_recorded:
+                usage.output_tokens += event.output_tokens
+                _output_tokens_recorded = True
+
+    result_text = "".join(text_parts)
+
+    # output_tokens 보정 fallback (v0.11.22)
+    if not _output_tokens_recorded and result_text:
+        try:
+            estimated, source = provider.count_tokens(result_text)
+        except Exception as e:
+            logger.warning("[LLM] provider.count_tokens fallback 실패: %s", e)
+            estimated, source = 0, "failed"
+        if estimated > 0:
+            usage.output_tokens = estimated
+            state.metadata.setdefault("output_tokens_sources", []).append(source)
+            logger.info("[LLM] output_tokens=%d (source=%s, fallback)", estimated, source)
+
+    return result_text, tool_calls, usage
+
+
+def _truncate_messages_if_needed(messages: list[dict], char_limit: int) -> list[dict]:
+    """메시지 총 문자 수가 한도를 초과하면 중간 메시지를 축약."""
+    import json
+
+    def _msg_chars(msg: dict) -> int:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            return sum(
+                len(block.get("text", "")) if isinstance(block, dict) else len(str(block))
+                for block in content
+            )
+        return len(json.dumps(content, ensure_ascii=False))
+
+    total_chars = sum(_msg_chars(m) for m in messages)
+    if total_chars <= char_limit or len(messages) <= 2:
+        return messages
+
+    logger.warning(
+        "[LLM] Context size %d chars exceeds limit %d, truncating middle messages",
+        total_chars, char_limit,
+    )
+
+    n = len(messages)
+    keep_front = max(1, int(n * 0.4))
+    keep_back = max(1, int(n * 0.4))
+
+    if keep_front + keep_back >= n:
+        return messages
+
+    front = messages[:keep_front]
+    back = messages[-keep_back:]
+    removed_count = n - keep_front - keep_back
+
+    truncation_notice = {
+        "role": "user",
+        "content": (
+            f"[System: {removed_count} messages were truncated from the middle of the "
+            f"conversation to fit within the context window. "
+            f"Original total: {total_chars} chars, limit: {char_limit} chars.]"
+        ),
+    }
+
+    return front + [truncation_notice] + back
+
+
+def _estimate_cost(usage: TokenUsage, model: str) -> float:
+    """토큰 사용량으로 비용 추정 (USD)"""
+    from ..stages.strategies.token_tracker import PRICING
+
+    pricing = PRICING.get(model)
+    if not pricing:
+        model_lower = model.lower()
+        for key, val in PRICING.items():
+            if key.lower() in model_lower or model_lower in key.lower():
+                pricing = val
+                break
+    if not pricing:
+        pricing = {"input": 3.0, "output": 15.0}
+
+    input_cost = usage.input_tokens * pricing["input"] / 1_000_000
+    output_cost = usage.output_tokens * pricing["output"] / 1_000_000
+
+    cache_read_rate = pricing.get("cache_read", pricing["input"] * 0.1)
+    cache_savings = usage.cache_read_tokens * (pricing["input"] - cache_read_rate) / 1_000_000
+    return input_cost + output_cost - cache_savings

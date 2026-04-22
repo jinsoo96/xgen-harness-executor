@@ -21,9 +21,16 @@ STAGE_ID_ALIASES: dict[str, str] = {
     "s03_system_prompt": "s03_prompt",
     "s04_tool_index":    "s04_tool",
     "s05_plan":          "s05_strategy",
-    "s08_execute":       "s08_act",
-    "s09_validate":      "s09_judge",
-    "s12_complete":      "s12_finalize",
+    # v0.14.0 — s07_llm 삭제 + 번호 시프트 하위호환
+    "s07_llm":           "s00_harness",   # 본문 LLM 호출은 s00 이 소유
+    "s08_execute":       "s07_act",
+    "s08_act":           "s07_act",
+    "s09_validate":      "s08_judge",
+    "s09_judge":         "s08_judge",
+    "s10_decide":        "s09_decide",
+    "s11_save":          "s10_save",
+    "s12_finalize":      "s11_finalize",
+    "s12_complete":      "s11_finalize",
 }
 
 
@@ -50,32 +57,60 @@ def canonical_stage_id_map(d: dict) -> dict:
 
 STAGE_CONFIGS: dict[str, dict] = {
     "s00_harness": {
-        "description_ko": "Harness Planner — LLM 이 카탈로그를 보고 이번 턴의 Stage/파라미터/도구를 자율 조립합니다.",
-        "description_en": "Harness Planner — LLM composes per-turn stages/params/tools by reading the self-describing catalog.",
-        "when_to_use": "use_planner=True 일 때 Pipeline 이 자동 주입. 사용자가 직접 chosen 에 넣을 필요 없음.",
-        "when_to_skip": "use_planner=False 로 끄면 전혀 실행되지 않음 (하위 호환).",
+        "description_ko": "Harness 통제탑 — Provider 초기화 + Planner + 본문 LLM 호출(streaming/batch) + iterative replan 을 모두 소유합니다 (v0.14.0 재귀적 자율주행).",
+        "description_en": "Harness control tower — owns provider init + planner + main LLM call (streaming/batch) + iterative replan.",
+        "when_to_use": "기본 활성. LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립.",
+        "when_to_skip": "harness_mode='off' 일 때 skip (단순 파이프라인 모드).",
         "cost_hint": "medium",
         "icon": "🎯",
         "fields": [
             {
                 "id": "strategy",
-                "label": "Planner Strategy",
+                "label": "Transport Strategy",
                 "type": "select",
-                "options": ["llm", "noop"],
-                "default": "llm",
-                "description": "llm=LLM 이 Plan 작성, noop=전체 실행 (Planner 비활성과 동일).",
+                "options": ["streaming", "batch"],
+                "default": "streaming",
+                "description": "본문 LLM 호출 방식. streaming=SSE + 재시도 + 폴백, batch=비스트리밍 단일.",
+            },
+            {
+                "id": "max_tokens",
+                "label": "최대 출력 토큰",
+                "type": "number",
+                "min": 256,
+                "max": 32768,
+                "step": 256,
+                "default": 8192,
+            },
+            {
+                "id": "thinking_enabled",
+                "label": "Extended Thinking",
+                "type": "toggle",
+                "default": False,
+            },
+            {
+                "id": "thinking_budget",
+                "label": "Thinking 토큰 예산",
+                "type": "number",
+                "min": 1000,
+                "max": 100000,
+                "step": 1000,
+                "default": 10000,
+                "depends_on": "thinking_enabled",
             },
         ],
         "behavior": [
             "카탈로그 자동 수집 (Stage/Capability/Tool/Resource)",
             "LLM 에게 submit_plan 도구 하나 노출 → 구조화된 Plan 수신",
             "Plan.params/strategies 를 state.config 에 병합 후 Pipeline 에 넘김",
+            "Phase B 루프 안에서 main_call() 로 본문 LLM 호출 (streaming/batch)",
+            "httpx SSE 스트리밍, 재시도 (429 → 10/20/40초, 529 → 1/2/4초)",
+            "모델 폴백 (Anthropic → OpenAI), Prompt Caching",
             "PlanningEvent 방출로 프론트가 '왜 이 조합인지' 카드 렌더",
         ],
     },
     "s01_input": {
-        # PHILOSOPHY §2 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
-        # 선택은 하네스 상단 설정 또는 s07 관할 — s01 에서 필드로 노출하지 않음.
+        # v0.14.0 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
+        # 선택은 s00_harness 통제탑 관할 — s01 에서 필드로 노출하지 않음.
         "description_ko": "사용자 입력을 검증하고 첨부 파일을 content block 으로 정규화합니다.",
         "description_en": "Validates user input and normalizes attached files to content blocks.",
         # v0.12.0 self-describing — Planner 가 이 세 필드만 보고 선택/제외/파라미터 조정.
@@ -558,50 +593,10 @@ STAGE_CONFIGS: dict[str, dict] = {
             "enhance_prompt: <enhance_prompt> 블록으로 system_prompt 말미에 추가",
         ],
     },
-    "s07_llm": {
-        "description_ko": "LLM API를 호출합니다. 실시간 스트리밍, 재시도, 모델 폴백을 지원합니다.",
-        "when_to_use": "항상 (필수). 본 답변 생성 지점.",
-        "when_to_skip": "불가 (REQUIRED_STAGES).",
-        "cost_hint": "high",
-        "description_en": "Calls LLM API with streaming, retry, and fallback.",
-        "icon": "🤖",
-        "fields": [
-            {
-                "id": "max_tokens",
-                "label": "최대 출력 토큰",
-                "type": "number",
-                "min": 256,
-                "max": 32768,
-                "step": 256,
-                "default": 8192,
-            },
-            {
-                "id": "thinking_enabled",
-                "label": "Extended Thinking",
-                "type": "toggle",
-                "default": False,
-            },
-            {
-                "id": "thinking_budget",
-                "label": "Thinking 토큰 예산",
-                "type": "number",
-                "min": 1000,
-                "max": 100000,
-                "step": 1000,
-                "default": 10000,
-                "depends_on": "thinking_enabled",
-            },
-        ],
-        "behavior": [
-            "httpx SSE 스트리밍 (Anthropic/OpenAI)",
-            "재시도: 429 → 10/20/40초, 529 → 1/2/4초",
-            "모델 폴백: Anthropic → OpenAI",
-            "Prompt Caching 활성화",
-        ],
-    },
-    "s08_act": {
+    # v0.14.0 — s07_llm 삭제됨. 본문 LLM 호출 관련 필드는 s00_harness 로 이관.
+    "s07_act": {
         "description_ko": "도구를 실행합니다. MCP 도구, 빌트인 도구를 호출하고 결과를 수집합니다.",
-        "when_to_use": "s07 이 도구 호출을 생성했을 때 (tool_use). Pipeline 이 자동 판단하므로 chosen 에 포함해두면 충분.",
+        "when_to_use": "s00 본문 호출이 도구를 생성했을 때 (tool_use). Pipeline 이 자동 판단하므로 chosen 에 포함해두면 충분.",
         "when_to_skip": "도구 사용 없이 텍스트 응답만으로 종결되는 요청.",
         "cost_hint": "variable",
         "description_en": "Executes tool calls from LLM response.",
@@ -655,9 +650,9 @@ STAGE_CONFIGS: dict[str, dict] = {
             "discover_tools 빌트인 (Progressive Disclosure L2)",
         ],
     },
-    "s09_judge": {
+    "s08_judge": {
         "description_ko": "독립 LLM 호출로 응답 품질을 평가합니다. 기준 미달 시 재시도합니다.",
-        "when_to_use": "품질 검증 필수 (규제·법무·의료·금융·정확도 민감). 기준 미달 시 s10 이 retry 판단.",
+        "when_to_use": "품질 검증 필수 (규제·법무·의료·금융·정확도 민감). 기준 미달 시 s09_decide 가 retry 판단.",
         "when_to_skip": "창작·브레인스토밍·잡담 — 정답이 없어 평가 기준이 모호한 경우.",
         "cost_hint": "medium",
         "description_en": "Evaluates response quality with independent LLM call.",
@@ -683,10 +678,10 @@ STAGE_CONFIGS: dict[str, dict] = {
         "behavior": [
             "관련성(0.3) + 완전성(0.3) + 정확성(0.2) + 명확성(0.2)",
             "독립 LLM 호출 (temperature=0)",
-            "점수 미달 → s10_decide가 retry 결정",
+            "점수 미달 → s09_decide가 retry 결정",
         ],
     },
-    "s10_decide": {
+    "s09_decide": {
         "description_ko": "루프를 계속할지 완료할지 판단합니다.",
         "when_to_use": "항상 (필수). 에이전틱 루프 종료 판정.",
         "when_to_skip": "불가 (REQUIRED_STAGES).",
@@ -719,7 +714,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "텍스트 응답 → complete",
         ],
     },
-    "s11_save": {
+    "s10_save": {
         "description_ko": "실행 결과를 데이터베이스에 저장합니다.",
         "when_to_use": "실행 로그 영구화 필요 (감사·리플레이·KPI 측정·세션 공유).",
         "when_to_skip": "테스트·ephemeral·개인 비공유 세션.",
@@ -740,7 +735,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             "DB 없으면 graceful skip",
         ],
     },
-    "s12_finalize": {
+    "s11_finalize": {
         "description_ko": "최종 출력을 확정하고 메트릭스를 수집합니다.",
         "when_to_use": "항상 (필수). MetricsEvent 방출 + final_output 확정.",
         "when_to_skip": "불가 (REQUIRED_STAGES).",

@@ -1,7 +1,7 @@
 """
-S08 Execute — 도구 실행
+S07 Act — 도구 실행 (v0.14.0 번호 시프트: s08_act → s07_act)
 
-- pending_tool_calls에 있는 도구 호출을 실행
+- pending_tool_calls에 있는 도구 호출을 실행 (s00.main_call 이 생성)
 - read_only 도구: asyncio.gather로 병렬 실행
 - write 도구: 순차 실행
 - 결과를 tool_results에 적재 → messages에 user 메시지로 추가
@@ -29,11 +29,11 @@ class ExecuteStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s08_act"
+        return "s07_act"
 
     @property
     def order(self) -> int:
-        return 8
+        return 7
 
     def should_bypass(self, state: PipelineState) -> bool:
         return not state.pending_tool_calls

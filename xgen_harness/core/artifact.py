@@ -9,15 +9,15 @@ geny-harness 패턴:
 
 사용:
     # default Artifact 조회
-    artifact = artifact_store.get("s07_llm", "default")
+    artifact = artifact_store.get("s00_harness", "default")
 
     # 복사해서 커스텀 Artifact 생성
-    custom = artifact_store.clone("s07_llm", "default", "my_streaming_v2")
+    custom = artifact_store.clone("s00_harness", "default", "my_streaming_v2")
     custom.config["temperature"] = 0.3
     artifact_store.register(custom)
 
     # 워크플로우에서 Artifact 선택
-    harness_config.artifacts = {"s07_llm": "my_streaming_v2"}
+    harness_config.artifacts = {"s00_harness": "my_streaming_v2"}
 """
 
 import json

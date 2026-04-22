@@ -63,7 +63,7 @@ class ProviderError(HarnessError):
     def __init__(
         self,
         message: str,
-        stage_id: str = "s07_llm",
+        stage_id: str = "s00_harness",
         category: ErrorCategory = ErrorCategory.UNKNOWN,
         http_status: Optional[int] = None,
     ):
@@ -102,7 +102,7 @@ class ContextOverflowError(ProviderError):
 class ToolError(HarnessError):
     """도구 실행 실패"""
 
-    def __init__(self, message: str, tool_name: str = "", stage_id: str = "s08_act"):
+    def __init__(self, message: str, tool_name: str = "", stage_id: str = "s07_act"):
         self.tool_name = tool_name
         super().__init__(message, stage_id, ErrorCategory.UNKNOWN)
 
@@ -123,7 +123,7 @@ class ValidationError(HarnessError):
 
     def __init__(self, message: str, score: float = 0.0):
         self.score = score
-        super().__init__(message, "s09_judge", ErrorCategory.UNKNOWN)
+        super().__init__(message, "s08_judge", ErrorCategory.UNKNOWN)
 
 
 class PipelineAbortError(HarnessError):

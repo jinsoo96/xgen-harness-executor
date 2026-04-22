@@ -1,5 +1,5 @@
 """
-S09 Validate — 응답 품질 검증
+S08 Judge — 응답 품질 검증 (v0.14.0 번호 시프트: s09_judge → s08_judge)
 
 독립 LLM 호출로 에이전트 응답을 평가.
 평가 기준: 관련성(0.3) + 완전성(0.3) + 정확성(0.2) + 명확성(0.2)
@@ -51,11 +51,11 @@ class ValidateStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s09_judge"
+        return "s08_judge"
 
     @property
     def order(self) -> int:
-        return 9
+        return 8
 
     def should_bypass(self, state: PipelineState) -> bool:
         # 텍스트 응답이 없으면 bypass

@@ -172,9 +172,9 @@ _STAGE_ALIASES = {
     "input": "s01_input", "memory": "s02_history",
     "system_prompt": "s03_prompt", "tool_index": "s04_tool",
     "plan": "s05_strategy", "context": "s06_context",
-    "llm": "s07_llm", "execute": "s08_act",
-    "validate": "s09_judge", "decide": "s10_decide",
-    "save": "s11_save", "complete": "s12_finalize",
+    "llm": "s00_harness", "execute": "s07_act",
+    "validate": "s08_judge", "decide": "s09_decide",
+    "save": "s10_save", "complete": "s11_finalize",
 }
 
 

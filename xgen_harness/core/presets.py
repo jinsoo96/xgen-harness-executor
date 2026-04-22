@@ -6,8 +6,8 @@ geny-harness 패턴: minimal, chat, agent, evaluator, vtuber
 
 사용:
     config = HarnessConfig.from_preset("agent")
-    # → s02_history ON, s04_tool ON, s05_strategy ON, s09_judge ON
-    # → s10_decide: "threshold", s09: "llm_judge"
+    # → s02_history ON, s04_tool ON, s05_strategy ON, s08_judge ON
+    # → s09_decide: "threshold", s08: "llm_judge"
 """
 
 from dataclasses import dataclass, field
@@ -42,8 +42,8 @@ PRESETS: dict[str, Preset] = {
         name="minimal",
         description="Minimal chat — no tools, no RAG, no validation",
         description_ko="최소 채팅 — 도구/RAG/검증 없이 바로 대화",
-        disabled_stages={"s02_history", "s04_tool", "s05_strategy", "s06_context", "s08_act", "s09_judge", "s11_save"},
-        active_strategies={"s10_decide": "always_pass"},
+        disabled_stages={"s02_history", "s04_tool", "s05_strategy", "s06_context", "s07_act", "s08_judge", "s10_save"},
+        active_strategies={"s09_decide": "always_pass"},
         temperature=0.7,
         max_iterations=1,
     ),
@@ -52,8 +52,8 @@ PRESETS: dict[str, Preset] = {
         name="chat",
         description="Chat with memory — conversation history maintained",
         description_ko="대화형 — 이전 대화 이력 유지, 멀티턴",
-        disabled_stages={"s04_tool", "s05_strategy", "s06_context", "s08_act", "s09_judge", "s11_save"},
-        active_strategies={"s10_decide": "always_pass"},
+        disabled_stages={"s04_tool", "s05_strategy", "s06_context", "s07_act", "s08_judge", "s10_save"},
+        active_strategies={"s09_decide": "always_pass"},
         temperature=0.7,
         max_iterations=1,
     ),
@@ -65,8 +65,8 @@ PRESETS: dict[str, Preset] = {
         disabled_stages=set(),  # 전체 활성
         active_strategies={
             "s04_tool": "progressive_3level",
-            "s09_judge": "rule_based",
-            "s10_decide": "threshold",
+            "s08_judge": "rule_based",
+            "s09_decide": "threshold",
         },
         temperature=0.3,
         max_iterations=10,
@@ -79,11 +79,11 @@ PRESETS: dict[str, Preset] = {
         disabled_stages=set(),
         active_strategies={
             "s04_tool": "progressive_3level",
-            "s09_judge": "llm_judge",
-            "s10_decide": "threshold",
+            "s08_judge": "llm_judge",
+            "s09_decide": "threshold",
         },
         default_params={
-            "s09_judge": {"threshold": 0.8},
+            "s08_judge": {"threshold": 0.8},
         },
         temperature=0.2,
         max_iterations=15,
@@ -93,8 +93,8 @@ PRESETS: dict[str, Preset] = {
         name="rag",
         description="RAG-focused — document search, no tools",
         description_ko="RAG 전용 — 문서 검색 기반 답변, 도구 없음",
-        disabled_stages={"s04_tool", "s05_strategy", "s08_act", "s09_judge"},
-        active_strategies={"s10_decide": "always_pass"},
+        disabled_stages={"s04_tool", "s05_strategy", "s07_act", "s08_judge"},
+        active_strategies={"s09_decide": "always_pass"},
         temperature=0.3,
         max_iterations=1,
     ),

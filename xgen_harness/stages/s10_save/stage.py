@@ -1,5 +1,5 @@
 """
-S11 Save — 실행 결과 DB 저장
+S10 Save — 실행 결과 DB 저장 (v0.14.0 번호 시프트: s11_save → s10_save)
 
 harness_execution_log 테이블에 실행 결과 기록.
 DB 연결이 없으면 graceful skip.
@@ -20,11 +20,11 @@ class SaveStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s11_save"
+        return "s10_save"
 
     @property
     def order(self) -> int:
-        return 11
+        return 10
 
     async def execute(self, state: PipelineState) -> dict:
         # save_enabled가 False이면 저장 건너뛰기

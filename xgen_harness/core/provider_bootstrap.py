@@ -1,8 +1,8 @@
 """
 Provider Bootstrap — state.provider lazy 초기화 공용 헬퍼.
 
-v0.12.0 에서 s07_llm._lazy_init_provider 로직을 여기로 이관. Planner(s00) 도
-동일 경로로 provider 를 띄우고, s07 는 이 함수에 위임한다. 중복 제거 + Planner
+v0.12.0 에서 s00_harness.main_call._lazy_init_provider 로직을 여기로 이관. Planner(s00) 도
+동일 경로로 provider 를 띄우고, 본문 LLM 호출은 이 함수에 위임한다. 중복 제거 + Planner
 독립성 확보.
 
 조회 순서 (변경 없음 — feedback_redis_env_order 준수):
@@ -28,14 +28,14 @@ logger = logging.getLogger("harness.provider_bootstrap")
 async def ensure_provider(state: "PipelineState", *, stage_id: str = "") -> "LLMProvider":
     """state.provider 가 없으면 config 를 바탕으로 생성해 주입.
 
-    이미 주입되어 있으면 그대로 반환. API 키/모델/base_url 해석 순서는 기존 s07
-    로직 그대로 (Redis 우선). 해석 실패 시 `PipelineAbortError` raise.
+    이미 주입되어 있으면 그대로 반환. API 키/모델/base_url 해석 순서는 기존
+    본문 LLM 호출 로직 그대로 (Redis 우선). 해석 실패 시 `PipelineAbortError` raise.
 
     Parameters
     ----------
     state : PipelineState
     stage_id : str
-        에러 이벤트 추적용 식별자. s00_harness / s07_llm 등.
+        에러 이벤트 추적용 식별자. s00_harness / s00_harness.main_call 등.
     """
     if state.provider is not None:
         return state.provider

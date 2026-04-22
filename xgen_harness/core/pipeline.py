@@ -70,16 +70,18 @@ class Pipeline:
         reg = registry or _get_default_registry()
         stages = reg.build_pipeline_stages(config)
 
-        if config.use_planner:
+        # v0.14.0 — s00_harness 는 본문 LLM 호출도 소유. harness_mode 가 "off" 가 아닌
+        # 이상 항상 주입. use_planner=True 는 레거시 호환으로 autonomous 로 파생됨.
+        mode = getattr(config, "harness_mode", "") or ("autonomous" if config.use_planner else "off")
+        if mode != "off":
             try:
                 s00_cls = reg.get("s00_harness", "default")
                 s00 = s00_cls()
-                # 중복 방지 + 최상단 보장
                 stages = [s for s in stages if s.stage_id != "s00_harness"]
                 stages.insert(0, s00)
-                logger.info("[Pipeline] Harness Planner 활성 — s00_harness 주입")
+                logger.info("[Pipeline] s00_harness 주입 (mode=%s)", mode)
             except KeyError:
-                logger.warning("[Pipeline] use_planner=True 이나 s00_harness 미등록 — 기본 파이프라인으로 진행")
+                logger.warning("[Pipeline] s00_harness 미등록 — 기본 파이프라인으로 진행")
 
         return cls(config, stages, event_emitter)
 
@@ -90,11 +92,10 @@ class Pipeline:
         state.start_time = time.time()
 
         try:
-            # ━━━━ v0.13.0 — LLM provider 1 회 선초기화 ━━━━
+            # ━━━━ v0.14.0 — LLM provider 1 회 선초기화 ━━━━
             # "한 번 설정하고 그 핸들을 쭉 재사용" — state.provider 를 Pipeline 진입부에서
-            # 미리 띄워 s00_harness/s07_llm/s09_judge/Planner 가 전부 **같은 인스턴스** 를
-            # 재활용. ensure_provider 는 idempotent (state.provider 있으면 재사용) 이라
-            # 이후 어디서 호출돼도 재초기화 비용 0.
+            # 미리 띄워 s00_harness (Planner + main_call) / s08_judge 가 전부 **같은
+            # 인스턴스** 를 재활용. ensure_provider 는 idempotent.
             from .provider_bootstrap import ensure_provider
             try:
                 await ensure_provider(state, stage_id="pipeline")
@@ -135,6 +136,12 @@ class Pipeline:
                         break
 
                 for stage in self.loop_stages:
+                    # v0.14.0 — s07_act 직전에 s00 본문 LLM 호출 주입.
+                    # s07_llm Stage 삭제로 생긴 공백을 s00_harness.main_call 이 메움.
+                    # Plan 이 s07_act 를 건너뛰더라도 본문 호출은 필요 → 별도 분기.
+                    if stage.stage_id == "s07_act" and s00_stage is not None:
+                        await self._invoke_main_call(state, s00_stage)
+
                     if self._planner_skips(stage, state):
                         await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
                         continue
@@ -240,7 +247,7 @@ class Pipeline:
                 stage_id=stage.stage_id,
                 stage_name=stage.display_name_ko,
                 output=result,
-                score=state.validation_score if stage.stage_id == "s09_judge" else None,
+                score=state.validation_score if stage.stage_id == "s08_judge" else None,
                 step=step,
                 total=self._total_stage_count,
             ))
@@ -358,6 +365,54 @@ class Pipeline:
         if reason:
             return f"Planner: {reason}"
         return "Planner 가 이번 턴에는 불필요하다고 판단"
+
+    async def _invoke_main_call(self, state: PipelineState, s00_stage: Stage) -> None:
+        """v0.14.0 — s00_harness 의 main_call 호출 (본문 LLM 호출).
+
+        과거 s07_llm 이 하던 역할. StageEnter/Exit 이벤트는 s00_harness 이름으로
+        발행하고, 내부적으로 state.config.active_strategies['s00_harness'] 값을 보고
+        streaming vs batch 선택.
+        """
+        if not hasattr(s00_stage, "main_call"):
+            logger.error("[Pipeline] s00_stage has no main_call — upgrade required")
+            return
+
+        step = self._get_step_number(s00_stage)
+        transport = "streaming"
+        if state.config:
+            active = state.config.active_strategies.get("s00_harness")
+            if active in ("streaming", "batch"):
+                transport = active
+            params = state.config.stage_params.get("s00_harness") or {}
+            if params.get("strategy") in ("streaming", "batch"):
+                transport = params["strategy"]
+
+        await self.event_emitter.emit(StageEnterEvent(
+            stage_id="s00_harness",
+            stage_name=s00_stage.display_name_ko,
+            phase="loop",
+            step=step,
+            total=self._total_stage_count,
+            description=f"main_call ({transport})",
+        ))
+
+        t0 = time.time()
+        try:
+            result = await s00_stage.main_call(state, strategy=transport)
+            elapsed = time.time() - t0
+            state.stage_timings["s00_harness_main_call"] = elapsed * 1000
+            await self.event_emitter.emit(StageExitEvent(
+                stage_id="s00_harness",
+                stage_name=s00_stage.display_name_ko,
+                output=result,
+                step=step,
+                total=self._total_stage_count,
+            ))
+        except Exception as e:
+            await self.event_emitter.emit(ErrorEvent(
+                message=str(e), stage_id="s00_harness", recoverable=False,
+            ))
+            raise
 
     def _find_loop_s00(self) -> Optional[Stage]:
         """iterative replan 용 s00_harness 인스턴스 조회.

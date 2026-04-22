@@ -6,7 +6,7 @@
 3. escalate=True 면 RAG 컬렉션 / 인텐트 절 별로 SubAgent N 개를 만들고
    기존 DAGOrchestrator 로 병렬 실행.
 4. 각 sub-agent 출력을 한 system_prompt 부록으로 묶어서 state 에 주입.
-   → 본 파이프라인의 s07_llm 이 자연스럽게 종합 답변을 만든다.
+   → 본 파이프라인의 s00_harness.main_call 이 자연스럽게 종합 답변을 만든다.
 
 캔버스 데이터 의존 0. harness_config + state 만으로 동작.
 """
@@ -116,7 +116,7 @@ class MultiAgentPlannerStage(Stage):
         result = await orchestrator.run(state.user_input or "")
 
         # 결과 종합: 본 파이프라인의 system_prompt 에 sub-agent 결과를 부록으로 추가.
-        # s07_llm 이 이걸 컨텍스트로 종합 답변을 생성.
+        # s00_harness.main_call 이 이걸 컨텍스트로 종합 답변을 생성.
         appendix_parts = ["\n\n<sub_agent_results>"]
         for node in sub_agents:
             r = result.results.get(node.node_id)

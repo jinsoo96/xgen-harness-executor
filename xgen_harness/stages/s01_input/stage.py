@@ -8,10 +8,10 @@ PHILOSOPHY §2 s01 "담당":
   - 선택적 입력 복잡도 분류 (``with_classification`` Strategy)
 
 PHILOSOPHY §2 s01 "비담당" (v0.9.0+):
-  - LLM provider 생성 / API key / base_url 해석 → **s07_llm** 으로 이관
+  - LLM provider 생성 / API key / base_url 해석 → **s00_harness.main_call** 으로 이관
   - MCP 도구 디스커버리 → **s04_tool** 로 이관
   - provider / model / temperature 값 조작 → **s01 은 읽지도 쓰지도 않는다**
-    HarnessConfig top-level 에 기록된 값을 s07 이 직접 참조. s01 을 거치면
+    HarnessConfig top-level 에 기록된 값을 s00_harness 가 직접 참조. s01 을 거치면
     하드코딩 연동이 돼서 자연스러운 설정 흐름이 끊김 (v0.9.3+).
 """
 
@@ -39,7 +39,7 @@ class InputStage(Stage):
     async def execute(self, state: PipelineState) -> dict:
         # PHILOSOPHY §2 s01 "담당": 입력 검증 / 파일 정규화 / 첫 user 메시지 push.
         # provider / model / temperature 는 **만지지 않는다** — HarnessConfig top-level
-        # 에 이미 기록돼 있고 s07 이 그 값을 직접 읽어 해석. s01 이 중간에 끼면
+        # 에 이미 기록돼 있고 s00_harness 가 그 값을 직접 읽어 해석. s01 이 중간에 끼면
         # 하드코딩 연동이 돼서 "자연스러운 연동" 이 깨짐.
         config = state.config
         if not config:

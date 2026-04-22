@@ -17,34 +17,35 @@ if TYPE_CHECKING:
 
 # --- 표시 이름 매핑 (사용자 편의 용어 강제) ---
 
+# v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 LLM 통제탑.
 STAGE_DISPLAY_NAMES: dict[str, str] = {
+    "s00_harness":    "Harness",
     "s01_input":      "Input",
     "s02_history":    "History",
     "s03_prompt":     "Prompt",
     "s04_tool":       "Tool",
     "s05_strategy":   "Strategy",
     "s06_context":    "Context",
-    "s07_llm":        "LLM",
-    "s08_act":        "Act",
-    "s09_judge":      "Judge",
-    "s10_decide":     "Decide",
-    "s11_save":       "Save",
-    "s12_finalize":   "Finalize",
+    "s07_act":        "Act",
+    "s08_judge":      "Judge",
+    "s09_decide":     "Decide",
+    "s10_save":       "Save",
+    "s11_finalize":   "Finalize",
 }
 
 STAGE_DISPLAY_NAMES_KO: dict[str, str] = {
+    "s00_harness":    "하네스",
     "s01_input":      "입력",
     "s02_history":    "이력",
     "s03_prompt":     "프롬프트",
     "s04_tool":       "도구",
     "s05_strategy":   "전략",
     "s06_context":    "컨텍스트",
-    "s07_llm":        "LLM",
-    "s08_act":        "실행",
-    "s09_judge":      "판정",
-    "s10_decide":     "결정",
-    "s11_save":       "저장",
-    "s12_finalize":   "마무리",
+    "s07_act":        "실행",
+    "s08_judge":      "판정",
+    "s09_decide":     "결정",
+    "s10_save":       "저장",
+    "s11_finalize":   "마무리",
 }
 
 
@@ -90,13 +91,13 @@ class Stage(ABC):
     @property
     @abstractmethod
     def stage_id(self) -> str:
-        """내부 ID (예: 's07_llm')"""
+        """내부 ID (예: 's07_act')"""
         ...
 
     @property
     @abstractmethod
     def order(self) -> int:
-        """실행 순서 (1~12)"""
+        """실행 순서 (0~11)"""
         ...
 
     @property
@@ -123,9 +124,13 @@ class Stage(ABC):
 
     @property
     def phase(self) -> str:
+        # v0.14.0 — 11 스테이지 기준 (s07_llm 삭제 후):
+        # ingress: s00_harness, s01~s04 (order 0~4)
+        # loop:    s05_strategy, s06_context, s07_act, s08_judge, s09_decide (order 5~9)
+        # egress:  s10_save, s11_finalize (order 10~11)
         if self.order <= 4:
             return "ingress"
-        elif self.order <= 10:
+        elif self.order <= 9:
             return "loop"
         else:
             return "egress"
