@@ -124,16 +124,14 @@ class Stage(ABC):
 
     @property
     def phase(self) -> str:
-        # v0.14.0 — 11 스테이지 기준 (s07_llm 삭제 후):
-        # ingress: s00_harness, s01~s04 (order 0~4)
-        # loop:    s05_strategy, s06_context, s07_act, s08_judge, s09_decide (order 5~9)
-        # egress:  s10_save, s11_finalize (order 10~11)
-        if self.order <= 4:
-            return "ingress"
-        elif self.order <= 9:
-            return "loop"
-        else:
-            return "egress"
+        """Stage 가 속한 phase 이름.
+
+        v0.15.1 — phase 경계를 `PHASE_ORDER_BOUNDARIES` 레지스트리에서 읽어 하드코딩
+        제거. 외부 패키지가 `register_phase("post_egress", upper_order=99)` 한 줄로
+        새 phase 합류 가능. Stage 서브클래스가 이 property 를 override 하면 값 그대로 사용.
+        """
+        from .phase_registry import resolve_phase
+        return resolve_phase(self.order)
 
     @abstractmethod
     async def execute(self, state: "PipelineState") -> dict:

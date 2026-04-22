@@ -250,8 +250,11 @@ def _register_defaults() -> None:
     - vllm: vLLM → OpenAI 호환 엔드포인트
 
     새 프로바이더 추가: register_provider("name", ProviderClass)
+    v0.15.1 — entry_points 그룹 `xgen_harness.providers` 자동 발견 추가.
     """
     if _REGISTRY:
+        # 이미 등록된 상태라도 entry_points 재스캔은 idempotent 한 번 시도.
+        _discover_from_entry_points_once()
         return
     from .anthropic import AnthropicProvider
     from .openai import OpenAIProvider
@@ -262,6 +265,82 @@ def _register_defaults() -> None:
     _REGISTRY["google"] = OpenAIProvider
     _REGISTRY["bedrock"] = OpenAIProvider
     _REGISTRY["vllm"] = OpenAIProvider
+
+    _discover_from_entry_points_once()
+
+
+_ENTRY_POINTS_DISCOVERED = False
+
+
+def _discover_from_entry_points_once() -> None:
+    """외부 패키지가 `xgen_harness.providers` 그룹에 provider 를 노출하면 자동 등록.
+
+    entry_point 의 반환은 다음 중 하나 허용:
+      - LLMProvider 서브클래스 → 모듈명/ep 이름으로 등록
+      - dict: {name, cls, default_model?, models?, api_key_env?, context_limit?}
+      - list[dict]: 여러 개 한 번에
+
+    v0.15.1 자동 연동 자동 확장성 — pip install xgen-bedrock-provider 로 새
+    Provider 가 첫 list_providers/get_default_provider 호출 시점에 합류.
+    """
+    global _ENTRY_POINTS_DISCOVERED
+    if _ENTRY_POINTS_DISCOVERED:
+        return
+    _ENTRY_POINTS_DISCOVERED = True
+    try:
+        from importlib.metadata import entry_points
+    except Exception:
+        return
+    try:
+        eps = entry_points()
+        group = "xgen_harness.providers"
+        if hasattr(eps, "select"):
+            items = eps.select(group=group)
+        else:
+            items = eps.get(group, [])
+        for ep in items:
+            try:
+                factory = ep.load()
+                result = factory() if callable(factory) else factory
+                _register_from_entry_point(ep.name, result)
+            except Exception:
+                continue
+    except Exception:
+        return
+
+
+def _register_from_entry_point(ep_name: str, result) -> None:
+    """entry_point 반환값 해석 후 register_provider 호출."""
+    # case 1: LLMProvider 서브클래스
+    try:
+        if isinstance(result, type) and issubclass(result, LLMProvider):
+            register_provider(ep_name, result)
+            return
+    except Exception:
+        pass
+    # case 2: dict 단건
+    if isinstance(result, dict) and result.get("name") and result.get("cls"):
+        register_provider(
+            result["name"],
+            result["cls"],
+            default_model=result.get("default_model"),
+            models=result.get("models"),
+            api_key_env=result.get("api_key_env"),
+            context_limit=result.get("context_limit"),
+        )
+        return
+    # case 3: list/iterable 다건
+    if isinstance(result, (list, tuple)):
+        for item in result:
+            if isinstance(item, dict) and item.get("name") and item.get("cls"):
+                register_provider(
+                    item["name"],
+                    item["cls"],
+                    default_model=item.get("default_model"),
+                    models=item.get("models"),
+                    api_key_env=item.get("api_key_env"),
+                    context_limit=item.get("context_limit"),
+                )
 
 
 def wrap_langchain(llm, provider_name: str = "") -> LLMProvider:

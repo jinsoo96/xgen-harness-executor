@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.15.0"
-description = "XGEN Harness Pipeline Library — 11-stage dual-abstraction + s00_harness 통제탑 (Planner + main LLM + OrchestratorRegistry 자동 연동 자동 확장)"
+version = "0.15.1"
+description = "XGEN Harness Pipeline Library — 11-stage dual-abstraction + s00_harness 통제탑 + Orchestrator/Phase/Provider/Capability 전축 자동 연동"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

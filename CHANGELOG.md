@@ -5,6 +5,64 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] — 2026-04-22
+
+### 🎯 모든 확장 지점 자동 연동성 감사 — 3개 갭 제거
+
+사용자 지시: **"모든 측면에서 그런 자동연동성을 확인해야 해"**. v0.15.0 의 Orchestrator 전환 모델을 **9 축 전수 감사** 하고 발견된 3개 하드코딩/누락을 즉시 수정.
+
+**🔴 감사 결과 9 / 9** (파일:라인 기반 실측):
+
+| 축 | 판정 |
+|---|---|
+| Stage / Strategy / Orchestrator / NodeAdapter | ✅ OK (리터럴 0, register_* + entry_points + catalog 3종 완비) |
+| Phase | ❌ GAP → **이번 수정** |
+| Transport (stage_config options) | ❌ GAP → **이번 수정** |
+| Capability / Provider entry_points | ❌ GAP → **이번 수정** |
+| Tool entry_points | ⚠ 부분 GAP (다음 릴리즈) |
+
+**🟢 1. Phase 하드코딩 제거 (`core/phase_registry.py` 신설)**:
+- 과거 `core/stage.py` 의 `if self.order <= 4: return "ingress"` 매직 넘버 박제 제거.
+- `register_phase(name, upper_order, description)` 공개 API + `_REGISTRY` dict + `entry_points("xgen_harness.phases")` 자동 발견.
+- `Stage.phase` property 가 `resolve_phase(self.order)` 한 줄로 위임. Stage 서브클래스가 override 하면 그 값 우선.
+- 기본 3개 (ingress ≤4 / loop ≤9 / egress ≤9999) idempotent 등록. 외부에서 `register_phase("post_egress", upper_order=9999)` 한 줄로 확장.
+
+**🟢 2. Transport options 동적화 (`core/stage_config.py`)**:
+- s00_harness.fields.strategy 의 `"options": ["streaming", "batch"]` 리터럴 제거.
+- `"options_source": "s00_harness_transport_strategies"` 로 전환 — UI 드롭다운이 StrategyResolver `_REGISTRY` 에서 실측한 list_strategies 결과를 렌더. 외부 Transport 플러그인이 `register_strategy("s00_harness","transport","websocket",...)` 한 줄로 즉시 UI 합류.
+- `stage_config` 와 `StrategyResolver` 간 이중 선언이 제거되어 drift 불가.
+
+**🟢 3. Capability entry_points 자동 발견 (`capabilities/registry.py`)**:
+- `_discover_from_entry_points_once()` 추가 — 그룹 `xgen_harness.capabilities` 스캔, CapabilitySpec / Iterable[CapabilitySpec] 모두 수용.
+- `get_default_registry()` 최초 호출 시 자동 실행 + idempotent. 반복 호출 부작용 0.
+- pip install xgen-capability-xxx 한 것이 레지스트리에 즉시 합류 → Planner catalog 에도 자동.
+
+**🟢 4. Provider entry_points 자동 발견 (`providers/__init__.py`)**:
+- `_discover_from_entry_points_once()` + `_register_from_entry_point()` 헬퍼 추가.
+- 그룹 `xgen_harness.providers`. entry_point 반환값 3 형태 지원: LLMProvider 서브클래스 / dict(name, cls, default_model, models, api_key_env, context_limit) / list[dict].
+- `_register_defaults()` / `list_providers()` / `get_default_provider()` 진입 시 idempotent 스캔.
+- 외부 `xgen-bedrock-provider` 패키지가 setup.cfg 에 `[project.entry-points."xgen_harness.providers"]` 선언만 해도 엔진 무수정.
+
+**🟢 5. catalog 최상위 축 추가 (`core/catalog.py`)**:
+- `catalog["providers"]` — 레지스트리 전수 + context_limit + default_model. Planner / 프론트가 한 번에 수집.
+- `catalog["phases"]` — PhaseRegistry 전수. 외부 phase 도 자동.
+- `catalog["orchestrators"]` 는 v0.15.0 때 이미 추가. 이로써 자율주행 필요한 4 축(stages/orchestrators/providers/phases) 이 단일 카탈로그에서 조회 가능.
+
+### 자가검증 grep (8 / 8 PASS)
+1. `register_phase("post_egress", upper_order=9999)` → `list_phases()` / `catalog.phases` 즉시 합류 ✅
+2. Stage.phase property 가 레지스트리 해석 (ingress/loop/egress 실Stage 에 정상 반영) ✅
+3. `stage_config.s00_harness.fields.strategy.options` 키 **부재** (options_source 만 존재) ✅
+4. `HarnessStage.list_strategies()` 가 StrategyResolver 에서 동적으로 streaming/batch 반환 ✅
+5. `get_default_registry()` 호출 후 `_ENTRY_POINTS_DISCOVERED=True` idempotent ✅
+6. `list_providers()` 호출 시 entry_points 스캔 실행 (기본 5개 + 외부 0 일 때 동일 결과) ✅
+7. `catalog` 최상위 키 `{stages, required_stages, orchestrators, providers, phases, ...}` ✅
+8. `core/stage.py` 의 phase 리터럴 1건 (Type hint 주석 1줄만, 로직 0) ✅
+
+### 남은 Phase 2
+- Tool entry_points 자동 발견 (`tools/__init__.py`) — 현재 `tools/gallery.py` 에는 있지만 핵심에 승격 필요
+- 프론트 `PlanningCard` 에 max_iterations/orchestrator_hint 배지 + `catalog.providers/phases` 활용
+- Pipeline Phase B 의 `orchestrator_hint` 실제 분기 실행 (react/plan_execute)
+
 ## [0.15.0] — 2026-04-22
 
 ### 🎯 재귀적 자율주행 완성 — LLM 이 반복 수·오케스트레이터까지 자율 결정 + display_name=Auto

@@ -137,6 +137,8 @@ def get_catalog(
     catalog["stages"] = _collect_stages(config)
     catalog["required_stages"] = _collect_required_stages()
     catalog["orchestrators"] = _collect_orchestrators()
+    catalog["providers"] = _collect_providers()
+    catalog["phases"] = _collect_phases()
 
     if include_capabilities:
         catalog["capabilities"] = _collect_capabilities()
@@ -253,6 +255,37 @@ def _collect_orchestrators() -> list[dict[str, Any]]:
         return get_orchestrator_specs()
     except Exception as e:
         logger.debug("orchestrator registry unavailable: %s", e)
+        return []
+
+
+def _collect_providers() -> list[dict[str, Any]]:
+    """ProviderRegistry 전수. entry_points 자동 발견된 외부 provider 도 합류.
+
+    Planner 가 "이 요청엔 어떤 provider 가 나을까" 판단 근거 / 프론트 드롭다운 원천.
+    provider 이름 리터럴 0.
+    """
+    try:
+        from ..providers import list_providers, get_default_model, PROVIDER_CONTEXT_LIMITS
+        out: list[dict[str, Any]] = []
+        for name in list_providers():
+            out.append({
+                "name": name,
+                "default_model": get_default_model(name),
+                "context_limit": PROVIDER_CONTEXT_LIMITS.get(name, 0),
+            })
+        return out
+    except Exception as e:
+        logger.debug("providers unavailable in catalog: %s", e)
+        return []
+
+
+def _collect_phases() -> list[dict[str, Any]]:
+    """PhaseRegistry 전수. 외부 phase (post_egress 등) 도 자동 합류."""
+    try:
+        from .phase_registry import get_phase_specs
+        return get_phase_specs()
+    except Exception as e:
+        logger.debug("phase registry unavailable: %s", e)
         return []
 
 

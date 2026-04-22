@@ -65,12 +65,16 @@ STAGE_CONFIGS: dict[str, dict] = {
         "icon": "🎯",
         "fields": [
             {
+                # v0.15.1 자동 연동 — options 리터럴 제거. options_source 로
+                # HarnessStage.list_strategies() 결과를 동적 주입 (StrategyResolver
+                # _REGISTRY 에서 실측). 외부 플러그인이 새 Transport 등록하면 즉시 UI
+                # 드롭다운에 합류.
                 "id": "strategy",
                 "label": "Transport Strategy",
                 "type": "select",
-                "options": ["streaming", "batch"],
+                "options_source": "s00_harness_transport_strategies",
                 "default": "streaming",
-                "description": "본문 LLM 호출 방식. streaming=SSE + 재시도 + 폴백, batch=비스트리밍 단일.",
+                "description": "본문 LLM 호출 방식. 등록된 Transport Strategy 중 선택.",
             },
             {
                 "id": "max_tokens",

@@ -158,10 +158,12 @@ class CapabilityRegistry:
 
 _default_registry: CapabilityRegistry = CapabilityRegistry()
 _default_lock = threading.Lock()
+_ENTRY_POINTS_DISCOVERED = False
 
 
 def get_default_registry() -> CapabilityRegistry:
     """전역 기본 레지스트리. Adapter/테스트가 공유."""
+    _discover_from_entry_points_once()
     return _default_registry
 
 
@@ -170,3 +172,42 @@ def set_default_registry(registry: CapabilityRegistry) -> None:
     global _default_registry
     with _default_lock:
         _default_registry = registry
+
+
+def _discover_from_entry_points_once() -> None:
+    """외부 패키지가 `xgen_harness.capabilities` 그룹에 CapabilitySpec 을 노출하면 자동 등록.
+
+    v0.15.1 자동 연동 자동 확장성 — pip install xgen-capability-xxx 한 것이
+    get_default_registry() 첫 조회 시점에 합류. 반복 호출 idempotent.
+    """
+    global _ENTRY_POINTS_DISCOVERED
+    if _ENTRY_POINTS_DISCOVERED:
+        return
+    _ENTRY_POINTS_DISCOVERED = True
+    try:
+        from importlib.metadata import entry_points
+    except Exception:
+        return
+    try:
+        eps = entry_points()
+        group = "xgen_harness.capabilities"
+        if hasattr(eps, "select"):
+            items = eps.select(group=group)
+        else:
+            items = eps.get(group, [])
+        for ep in items:
+            try:
+                factory = ep.load()
+                result = factory() if callable(factory) else factory
+                # 단일 CapabilitySpec 또는 Iterable 허용.
+                if isinstance(result, CapabilitySpec):
+                    _default_registry.register(result)
+                elif hasattr(result, "__iter__"):
+                    _default_registry.register_many(
+                        [s for s in result if isinstance(s, CapabilitySpec)]
+                    )
+            except Exception:
+                # 개별 entry_point 실패는 전체 발견을 막지 않는다.
+                continue
+    except Exception:
+        return
