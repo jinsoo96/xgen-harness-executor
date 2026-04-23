@@ -133,6 +133,19 @@ class Stage(ABC):
     def role(self) -> str:
         return ""
 
+    # v0.17.0 — Machine-only Stage meta.
+    # LLM(planner) 이 실제로 읽는 선택 근거 필드.
+    # 인간 UI 설명문(description_ko/behavior/icon 등)은 엔진에 두지 않는다 —
+    # 그건 LLM 이 안 읽고 UI 편의일 뿐. 확장성·연동성 기준에서는 노이즈.
+    # Stage 클래스가 class attribute 로 override 선언:
+    #   class MyStage(Stage):
+    #       when_to_use = "..."
+    #       when_to_skip = "..."
+    #       cost_hint = "low"  # low|medium|high
+    when_to_use: str = ""
+    when_to_skip: str = ""
+    cost_hint: str = "medium"
+
     @property
     def display_name(self) -> str:
         return STAGE_DISPLAY_NAMES.get(self.stage_id, self.stage_id)
@@ -274,3 +287,17 @@ class Stage(ABC):
 
     def list_strategies(self) -> list[StrategyInfo]:
         return []
+
+    @classmethod
+    def describe_config(cls) -> Optional[dict]:
+        """Stage 가 자기 UI 설정 스키마를 self-describe.
+
+        v0.17.0 — `stage_config.STAGE_CONFIGS` dict 중앙화에서 벗어나는 경로.
+        Stage 가 이 메서드를 override 해서 `{description_ko, description_en,
+        when_to_use, when_to_skip, cost_hint, icon, fields, behavior}` dict 를
+        반환하면 `get_stage_config()` 가 중앙 dict 대신 이 값을 사용.
+
+        기본 구현: None 반환 — 기존 STAGE_CONFIGS dict 경로 유지 (하위 호환).
+        새 Stage 는 override 해서 dict 박제 없이 자체 선언 권장.
+        """
+        return None

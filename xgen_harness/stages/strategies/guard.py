@@ -1,26 +1,111 @@
 """
-Guard strategies — 가드레일 체인
+Guard strategies — Policy Gate (v0.17.0 재설계)
 
-geny-harness s04_guard 차용:
-  Guard trait: 단일 가드 체크
-  GuardChain trait: 체인으로 묶어서 실행
+## 배경
+기존 _GUARD_REGISTRY dict 하드코딩 + s09_decide 내부 호출 → lotte 류
+"도구 호출 직전 BLOCK" 같은 정책 요구를 못 받음. 본 재설계는 3 축으로 정리.
 
-가드레일 종류:
-- TokenBudgetGuard: 토큰 예산 초과 체크
-- CostBudgetGuard: 비용 예산 초과 체크
-- IterationGuard: 반복 횟수 초과 체크
-- ContentGuard: 입력/출력 콘텐츠 필터링 (확장용)
+## 축 1 — Guard 를 1급 플러그인 (entry_points)
+외부 패키지가 pyproject.toml `[project.entry-points."xgen_harness.guards"]`
+한 줄 추가로 자기 Guard 클래스를 런타임 주입 가능. 내장 4종도 같은 경로로 등록.
+엔진 dict 하드코딩 제거.
+
+## 축 2 — Guard 의 자가 기술 (self-describing)
+각 Guard 가 `param_schema()` / `hook_points` 를 들고 다님. UI 는 Guard 선택 시
+param_schema 로 폼 동적 렌더 — 새 Guard 마다 stage_config.py 수정 불필요.
+
+## 축 3 — 다중 훅 포인트
+Guard 가 실행되어야 할 시점을 선언 (pre_main / pre_tool / post_response /
+loop_boundary). Pipeline 은 각 시점에 해당 훅의 Guard 만 체인으로 실행.
 """
+
+from __future__ import annotations
 
 import logging
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Optional
 
 from ..interfaces import Strategy
 
 logger = logging.getLogger("harness.strategy.guard")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  훅 포인트 / 컨텍스트 / 스키마
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class HookPoint(str, Enum):
+    """Pipeline 이 Policy Gate 를 호출하는 시점.
+
+    PRE_MAIN       — 본문 LLM 호출 직전 (입력/Plan 검증)
+    PRE_TOOL       — 도구 호출 직전 (pending_tool_calls 에 대한 정책)
+    POST_RESPONSE  — LLM 응답 직후 (출력 텍스트·페이로드 검증)
+    LOOP_BOUNDARY  — 루프 경계 (예산·반복 등 누적 검사)
+    """
+    PRE_MAIN = "pre_main"
+    PRE_TOOL = "pre_tool"
+    POST_RESPONSE = "post_response"
+    LOOP_BOUNDARY = "loop_boundary"
+
+
+@dataclass
+class HookContext:
+    """훅 호출 시 Guard 에게 전달되는 부가 정보.
+
+    Guard 는 이 컨텍스트로 "무슨 훅에서 호출됐는지" + "어떤 도구 호출이 대상인지"
+    를 안다. PRE_TOOL 에서는 `pending_tool_call` 이 단일 도구 호출로 채워짐.
+    """
+    hook: HookPoint
+    pending_tool_call: Optional[dict[str, Any]] = None
+    tool_call_history: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FieldSchema:
+    """Guard 가 자기 UI 폼 스키마를 선언하기 위한 필드 정의 — machine-only.
+
+    v0.17.0 — label / description / placeholder 한국어 리터럴 전부 제거.
+    UI 는 `id` 를 Title Case 자동 변환 (예: "blocked_patterns" → "Blocked Patterns").
+    설명문이 필요하면 Guard 클래스 docstring 에 통합 기술.
+
+    남은 필드 = **구조적 계약** (타입·제약·옵션 소스). 자연어 아님 → 하드코딩 아님.
+    """
+    id: str
+    type: str                                  # text|number|toggle|select|multi_select|tag_input|rule_list|textarea
+    default: Any = None
+    options: list[Any] = field(default_factory=list)
+    options_source: str = ""
+    min: Optional[int] = None
+    max: Optional[int] = None
+    step: Optional[int] = None
+    required: bool = False
+    item_schema: Optional[list["FieldSchema"]] = None  # rule_list 용 — 항목 폼 스키마
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "type": self.type,
+            "default": self.default,
+        }
+        if self.options:
+            out["options"] = list(self.options)
+        if self.options_source:
+            out["options_source"] = self.options_source
+        if self.min is not None:
+            out["min"] = self.min
+        if self.max is not None:
+            out["max"] = self.max
+        if self.step is not None:
+            out["step"] = self.step
+        if self.required:
+            out["required"] = True
+        if self.item_schema:
+            out["item_schema"] = [f.to_dict() for f in self.item_schema]
+        return out
 
 
 @dataclass
@@ -29,55 +114,104 @@ class GuardResult:
     passed: bool
     guard_name: str
     reason: str = ""
-    severity: str = "block"  # "block" | "warn" | "info"
+    severity: str = "block"         # "block" | "warn" | "info"
+    # PRE_TOOL 차단 시 LLM 에게 돌려줄 메시지 (가짜 tool_result content).
+    # 없으면 reason 을 그대로 사용.
+    tool_error_message: str = ""
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Guard ABC
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class Guard(Strategy, ABC):
-    """단일 가드 체크 인터페이스"""
+    """단일 Guard — 자기 스키마와 훅을 선언하고 state 를 검사.
+
+    구현 계약:
+      1. `name` (Strategy 상속) — 고유 이름, UI 식별자
+      2. `description` — UI 설명
+      3. `param_schema()` — 사용자가 UI 에서 편집할 파라미터 스키마
+      4. `hook_points` — 이 Guard 가 실행되어야 할 훅 집합
+      5. `configure(params)` — 런타임 파라미터 주입
+      6. `check(state, context)` — 실제 검사 로직
+    """
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        """UI 폼 자동 생성용 파라미터 스키마. 기본 빈 리스트."""
+        return []
+
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        """이 Guard 가 실행될 훅 포인트 집합. 기본 LOOP_BOUNDARY."""
+        return {HookPoint.LOOP_BOUNDARY}
 
     @abstractmethod
-    def check(self, state: Any) -> GuardResult:
-        """state를 검사하여 통과/차단 결정"""
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        """state + context 를 검사하여 통과/차단 결정."""
         ...
 
 
-class GuardChain(Strategy):
-    """가드 체인 — 여러 가드를 순서대로 실행"""
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  GuardChain — 훅별 필터링 + 순차 실행
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def __init__(self):
-        self._guards: list[Guard] = []
+class GuardChain:
+    """설정된 Guard 리스트를 훅 시점별로 분류·실행.
 
-    @property
-    def name(self) -> str:
-        return "guard_chain"
+    Pipeline 이 시점 도래 시 `invoke(hook, state, pending_tool_call=...)` 호출.
+    해당 hook 을 선언한 Guard 만 실행, 첫 block 에서 short-circuit.
+    """
+
+    def __init__(self, guards: Optional[list[Guard]] = None):
+        self._guards: list[Guard] = list(guards or [])
 
     def add(self, guard: Guard) -> "GuardChain":
         self._guards.append(guard)
         return self
 
-    def check_all(self, state: Any, short_circuit: bool = True) -> list[GuardResult]:
-        """모든 가드 실행. short_circuit=True면 첫 차단에서 중단."""
-        results = []
-        for guard in self._guards:
-            result = guard.check(state)
-            results.append(result)
-            if not result.passed and short_circuit and result.severity == "block":
-                logger.warning("[Guard] Blocked by %s: %s", result.guard_name, result.reason)
+    @property
+    def guards(self) -> list[Guard]:
+        return list(self._guards)
+
+    def invoke(
+        self,
+        hook: HookPoint,
+        state: Any,
+        pending_tool_call: Optional[dict[str, Any]] = None,
+        short_circuit: bool = True,
+    ) -> list[GuardResult]:
+        """해당 hook 에 해당하는 Guard 만 순차 실행, 결과 리스트 반환."""
+        context = HookContext(
+            hook=hook,
+            pending_tool_call=pending_tool_call,
+            tool_call_history=getattr(state, "tool_call_history", []) or [],
+        )
+        results: list[GuardResult] = []
+        for g in self._guards:
+            if hook not in g.hook_points:
+                continue
+            try:
+                r = g.check(state, context)
+            except Exception as e:
+                logger.warning("[GuardChain] %s.check failed (hook=%s): %s", g.name, hook.value, e)
+                r = GuardResult(passed=True, guard_name=g.name, reason=f"check failed: {e}", severity="warn")
+            results.append(r)
+            if not r.passed and short_circuit and r.severity == "block":
+                logger.warning("[GuardChain] Blocked by %s @ %s: %s", r.guard_name, hook.value, r.reason)
                 break
         return results
 
-    def is_passed(self, state: Any) -> bool:
-        """전체 통과 여부"""
-        results = self.check_all(state)
-        return all(r.passed for r in results)
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  기본 Guard 구현체
+#  내장 Guard 구현체
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class TokenBudgetGuard(Guard):
-    """토큰 예산 초과 체크"""
+    """누적 입출력 토큰이 설정한 예산의 95% 를 넘으면 루프 종료.
+
+    param_budget 파라미터로 임계값 지정. 0 이면 config.context_window 폴백.
+    """
 
     def __init__(self, token_budget: int = 0):
         self._token_budget = token_budget
@@ -86,19 +220,38 @@ class TokenBudgetGuard(Guard):
     def name(self) -> str:
         return "token_budget"
 
-    def check(self, state: Any) -> GuardResult:
-        if not hasattr(state, 'token_usage'):
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        return {HookPoint.LOOP_BOUNDARY}
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return [
+            FieldSchema(
+                id="token_budget",
+                type="number",
+                default=0,
+                min=0,
+                max=10_000_000,
+                step=1000,
+            ),
+        ]
+
+    def configure(self, config: dict[str, Any]) -> None:
+        self._token_budget = int(config.get("token_budget", self._token_budget) or 0)
+
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        if not hasattr(state, "token_usage"):
             return GuardResult(passed=True, guard_name=self.name)
 
-        # 우선순위: 생성자 인자 > config.context_window > 기본값
         if self._token_budget > 0:
             max_tokens = self._token_budget
-        elif hasattr(state, 'config') and state.config:
-            max_tokens = getattr(state.config, 'context_window', 1_000_000)
+        elif hasattr(state, "config") and state.config:
+            max_tokens = getattr(state.config, "context_window", 1_000_000)
         else:
             max_tokens = 1_000_000
 
-        used = state.token_usage.total if hasattr(state.token_usage, 'total') else 0
+        used = state.token_usage.total if hasattr(state.token_usage, "total") else 0
 
         if used > max_tokens * 0.95:
             return GuardResult(
@@ -118,7 +271,10 @@ class TokenBudgetGuard(Guard):
 
 
 class CostBudgetGuard(Guard):
-    """비용 예산 초과 체크"""
+    """누적 비용이 설정 예산(USD)을 초과하면 루프 종료.
+
+    cost_budget_usd 파라미터로 임계값 지정. 0 이면 config.cost_budget_usd 폴백.
+    """
 
     def __init__(self, cost_budget_usd: float = 0.0):
         self._cost_budget_usd = cost_budget_usd
@@ -127,20 +283,38 @@ class CostBudgetGuard(Guard):
     def name(self) -> str:
         return "cost_budget"
 
-    def check(self, state: Any) -> GuardResult:
-        if not hasattr(state, 'cost_usd'):
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        return {HookPoint.LOOP_BOUNDARY}
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return [
+            FieldSchema(
+                id="cost_budget_usd",
+                type="number",
+                default=0.0,
+                min=0,
+                max=1000,
+                step=1,
+            ),
+        ]
+
+    def configure(self, config: dict[str, Any]) -> None:
+        self._cost_budget_usd = float(config.get("cost_budget_usd", self._cost_budget_usd) or 0.0)
+
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        if not hasattr(state, "cost_usd"):
             return GuardResult(passed=True, guard_name=self.name)
 
-        # 우선순위: 생성자 인자 > config.cost_budget_usd > 기본값
         if self._cost_budget_usd > 0:
             budget = self._cost_budget_usd
-        elif hasattr(state, 'config') and state.config:
-            budget = getattr(state.config, 'cost_budget_usd', 10.0)
+        elif hasattr(state, "config") and state.config:
+            budget = getattr(state.config, "cost_budget_usd", 10.0)
         else:
             budget = 10.0
 
         cost = state.cost_usd
-
         if cost >= budget:
             return GuardResult(
                 passed=False,
@@ -152,19 +326,26 @@ class CostBudgetGuard(Guard):
 
 
 class IterationGuard(Guard):
-    """반복 횟수 초과 체크"""
+    """config.max_iterations 도달 시 루프 종료."""
 
     @property
     def name(self) -> str:
         return "iteration"
 
-    def check(self, state: Any) -> GuardResult:
-        if not hasattr(state, 'loop_iteration') or not hasattr(state, 'config'):
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        return {HookPoint.LOOP_BOUNDARY}
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return []  # 파라미터 없음 — config.max_iterations 사용
+
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        if not hasattr(state, "loop_iteration") or not hasattr(state, "config"):
             return GuardResult(passed=True, guard_name=self.name)
 
-        max_iter = getattr(state.config, 'max_iterations', 10)
+        max_iter = getattr(state.config, "max_iterations", 10)
         current = state.loop_iteration
-
         if current >= max_iter:
             return GuardResult(
                 passed=False,
@@ -176,19 +357,12 @@ class IterationGuard(Guard):
 
 
 class ContentGuard(Guard):
-    """콘텐츠 필터 — 금지 패턴 매칭 + 선택적 PII 감지.
+    """콘텐츠 필터 — 금지 패턴 + PII.
 
-    기본값은 패턴 없음 + PII 감지 off → 항상 통과 (하위 호환).
-    configure() 로 활성화하거나 생성자에 패턴을 넘겨서 사용.
-
-    params:
-      blocked_patterns: 정규식 문자열 리스트 (대소문자 무시)
-      detect_pii: True 면 _PII_PATTERNS 로 이메일/휴대폰/주민번호/카드번호 감지
-      check_target: 'input' | 'output' | 'both' (기본 'both')
-                     — input 은 마지막 user 메시지, output 은 last_assistant_text
+    hook_points: PRE_MAIN (입력 검사) / POST_RESPONSE (출력 검사).
+    check_target 파라미터로 input / output / both 선택.
     """
 
-    # 한국 맥락 포함 기본 PII 패턴
     _PII_PATTERNS: dict[str, re.Pattern] = {
         "email":       re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
         "phone_kr":    re.compile(r"\b01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}\b"),
@@ -198,7 +372,7 @@ class ContentGuard(Guard):
 
     def __init__(
         self,
-        blocked_patterns: list[str] | None = None,
+        blocked_patterns: Optional[list[str]] = None,
         detect_pii: bool = False,
         check_target: str = "both",
     ):
@@ -212,6 +386,37 @@ class ContentGuard(Guard):
     def name(self) -> str:
         return "content"
 
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        # input/output 설정에 따라 훅 포인트 달라짐
+        pts: set[HookPoint] = set()
+        if self._check_target in ("input", "both"):
+            pts.add(HookPoint.PRE_MAIN)
+        if self._check_target in ("output", "both"):
+            pts.add(HookPoint.POST_RESPONSE)
+        return pts or {HookPoint.POST_RESPONSE}
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return [
+            FieldSchema(
+                id="blocked_patterns",
+                type="tag_input",
+                default=[],
+            ),
+            FieldSchema(
+                id="detect_pii",
+                type="toggle",
+                default=False,
+            ),
+            FieldSchema(
+                id="check_target",
+                type="select",
+                options=["input", "output", "both"],
+                default="both",
+            ),
+        ]
+
     def configure(self, config: dict[str, Any]) -> None:
         if "blocked_patterns" in config:
             raw = config.get("blocked_patterns") or []
@@ -223,25 +428,22 @@ class ContentGuard(Guard):
             if target in ("input", "output", "both"):
                 self._check_target = target
 
-    def check(self, state: Any) -> GuardResult:
-        # 활성화 요소가 하나도 없으면 즉시 통과 — 기본 설정에서 과도한 차단 방지
+    def check(self, state: Any, context: HookContext) -> GuardResult:
         if not self._patterns and not self._detect_pii:
             return GuardResult(passed=True, guard_name=self.name)
 
+        # 훅 시점에 맞는 대상만 검사
         targets: list[tuple[str, str]] = []
-
-        if self._check_target in ("output", "both"):
+        if context.hook == HookPoint.POST_RESPONSE and self._check_target in ("output", "both"):
             text = getattr(state, "last_assistant_text", "") or ""
             if text:
                 targets.append(("output", text))
-
-        if self._check_target in ("input", "both"):
+        if context.hook == HookPoint.PRE_MAIN and self._check_target in ("input", "both"):
             msgs = getattr(state, "messages", None) or []
             for m in reversed(msgs):
                 if isinstance(m, dict) and m.get("role") == "user":
                     content = m.get("content", "")
                     if isinstance(content, list):
-                        # Anthropic multi-block content
                         content = " ".join(
                             b.get("text", "") for b in content
                             if isinstance(b, dict) and b.get("type") == "text"
@@ -254,7 +456,6 @@ class ContentGuard(Guard):
             return GuardResult(passed=True, guard_name=self.name)
 
         for target, text in targets:
-            # 사용자 정의 금지 패턴
             for p in self._patterns:
                 m = p.search(text)
                 if m:
@@ -265,7 +466,6 @@ class ContentGuard(Guard):
                         reason=f"금지 패턴 감지 ({target}): {snippet!r}",
                         severity="block",
                     )
-            # PII
             if self._detect_pii:
                 for pii_type, p in self._PII_PATTERNS.items():
                     if p.search(text):
@@ -275,64 +475,183 @@ class ContentGuard(Guard):
                             reason=f"PII 감지 ({target}/{pii_type})",
                             severity="block",
                         )
-
         return GuardResult(passed=True, guard_name=self.name)
 
 
-# 사용 가능한 가드 이름 → 클래스 매핑
-ALL_GUARD_NAMES: list[str] = ["iteration", "cost_budget", "token_budget", "content"]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  entry_points 기반 Guard discovery
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-_GUARD_REGISTRY: dict[str, type[Guard]] = {
-    "iteration": IterationGuard,
-    "cost_budget": CostBudgetGuard,
-    "token_budget": TokenBudgetGuard,
-    "content": ContentGuard,
-}
+_DISCOVERED: dict[str, type[Guard]] = {}
+_DISCOVERY_DONE = False
 
 
-def create_guard_chain(
-    guards: list[str] | None = None,
-    cost_budget_usd: float = 0.0,
-    token_budget: int = 0,
-    content_blocked_patterns: list[str] | None = None,
-    content_detect_pii: bool = False,
-    content_check_target: str = "both",
-) -> GuardChain:
-    """설정 가능한 가드 체인 생성.
+def _discover_guards_once() -> None:
+    """xgen_harness.guards entry_points 에서 Guard 클래스 자동 발견.
 
-    Args:
-        guards: 활성화할 가드 이름 목록. None이면 모든 가드 활성화.
-                사용 가능: "iteration", "cost_budget", "token_budget", "content"
-        cost_budget_usd: CostBudgetGuard 임계값 (0이면 config/기본값 사용)
-        token_budget: TokenBudgetGuard 임계값 (0이면 config/기본값 사용)
-        content_blocked_patterns: ContentGuard 금지 정규식 리스트
-        content_detect_pii: ContentGuard PII 감지 on/off
-        content_check_target: ContentGuard 검사 대상 ('input' | 'output' | 'both')
+    내장 4종도 pyproject.toml 의 이 그룹에 등록되어 있어 같은 경로로 주입됨.
+    외부 패키지가 자기 Guard 를 entry_points 에 선언하면 pip install 만으로 합류.
     """
-    enabled = guards if guards is not None else ALL_GUARD_NAMES
+    global _DISCOVERY_DONE
+    if _DISCOVERY_DONE:
+        return
 
+    try:
+        from importlib.metadata import entry_points
+        # Python 3.10+ API
+        try:
+            eps = entry_points(group="xgen_harness.guards")
+        except TypeError:
+            # Python 3.9 fallback
+            eps = entry_points().get("xgen_harness.guards", [])
+    except Exception as e:
+        logger.debug("[guards] entry_points backend 없음 — 내장 Guard 만 사용: %s", e)
+        _DISCOVERY_DONE = True
+        _DISCOVERED.update({
+            "token_budget": TokenBudgetGuard,
+            "cost_budget": CostBudgetGuard,
+            "iteration": IterationGuard,
+            "content": ContentGuard,
+        })
+        return
+
+    for ep in eps:
+        try:
+            cls = ep.load()
+            if not isinstance(cls, type) or not issubclass(cls, Guard):
+                logger.warning("[guards] %s 는 Guard 서브클래스가 아님 — skip", ep.value)
+                continue
+            key = ep.name
+            if key in _DISCOVERED and _DISCOVERED[key] is not cls:
+                logger.warning("[guards] 중복 이름 %s — 기존 유지, 새 등록 무시", key)
+                continue
+            _DISCOVERED[key] = cls
+            logger.debug("[guards] 발견: %s = %s", key, cls.__name__)
+        except Exception as e:
+            logger.warning("[guards] entry_point %s 로드 실패: %s", ep, e)
+
+    # 내장이 entry_points 에 등록되어 있지 않은 경우 대비 fallback.
+    # editable install / 미빌드 환경에서도 엔진 번들 Guard 가 UI 에 나오도록 보장.
+    # entry_points 가 정상 작동하면 이 경로는 setdefault 로 덮어쓰지 않음.
+    for key, cls in (
+        ("token_budget", TokenBudgetGuard),
+        ("cost_budget", CostBudgetGuard),
+        ("iteration", IterationGuard),
+        ("content", ContentGuard),
+    ):
+        _DISCOVERED.setdefault(key, cls)
+
+    # 엔진 번들 "sample" Guard — 순환 import 회피 위해 late import.
+    # 외부 작업자가 자기 Guard 를 entry_points 로 얹으면 동일 경로로 합류.
+    try:
+        from .guard_precondition import ToolPreconditionGuard as _TPG
+        _DISCOVERED.setdefault("tool_precondition", _TPG)
+    except Exception as e:
+        logger.debug("[guards] tool_precondition 번들 로드 skip: %s", e)
+
+    _DISCOVERY_DONE = True
+
+
+def available_guards() -> dict[str, type[Guard]]:
+    """발견된 모든 Guard 클래스 (name → class)."""
+    _discover_guards_once()
+    return dict(_DISCOVERED)
+
+
+def register_guard(name: str, cls: type[Guard]) -> None:
+    """공개 API — 런타임에 Guard 를 직접 등록 (entry_points 없이).
+
+    테스트 / 일회성 주입용. 정식 확장은 pyproject.toml entry_points 권장.
+    """
+    if not isinstance(cls, type) or not issubclass(cls, Guard):
+        raise TypeError(f"register_guard: {cls} 는 Guard 서브클래스가 아님")
+    _discover_guards_once()
+    _DISCOVERED[name] = cls
+
+
+def build_guard_chain(
+    guard_configs: list[dict[str, Any]],
+) -> GuardChain:
+    """선언형 Guard 설정 리스트로 GuardChain 생성.
+
+    guard_configs 예시:
+        [
+            {"name": "iteration"},
+            {"name": "cost_budget", "params": {"cost_budget_usd": 5.0}},
+            {"name": "content", "params": {"detect_pii": True, "check_target": "output"}},
+        ]
+
+    각 항목:
+      - name (필수): available_guards() 에 등록된 이름
+      - params (선택): Guard.configure() 로 전달될 딕셔너리
+    """
+    _discover_guards_once()
     chain = GuardChain()
-    for name in enabled:
-        if name not in _GUARD_REGISTRY:
-            logger.warning("[Guard] Unknown guard name '%s', skipping", name)
+    for cfg in guard_configs or []:
+        if not isinstance(cfg, dict):
             continue
-
-        if name == "cost_budget":
-            chain.add(CostBudgetGuard(cost_budget_usd=cost_budget_usd))
-        elif name == "token_budget":
-            chain.add(TokenBudgetGuard(token_budget=token_budget))
-        elif name == "content":
-            chain.add(ContentGuard(
-                blocked_patterns=content_blocked_patterns,
-                detect_pii=content_detect_pii,
-                check_target=content_check_target,
-            ))
-        else:
-            chain.add(_GUARD_REGISTRY[name]())
-
+        name = cfg.get("name")
+        if not name or name not in _DISCOVERED:
+            logger.warning("[build_guard_chain] 알 수 없는 Guard 이름 '%s' — skip", name)
+            continue
+        try:
+            inst = _DISCOVERED[name]()
+        except Exception as e:
+            logger.warning("[build_guard_chain] %s 인스턴스화 실패: %s", name, e)
+            continue
+        params = cfg.get("params") or {}
+        if params and hasattr(inst, "configure"):
+            try:
+                inst.configure(params)
+            except Exception as e:
+                logger.warning("[build_guard_chain] %s.configure 실패: %s", name, e)
+        chain.add(inst)
     return chain
 
 
-def create_default_guard_chain() -> GuardChain:
-    """기본 가드 체인 생성 (하위 호환)"""
-    return create_guard_chain()
+def describe_guards() -> list[dict[str, Any]]:
+    """UI 용 — 모든 Guard 의 메타데이터 + 파라미터 스키마.
+
+    v0.17.0 — description 은 **클래스 docstring 첫 문단** 에서 자동 추출.
+    한국어 리터럴을 클래스 property 로 박지 않는다 (확장성·연동성 원칙).
+
+    stage_config.py 의 `guards_available` 동적 옵션 소스가 이 함수를 호출.
+    반환 포맷:
+        [
+            {
+                "name": "...",
+                "description": "...",          # cls docstring 첫 문단
+                "hook_points": ["..."],
+                "param_schema": [FieldSchema.to_dict(), ...],
+            },
+            ...
+        ]
+    """
+    import inspect as _inspect
+
+    _discover_guards_once()
+    out: list[dict[str, Any]] = []
+    for name, cls in _DISCOVERED.items():
+        try:
+            # hook_points — 인스턴스 속성 (default 생성자 동작 시만 조회).
+            try:
+                inst = cls()
+                hooks = [hp.value for hp in inst.hook_points]
+            except Exception:
+                hooks = [HookPoint.LOOP_BOUNDARY.value]
+
+            # description 은 docstring 파싱 — Guard 클래스가 한국어 리터럴을
+            # property 로 들고 있지 않아도 UI 가 설명을 받을 수 있게.
+            doc = _inspect.getdoc(cls) or ""
+            desc = doc.split("\n\n", 1)[0].strip() if doc else ""
+
+            schema = [f.to_dict() for f in cls.param_schema()]
+            out.append({
+                "name": name,
+                "description": desc,
+                "hook_points": hooks,
+                "param_schema": schema,
+            })
+        except Exception as e:
+            logger.warning("[describe_guards] %s 기술 실패: %s", name, e)
+    return out

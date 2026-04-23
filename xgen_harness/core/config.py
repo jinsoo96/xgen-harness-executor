@@ -17,6 +17,9 @@ _cfg_logger = logging.getLogger("harness.core.config")
 
 # 전체 11 스테이지 (기본 전부 활성, s00_harness 는 별도 통제탑)
 # v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 본문 LLM 호출 소유.
+# v0.17.0: 이 리스트는 "원래부터 있던 기본 Stage" 화이트리스트. 새 Stage
+# (예: s05_policy Policy Gate) 는 여기 박지 않고 registry 에 등록만 —
+# `get_active_stage_ids()` 가 registry 와 병합해서 런타임 목록 생성.
 ALL_STAGES = [
     "s01_input",
     "s02_history",
@@ -134,8 +137,31 @@ class HarnessConfig:
             self.harness_mode = "autonomous" if self.use_planner else "off"
 
     def get_active_stage_ids(self) -> list[str]:
-        """활성 스테이지 ID 목록"""
-        return [s for s in ALL_STAGES if s not in self.disabled_stages]
+        """활성 스테이지 ID 목록.
+
+        v0.17.0 — `ALL_STAGES` 하드 리스트 + registry 병합. registry 에 등록된
+        Stage 클래스가 `default_active` 프로퍼티로 True 를 반환하면 기본 활성
+        취급. `disabled_stages` 는 양쪽 모두에 적용.
+        """
+        ids = [s for s in ALL_STAGES if s not in self.disabled_stages]
+
+        # registry 에 있지만 ALL_STAGES 에 없는 Stage 중 default_active=True 만 합류.
+        try:
+            from .registry import _get_default_registry
+            reg = _get_default_registry()
+            for sid in reg.list_stages():
+                if sid in ids or sid in self.disabled_stages:
+                    continue
+                try:
+                    cls = reg.get(sid, "default")
+                    if getattr(cls, "default_active", True):
+                        ids.append(sid)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return ids
 
     def is_stage_active(self, stage_id: str) -> bool:
         return stage_id not in self.disabled_stages

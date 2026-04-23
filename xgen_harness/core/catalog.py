@@ -187,7 +187,6 @@ def _collect_stages(config) -> list[dict[str, Any]]:
         stages.append({
             "stage_id": entry["stage_id"],
             "display_name": entry.get("display_name", ""),
-            "display_name_ko": entry.get("display_name_ko", entry.get("display_name", "")),
             "phase": entry.get("phase", ""),
             "order": entry.get("order", 0),
             "required": entry.get("required", False),
@@ -201,13 +200,14 @@ def _collect_stages(config) -> list[dict[str, Any]]:
             # Planner 가 "이 Stage 에 어떤 impl 들이 있고 각각 뭘 하는지" 알고 고름.
             # v0.15.2 — 각 Strategy 도 slot / source_file 을 포함.
             "strategies": entry.get("strategies", []),
-            "description_ko": cfg.get("description_ko", ""),
             # v0.12.0 self-describing — Stage 저자가 직접 선언한 사용/제외 기준.
+            # v0.17.0 — machine meta 만 카탈로그에 실음. description_ko/display_name_ko
+            # /behavior 같은 UI 전용 필드는 제거 (LLM 안 읽음 + 토큰 낭비). UI 는 별도
+            # 엔드포인트(get_all_stage_configs) 경로로 받는다.
             "when_to_use": raw_cfg.get("when_to_use", ""),
             "when_to_skip": raw_cfg.get("when_to_skip", ""),
             "cost_hint": raw_cfg.get("cost_hint", ""),
             "fields": _clean_fields(cfg.get("fields", [])),
-            "behavior": cfg.get("behavior", []),
             # v0.15.0 재귀적 자율주행 — 파라미터로 전달되는 **도구 슬롯** 설명을
             # Stage 별로 자기서술 필드(tool_slots)로 뽑아 Planner 에게 노출.
             # Planner 가 이걸 보고 "이 요청엔 rag_collections=[X] 를 쓰자" 결정.
@@ -219,26 +219,33 @@ def _collect_stages(config) -> list[dict[str, Any]]:
 def _clean_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Planner 프롬프트용 필드 슬림화.
 
-    options_source 가 달린 동적 필드는 options 가 비어있을 수 있다. Planner 는
-    기본값 + 타입 + 설명만 보면 충분. 실제 options 해석은 이식/호스트 측 OptionsRegistry
-    에서 한다. 카탈로그 안에 그 값을 밀어넣지 않아야 토큰을 아낀다.
+    v0.17.0 — label/description(한국어 UI 리터럴) 은 싣지 않음. Planner 는 id/type/
+    default/제약(options/min/max) 만 보면 파라미터 값 결정 가능. UI 전용 자연어는
+    UI 경로(get_all_stage_configs)에서만 소비.
+
+    options_source 가 달린 동적 필드는 options 가 비어있을 수 있다. 실제 options
+    해석은 이식/호스트 측 OptionsRegistry 에서 한다 — 카탈로그 안에 밀어넣지
+    않아야 토큰 절약.
     """
     cleaned = []
     for f in fields or []:
         if not isinstance(f, dict):
             continue
-        cleaned.append({
+        entry: dict[str, Any] = {
             "id": f.get("id", ""),
             "type": f.get("type", ""),
-            "label": f.get("label", ""),
             "default": f.get("default"),
-            "description": f.get("description", ""),
-            # options 는 enum 타입일 때만 유지 (options_source 원격 해석은 제외)
-            **({"options": f["options"]}
-               if isinstance(f.get("options"), list) and f["options"] else {}),
-            **({"min": f["min"]} if "min" in f else {}),
-            **({"max": f["max"]} if "max" in f else {}),
-        })
+        }
+        # options 는 enum 타입일 때만 유지 (options_source 원격 해석은 제외)
+        if isinstance(f.get("options"), list) and f["options"]:
+            entry["options"] = f["options"]
+        if "min" in f:
+            entry["min"] = f["min"]
+        if "max" in f:
+            entry["max"] = f["max"]
+        if f.get("required"):
+            entry["required"] = True
+        cleaned.append(entry)
     return cleaned
 
 

@@ -21,7 +21,7 @@ pip install xgen-harness
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.
 > 12 Stage 가 환경 슬롯 (capability/도구/리소스/파라미터를 LLM 에 노출), 사용자는 **무엇을** 할지만 선언, 하네스가 **어떻게** 자동 조립.
 
-**v0.16.6 기준** — Pipeline Role 체계 (Stage 이름 리터럴 0) + Planner 통제탑 (Auto/Selected/Off 3 모드) + 자동 오케스트레이터 (linear/iterative/plan_execute/react/dag) + Strategy × Capability 3층 구조.
+**v0.17.0 기준** — Pipeline Role 체계 (Stage 이름 리터럴 0) + Planner 통제탑 (Auto/Selected/Off 3 모드) + 자동 오케스트레이터 (linear/iterative/plan_execute/react/dag) + Strategy × Capability 3층 구조 + **Policy Gate (선언형 Guard 체인 × 4 훅 포인트)**.
 
 ---
 
@@ -82,10 +82,13 @@ config = HarnessConfig(
 | # | Stage | 하는 일 | 주요 설정 | Strategy |
 |---|---|---|---|---|
 | 5 | **s05_strategy** | 각 Stage 의 Strategy 결정 | `pinned_strategies` (Selected) | `default` * / `pinned_first` / `llm_decide` / `cascade` |
+| 5 | **s05_policy** ◆ | 선언형 Guard 체인을 4 훅 포인트에 집행 (v0.17.0) | `guards: [{name, params}]` | — (Guard 조합) |
 | 6 | **s06_context** | RAG/온톨로지/DB 검색 → 컨텍스트 주입 | `rag_collections`, `rag_top_k`, `rag_ingestion_mode`, `ontology_collections`, `db_connections` | `microcompact` * / `context_collapse` / `autocompact_llm` / `cascade` / `progressive_3level` / `none` |
 | 7 | **s07_act** ★ | 본문 LLM 호출 (Planner 가 직전 dispatch) + tool_use multi-turn | `max_tool_rounds`, `force_tool_use` | `default` * / `react` |
 | 8 | **s08_judge** | 응답 품질 평가 (0~1 점수) | `validation_threshold`, `judge_model` | `llm_judge` * / `rule_based` / `none` |
 | 9 | **s09_decide** (필수) | judge 결과 보고 loop_decision 설정 | — | `default` * / `always_complete` |
+
+`◆` = Pipeline 이 `role="policy_gate"` 로 찾아 `pre_main` / `pre_tool` / `post_response` / `loop_boundary` 4 훅에 호출. 일반 loop 순서는 bypass.
 
 ### 최종 그룹 (egress, 1 회)
 
@@ -148,7 +151,7 @@ register_orchestrator("custom_swarm", description="My swarm runner", dispatch_ke
 
 ---
 
-## 확장 — 외부 패키지가 끼워넣는 7 지점
+## 확장 — 외부 패키지가 끼워넣는 8 지점
 
 | 지점 | entry_points 그룹 | 용도 |
 |---|---|---|
@@ -157,14 +160,90 @@ register_orchestrator("custom_swarm", description="My swarm runner", dispatch_ke
 | **Capability** | `xgen_harness.capabilities` | 선언적 도구 wiring (예: `retrieval.web_search`) |
 | **Provider** | `xgen_harness.providers` | 새 LLM provider |
 | **Orchestrator** | `xgen_harness.orchestrators` | 새 hint (위) |
-| **Tool** | `xgen_harness.tools` | 단일 도구 |
+| **Tool** | `xgen_harness.tool_sources` | 단일 도구 |
 | **NodeAdapter** | `xgen_harness.node_adapters` | 캔버스 노드 → Stage 어댑터 |
+| **Guard** ✨ | `xgen_harness.guards` | Policy Gate 에 꽂히는 정책 Guard (v0.17.0) |
 
 ```python
 # pyproject.toml
 [project.entry-points."xgen_harness.strategies"]
 my_compactor = "my_pkg.compactor:MyCompactor"
 ```
+
+---
+
+## Policy Gate (v0.17.0) — 선언형 Guard 체인
+
+"submit_result 호출 전 iterative_document_search 를 최소 1회 불러야 한다" 같은 **도구 호출 선행조건 / 입출력 정책 / 예산 제한** 을 **코드 수정 없이 데이터로** 선언합니다.
+
+```python
+config = HarnessConfig(
+    stage_params={
+        "s05_policy": {
+            "guards": [
+                {"name": "iteration"},
+                {"name": "cost_budget", "params": {"cost_budget_usd": 5.0}},
+                {"name": "tool_precondition", "params": {
+                    "rules": [{
+                        "tool": "submit_result",
+                        "require_prior": [{"tool": "iterative_document_search", "min_count": 1}],
+                        "when": {"path": "fileNo[*].status", "equals": "01"},
+                        "message": "합격 판정 전 QA 기준을 iterative_document_search 로 조회하세요.",
+                    }]
+                }},
+            ]
+        }
+    }
+)
+```
+
+### 4 훅 포인트
+
+| 훅 | 호출 시점 | Guard 예시 |
+|---|---|---|
+| `pre_main` | 본문 LLM 호출 직전 | ContentGuard (입력 검사) |
+| `pre_tool` | 도구 실행 직전 (pending_tool_calls 각각) | ToolPreconditionGuard |
+| `post_response` | LLM 응답 직후 | ContentGuard (출력 검사) |
+| `loop_boundary` | 루프 경계 (iter 끝) | IterationGuard / CostBudgetGuard / TokenBudgetGuard |
+
+Guard 는 자기 `hook_points` 집합을 선언 → Pipeline 이 훅별 필터링 후 실행. 차단 시:
+- **pre_tool**: 해당 도구를 pending 에서 제거 + 가짜 `tool_result(is_error=True)` 주입 → LLM 이 자체 교정
+- **기타 3 훅**: `state.policy_block_reason` 설정 + `loop_decision="complete"`
+
+### 내장 5 Guard
+
+- `iteration` — config.max_iterations 도달 시 종료
+- `token_budget` — 누적 토큰 95% 초과 시 종료
+- `cost_budget` — 누적 비용 초과 시 종료
+- `content` — 정규식/PII 감지 (입력/출력)
+- `tool_precondition` — 도구 호출 선행조건 (규칙 기반, 범용)
+
+### 외부 Guard 추가 (entry_points 한 줄)
+
+```toml
+# pyproject.toml
+[project.entry-points."xgen_harness.guards"]
+my_guard = "my_pkg.guards:MyGuard"
+```
+
+```python
+from xgen_harness import Guard, HookPoint, FieldSchema, GuardResult, HookContext
+
+class MyGuard(Guard):
+    """한 줄 설명 — UI 드롭다운 설명으로 자동 파싱."""
+    @property
+    def name(self): return "my_guard"
+    @property
+    def hook_points(self): return {HookPoint.PRE_TOOL}
+    @classmethod
+    def param_schema(cls):
+        return [FieldSchema(id="threshold", type="number", default=0)]
+    def configure(self, config): self._threshold = config.get("threshold", 0)
+    def check(self, state, context: HookContext) -> GuardResult:
+        ...
+```
+
+`pip install my-pkg` 한 번이면 UI Guard 드롭다운에 자동 합류. 엔진·이식·프론트 코드 수정 불필요.
 
 ---
 

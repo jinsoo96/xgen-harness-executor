@@ -8,6 +8,7 @@
 """
 
 import logging
+from typing import Optional
 
 _sc_logger = logging.getLogger("harness.core.stage_config")
 
@@ -685,6 +686,10 @@ STAGE_CONFIGS: dict[str, dict] = {
             "점수 미달 → s09_decide가 retry 결정",
         ],
     },
+    # s05_policy: dict 박제 대신 PolicyGateStage.describe_config() self-describing.
+    # get_stage_config() 가 Stage 의 describe_config() 를 먼저 조회 — 새 Stage 는
+    # 중앙 dict 수정 없이 자체 선언만으로 UI 에 합류.
+
     "s09_decide": {
         "description_ko": "루프를 계속할지 완료할지 판단합니다.",
         "when_to_use": "항상 (필수). 에이전틱 루프 종료 판정.",
@@ -838,23 +843,130 @@ def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
     return cfg
 
 
+def _resolve_stage_self_describe(stage_id: str) -> Optional[dict]:
+    """Stage 클래스의 self-describing 설정 조회 (v0.17.0 machine-only 우선).
+
+    조회 순서:
+      1. Stage 의 class attribute (when_to_use/when_to_skip/cost_hint) 와
+         param_schema() 로 자동 조립. 이게 **새 표준 모델** — LLM 이 읽는 것만 코드에.
+      2. 레거시 describe_config() dict 반환 (하위호환, 곧 제거 예정).
+      3. None — 중앙 STAGE_CONFIGS dict 폴백.
+    """
+    try:
+        from .registry import _get_default_registry
+        reg = _get_default_registry()
+        cls = reg.get(stage_id, "default")
+    except Exception:
+        return None
+
+    # 1. Machine-only 모델 — class attribute + param_schema() 자동 조립
+    cfg = _compose_from_class_attrs(cls)
+    if cfg is not None:
+        return cfg
+
+    # 2. 레거시 describe_config() (하위호환)
+    try:
+        legacy = cls.describe_config() if hasattr(cls, "describe_config") else None
+    except Exception:
+        legacy = None
+    return legacy if isinstance(legacy, dict) else None
+
+
+def _compose_from_class_attrs(cls) -> Optional[dict]:
+    """v0.17.0 — Stage 의 class attribute + param_schema() 를 UI 용 dict 로 조립.
+
+    Stage 가 `when_to_use` / `when_to_skip` / `cost_hint` 중 하나라도 명시적으로
+    override 했거나 `param_schema` 클래스메서드를 override 했으면 새 모델로 판단.
+    한국어 리터럴(description_ko/behavior/icon) 은 엔진에 없음 — UI 가 필요하면
+    docstring 첫 줄을 보조 설명으로 사용.
+    """
+    # 새 모델 판별 — 기본값 외에 선언이 있는지
+    has_machine_meta = (
+        bool(getattr(cls, "when_to_use", "")) or
+        bool(getattr(cls, "when_to_skip", "")) or
+        (hasattr(cls, "param_schema") and callable(getattr(cls, "param_schema")) and
+         cls.param_schema.__qualname__.split(".")[0] != "Stage")  # Stage 기본 구현 아님
+    )
+    if not has_machine_meta:
+        return None
+
+    # param_schema() → UI fields
+    fields: list[dict] = []
+    try:
+        schema = cls.param_schema() if hasattr(cls, "param_schema") else []
+        for f in schema or []:
+            if hasattr(f, "to_dict"):
+                fields.append(f.to_dict())
+            elif isinstance(f, dict):
+                fields.append(f)
+    except Exception as e:
+        _sc_logger.debug("[stage_config] %s.param_schema() 호출 실패: %s", cls.__name__, e)
+
+    # docstring 첫 문단 — 인간 UI 보조 설명 (선택). 없어도 Stage 작동.
+    doc = (cls.__doc__ or "").strip()
+    if doc:
+        first_para = doc.split("\n\n", 1)[0].strip()
+    else:
+        first_para = ""
+
+    return {
+        # 인간 UI 보조 — Stage 가 남기는 docstring 기반. 없으면 빈 문자열.
+        "description_ko": first_para,
+        "description_en": first_para,  # i18n 없음. 필요 시 추후 gettext.
+        # 여기부터는 LLM 도 읽는 machine meta
+        "when_to_use": getattr(cls, "when_to_use", "") or "",
+        "when_to_skip": getattr(cls, "when_to_skip", "") or "",
+        "cost_hint": getattr(cls, "cost_hint", "medium") or "medium",
+        "fields": fields,
+        "behavior": [],  # 엔진에 저장 안 함 — UI 필요하면 docstring 참조
+    }
+
+
 def get_stage_config(stage_id: str) -> dict:
     """스테이지 설정 스키마 반환 — provider/model 옵션은 레지스트리에서 동적 주입.
 
     구 stage_id 가 들어와도 canonical 로 해석 (v0.11.0 alias 하위호환).
+    v0.17.0 — Stage.describe_config() 가 dict 를 반환하면 우선 사용 (self-describing).
     """
     sid = canonical_stage_id(stage_id)
-    cfg = STAGE_CONFIGS.get(sid, {})
+    cfg = _resolve_stage_self_describe(sid) or STAGE_CONFIGS.get(sid, {})
     cfg = _inject_dynamic_options(cfg)
     cfg = _inject_stage_meta(sid, cfg)
     return cfg
 
 
 def get_all_stage_configs() -> dict:
-    """전체 스테이지 설정 스키마 — 각 스테이지에 dynamic options + meta 자동 주입."""
+    """전체 스테이지 설정 스키마 — 각 스테이지에 dynamic options + meta 자동 주입.
+
+    v0.17.0 — STAGE_CONFIGS dict 에 없어도 registry 에 등록된 Stage 가
+    `describe_config()` 를 가지고 있으면 결과에 포함.
+    """
     out: dict = {}
+    seen: set[str] = set()
+
+    # 1. 중앙 dict
     for sid, base in STAGE_CONFIGS.items():
-        cfg = _inject_dynamic_options(base)
+        self_described = _resolve_stage_self_describe(sid)
+        cfg = self_described if self_described is not None else base
+        cfg = _inject_dynamic_options(cfg)
         cfg = _inject_stage_meta(sid, cfg)
         out[sid] = cfg
+        seen.add(sid)
+
+    # 2. registry 에만 있고 self-describe 하는 Stage 들 병합 — dict 박제 없이 UI 합류.
+    try:
+        from .registry import _get_default_registry
+        reg = _get_default_registry()
+        for sid in reg.list_stages():
+            if sid in seen:
+                continue
+            self_described = _resolve_stage_self_describe(sid)
+            if self_described is None:
+                continue
+            cfg = _inject_dynamic_options(self_described)
+            cfg = _inject_stage_meta(sid, cfg)
+            out[sid] = cfg
+    except Exception as e:
+        _sc_logger.debug("[stage_config] registry self-describe 병합 skip: %s", e)
+
     return out

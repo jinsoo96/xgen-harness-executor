@@ -1,11 +1,15 @@
 """
-Decide strategies — s10_decide 용 Strategy 구현체
+Decide strategies — s09_decide 용 Strategy 구현체
 
-Stage 는 이 Strategy 에 판단을 전적으로 위임한다 — Stage 내부에 분기 로직 없음.
+v0.17.0 책임 분리:
+  - Guard 호출은 전부 s05_policy Stage (Policy Gate) 로 이관.
+  - 본 모듈은 "현 state 로 루프를 계속/완료/재시도" 판단만 수행.
+  - s05_policy 가 block 을 걸면 state.loop_decision 을 미리 설정하므로
+    ThresholdDecide 는 그 신호를 존중하여 즉시 complete.
 
 구현체:
-  ThresholdDecide: Guard 체인 + 도구 호출/점수/응답 기반 판단 (기본)
-  AlwaysPassDecide: 항상 complete (루프 없음, 1회 실행)
+  ThresholdDecide — 도구 호출/검증 점수/텍스트 응답 기반 판단 (기본)
+  AlwaysPassDecide — 항상 complete (루프 없음, 1회 실행)
 """
 
 import logging
@@ -15,7 +19,6 @@ from ..interfaces import DecideStrategy
 
 logger = logging.getLogger("harness.strategy.decide")
 
-# 루프 판단 상수 — s10_decide 가 이 모듈에서 import
 LOOP_CONTINUE = "continue"
 LOOP_COMPLETE = "complete"
 LOOP_RETRY = "retry"
@@ -24,7 +27,12 @@ LOOP_ESCALATE = "escalate"
 
 
 class ThresholdDecide(DecideStrategy):
-    """Guard 체인 + 도구/점수/응답 기반 루프 판단."""
+    """도구 호출 대기 / 검증 점수 / 텍스트 응답 기반 루프 판단.
+
+    v0.17.0 — Guard 체인 호출 제거. Policy Gate (s05_policy) 가 이미 loop_boundary
+    훅에서 Guard 를 실행해 state.policy_block_reason / loop_decision 을 설정.
+    본 Strategy 는 순수 루프 판단만 담당.
+    """
 
     @property
     def name(self) -> str:
@@ -32,34 +40,17 @@ class ThresholdDecide(DecideStrategy):
 
     @property
     def description(self) -> str:
-        return "Guard 체인 + 도구 호출 + 검증 점수 기반 판단"
+        return "도구 호출 / 검증 점수 / 응답 기반 루프 판단 (Policy Gate 결과 존중)"
 
     async def decide(self, state: Any, params: dict[str, Any]) -> dict[str, Any]:
-        from .guard import create_guard_chain
-
-        guard_chain = create_guard_chain(
-            guards=params.get("guards"),
-            cost_budget_usd=float(params.get("cost_budget_usd", 0.0) or 0.0),
-            token_budget=int(params.get("token_budget", 0) or 0),
-            content_blocked_patterns=params.get("content_blocked_patterns"),
-            content_detect_pii=bool(params.get("content_detect_pii", False)),
-            content_check_target=str(params.get("content_check_target", "both")),
-        )
-        guard_results = guard_chain.check_all(state)
-        blocked = [r for r in guard_results if not r.passed and r.severity == "block"]
-        warnings = [r for r in guard_results if r.passed and r.severity == "warn"]
-
-        if blocked:
-            reason = f"Guard 차단: {blocked[0].guard_name} — {blocked[0].reason}"
-            logger.warning("[ThresholdDecide] %s", reason)
+        # Policy Gate (s05_policy) 가 이미 block 을 걸어놨으면 그 결정을 존중.
+        policy_reason = getattr(state, "policy_block_reason", None)
+        if policy_reason:
             return {
                 "decision": LOOP_COMPLETE,
-                "reason": reason,
-                "guard": blocked[0].guard_name,
+                "reason": f"Policy Gate 차단: {policy_reason}",
+                "guard": getattr(state, "policy_block_guard", "") or "",
             }
-
-        for w in warnings:
-            logger.info("[ThresholdDecide] Guard 경고: %s — %s", w.guard_name, w.reason)
 
         # 도구 호출 대기 → continue
         pending = getattr(state, "pending_tool_calls", None) or []

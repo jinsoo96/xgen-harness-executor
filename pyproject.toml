@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.16.6"
-description = "XGEN Harness — Pipeline Role 체계 (Stage 이름 리터럴 0): orchestrator_planner / main_actor / scorer 선언형"
+version = "0.17.0"
+description = "XGEN Harness — Policy Gate (v0.17): 선언형 Guard 체인 + 4 훅 포인트 + entry_points Guard 플러그인 + Stage machine-only 모델"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
@@ -67,6 +67,15 @@ Repository = "https://github.com/jinsoo96/xgen-harness-executor"
 
 [project.entry-points."xgen_harness.evaluation_criteria"]
 # 예: korean_quality = "my_pkg.criteria:get_spec"
+
+# Policy Gate (v0.17.0) — 도구 호출/입력/출력/루프 경계 Guard.
+# 내장 5종을 이 그룹에 등록 — 외부 기여자도 같은 경로로 추가하면 자동 합류.
+[project.entry-points."xgen_harness.guards"]
+token_budget      = "xgen_harness.stages.strategies.guard:TokenBudgetGuard"
+cost_budget       = "xgen_harness.stages.strategies.guard:CostBudgetGuard"
+iteration         = "xgen_harness.stages.strategies.guard:IterationGuard"
+content           = "xgen_harness.stages.strategies.guard:ContentGuard"
+tool_precondition = "xgen_harness.stages.strategies.guard_precondition:ToolPreconditionGuard"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

@@ -130,6 +130,15 @@ class PipelineState:
     # --- 메타데이터 ---
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # --- Policy Gate (v0.17.0) ---
+    # 지금까지 호출된 tool_name 이력. s07_act 가 실행 직전에 append.
+    # ToolPreconditionGuard 가 "submit_result 호출 전 iterative_document_search 가
+    # N회 이상 호출됐는가" 같은 규칙을 평가할 때 참조.
+    tool_call_history: list[dict[str, Any]] = field(default_factory=list)
+    # Policy Gate 가 차단한 경우 이유/Guard 이름. ThresholdDecide 가 이 신호로 loop 종료.
+    policy_block_reason: str = ""
+    policy_block_guard: str = ""
+
     # --- Progressive Disclosure 저장소 ---
     # 큰 리소스의 원본을 보존하면서 messages 에는 preview 만 노출하는 패턴의 백업 저장소.
     # Level 1 (preview in messages) → Level 2 (fetch_pd(kind, id) 빌트인으로 원본 조회) → Level 3 (본문 삽입).

@@ -185,6 +185,15 @@ class ExecuteStage(Stage):
     ) -> tuple[dict[str, Any], int]:
         """단일 도구 실행 + 결과 축약 + 이벤트 발행. (result_info, chars) 반환."""
         try:
+            # v0.17.0 — Policy Gate / Guard 가 참조할 호출 이력 기록 (실행 직전).
+            # 타이밍은 실행 시도 시점. 성공 여부는 별도 (is_error=True 로 뒤에 기록).
+            state.tool_call_history.append({
+                "tool_name": tool_name,
+                "tool_use_id": tool_use_id,
+                "tool_input": tool_input,
+                "iteration": state.loop_iteration,
+            })
+
             # Capability 기반 파라미터 자동 보강 — tool_name이 capability에 바인딩됐으면
             # ParameterResolver로 누락된 필수 파라미터를 context에서 채움
             tool_input = await self._enrich_with_capability(tool_name, tool_input, state)

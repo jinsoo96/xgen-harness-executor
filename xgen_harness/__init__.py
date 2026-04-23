@@ -67,6 +67,21 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 from .tools import ToolSource, register_tool_source, get_tool_sources
+# v0.17.0 — Policy Gate: ABC/인프라만 노출. 구체 Guard 클래스(TokenBudgetGuard,
+# ToolPreconditionGuard 등)는 top-level 에 두지 않는다 — 외부 코드가 이름에
+# 결합되지 않도록. 구체 Guard 는 entry_points 로만 발견·사용.
+from .stages.strategies.guard import (
+    Guard,
+    GuardResult,
+    GuardChain,
+    HookPoint,
+    HookContext,
+    FieldSchema as GuardFieldSchema,
+    available_guards,
+    register_guard,
+    describe_guards,
+    build_guard_chain,
+)
 from .adapters.resource_registry import (
     register_xgen_node_resolver,
     get_xgen_node_resolver,
@@ -116,7 +131,7 @@ from .compile import (
     get_gallery,
 )
 
-__version__ = "0.13.0"
+__version__ = "0.17.0"
 
 __all__ = [
     # Core

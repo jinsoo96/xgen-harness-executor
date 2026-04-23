@@ -129,6 +129,8 @@ class Pipeline:
             #   plan_execute : 첫 Plan 고수. replan 생략, 반복은 함
             #   react / dag  : 엔진 no-op (이식측 dispatcher 위임)
             s00_stage = self._find_loop_s00()
+            # v0.17.0 — Policy Gate (role="policy_gate") 인스턴스. 없으면 훅 no-op.
+            policy_stage = self._find_role_stage("policy_gate")
             orch_hint = (state.metadata.get("orchestrator_hint") or "").strip().lower()
             logger.info(
                 "[Pipeline] Phase B: Agentic Loop (max %d iterations, orchestrator_hint=%r)",
@@ -153,11 +155,30 @@ class Pipeline:
                         break
 
                 for stage in self.loop_stages:
+                    # v0.17.0 — Policy Gate 는 loop 순서에서 skip. Pipeline 이 3 훅에 별도 호출.
+                    if stage.role == "policy_gate":
+                        await self._emit_bypass(stage, state, reason="Policy Gate 는 훅 경로로 호출")
+                        continue
+
                     # v0.16.6 — "main_actor" role Stage 직전에 Planner 의 main_call 주입.
                     # 이름 리터럴("s07_act") 대신 Stage.role 로 검색 → 외부 Stage 가
                     # 같은 role 로 바꿔 끼워도 자동 인식.
-                    if stage.role == "main_actor" and s00_stage is not None:
-                        await self._invoke_main_call(state, s00_stage)
+                    if stage.role == "main_actor":
+                        # v0.17.0 — pre_main 훅 (입력/Plan 정책)
+                        await self._invoke_policy_gate(state, policy_stage, "pre_main")
+                        if state.policy_block_reason:
+                            state.loop_decision = "complete"
+                            break
+
+                        if s00_stage is not None:
+                            await self._invoke_main_call(state, s00_stage)
+
+                        # v0.17.0 — main_call 직후 pre_tool / post_response 훅
+                        hook = "pre_tool" if state.pending_tool_calls else "post_response"
+                        await self._invoke_policy_gate(state, policy_stage, hook)
+                        if state.policy_block_reason:
+                            state.loop_decision = "complete"
+                            break
 
                     if self._planner_skips(stage, state):
                         await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
@@ -170,6 +191,9 @@ class Pipeline:
                     # Decide 스테이지가 loop_decision을 설정
                     if state.loop_decision in ("complete", "abort"):
                         break
+
+                # v0.17.0 — iter 말미 loop_boundary 훅 (예산·반복 등 누적 정책)
+                await self._invoke_policy_gate(state, policy_stage, "loop_boundary")
 
                 # v0.15.3 — linear hint: 1회만 돌고 강제 종료. replan/iteration 전부 skip.
                 if orch_hint == "linear" and state.loop_decision == "continue":
@@ -445,10 +469,31 @@ class Pipeline:
         Phase B iter 의 replan 은 같은 인스턴스를 재호출해야 Plan 이 누적·갱신.
         Planner 비활성이면 None 반환. 이름 리터럴 없이 role 로만 검색.
         """
+        return self._find_role_stage("orchestrator_planner")
+
+    def _find_role_stage(self, role: str) -> Optional[Stage]:
+        """v0.17.0 — role 이름으로 Stage 인스턴스 조회 (범용)."""
         for stage in self._all_stages:
-            if stage.role == "orchestrator_planner":
+            if stage.role == role:
                 return stage
         return None
+
+    async def _invoke_policy_gate(
+        self,
+        state: "PipelineState",
+        policy_stage: Optional[Stage],
+        hook_name: str,
+    ) -> None:
+        """v0.17.0 — Policy Gate Stage 의 invoke_hook 호출.
+
+        Stage 가 없거나 예외가 나도 Pipeline 실행은 계속 (정책 검사 실패가 본 흐름을 막지 않음).
+        """
+        if policy_stage is None or not hasattr(policy_stage, "invoke_hook"):
+            return
+        try:
+            await policy_stage.invoke_hook(state, hook_name)
+        except Exception as e:
+            logger.warning("[Pipeline] Policy gate %s 호출 실패: %s", hook_name, e)
 
     def _get_step_number(self, stage: Stage) -> int:
         for i, s in enumerate(self._all_stages, 1):
