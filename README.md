@@ -21,13 +21,14 @@ pip install xgen-harness
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.  
 > 13 Stage 가 환경 슬롯(capability/도구/리소스/파라미터를 LLM 에 노출), 사용자는 **무엇을** 할지만 선언, 하네스가 **어떻게** 자동 조립.
 
-**v0.20.0 기준**
+**v0.21.0 기준**
 1. **Stage = 환경 슬롯** + **LLM 자율 선택** (Planner 통제탑 · Auto/Selected/Off 3 모드)
 2. **자동 오케스트레이터** (linear/iterative/plan_execute/react/dag)
 3. **Strategy × Capability 3층 구조**
 4. **Policy Gate** (v0.17.0) — 선언형 Guard 체인 × 4 훅 포인트
 5. **양방향 MCP** (v0.18.0) — 하네스 워크플로우 → wheel → **MCP stdio 서버 자동 말아올리기**, 마켓·설치된 MCP 를 s04_tool 카탈로그에 자동 주입
 6. **Sandbox Verifier** (v0.20.0) — 발행 전 `initialize + tools/list + rlimit` **격리 게이트**
+7. **NOM IR 허브** (v0.21.0) — Stage/Strategy/Tool/MCP/Plugin 을 단일 IR 로 통합. `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환. `compile_nom_graph(graph, ...)` one-shot
 
 ---
 
@@ -359,6 +360,77 @@ class MCPHTTPVerifier:
 
 ---
 
+## NOM IR 허브 (v0.21.0) — 하나의 노드 그래프, 세 가지 출력
+
+Stage / Strategy / Tool / MCP 서버 / 외부 플러그인 노드 — 모두 **같은 IR (`NOMGraph`)** 로 표현하고, **세 가지 변환** 으로 wheel / MCP / Sandbox 에 재사용.
+
+```python
+from xgen_harness import (
+    NOMGraph, NOMNode, NOMKind, NOMParam,
+    compile_nom_graph,
+)
+
+graph = NOMGraph(nodes=[
+    NOMNode(
+        id="x.tools.search", kind=NOMKind.TOOL,
+        description="웹 검색", entry="my_pkg.tools:search",
+        inputs=[NOMParam(name="q", type="string", required=True)],
+    ),
+    NOMNode(
+        id="x.tools.fetch", kind=NOMKind.TOOL,
+        description="URL 페치", entry="my_pkg.tools:fetch",
+        inputs=[NOMParam(name="url", type="string", required=True)],
+    ),
+])
+
+# 1) MCP 서버 카탈로그로 — Claude Desktop, Cursor 호환
+schema = graph.to_mcp_schema()
+# [{"name": "search", "description": "웹 검색", "inputSchema": {...}},
+#  {"name": "fetch", ...}]
+
+# 2) 격리 실행 payload 로 — Sandbox.run_nom_tool 의 입력
+payload = graph.to_sandbox_payload("x.tools.search", {"q": "hello"})
+# {"entry": "my_pkg.tools:search", "input": {...}, "metadata": {...}}
+
+# 3) wheel 배포 — 기존 compile_workflow 와 같은 build 파이프라인 재사용
+result = compile_nom_graph(graph, gallery_name="my_tools", gallery_version="0.1.0")
+# result.wheel_path → pip install 가능
+```
+
+### Tool Synthesis 와의 통합
+
+LLM 이 런타임에 생성한 도구를 바로 wheel 로:
+
+```python
+from xgen_harness.tools.synthesis import (
+    SynthesizedTool, synthesize_and_register,
+    synthesized_tools_as_nom_graph,
+)
+from xgen_harness import compile_nom_graph
+
+# synthesize_and_register(...) 로 여러 도구 검증 + 등록 후:
+graph = synthesized_tools_as_nom_graph([slugify, camelcase, redact_pii])
+r = compile_nom_graph(graph, gallery_name="my_synth_tools", gallery_version="0.1.0")
+# → pip install 가능한 도구 모듈 한 방에 완성
+```
+
+### 현재 엔진 상태 스냅샷
+
+```python
+from xgen_harness import snapshot_current_registry_as_nom
+
+nom = snapshot_current_registry_as_nom()
+print([n.id for n in nom.nodes])
+# ["xgen.stages.s00_harness", "xgen.stages.s01_input", ...,
+#  "xgen.strategies.s06_context.compact.microcompact", ...,
+#  "xgen.orchestrators.iterative", ...,
+#  "xgen.providers.anthropic", ...]
+```
+
+엔진 레지스트리(Stage/Strategy/Orchestrator/Provider) 를 통째로 NOM 으로 덤프 — 디버깅, 갤러리 업로드, 샌드박스 복원에 그대로 재사용.
+
+---
+
 ## RAG 사용
 
 ```python
@@ -418,7 +490,8 @@ config = HarnessConfig(
 | `v0.17.0` | **Policy Gate** — 선언형 Guard 체인 × 4 훅 포인트 + entry_points Guard 플러그인 |
 | `v0.18.0` | **양방향 MCP** (Phase A) — 하네스 → wheel → MCP stdio 서버 / 마켓·Station → s04_tool 카탈로그. 이식측 `PublishTargetRegistry` |
 | `v0.19.0` | PyPI 덮어쓰기 + 실측 버그 픽스 |
-| **`v0.20.0`** | **Sandbox Verifier** (Phase B) — `MCPStdioVerifier` + `SandboxVerifier` Protocol + Registry + entry_points + SHA-256 재현성 해시 |
+| `v0.20.0` | **Sandbox Verifier** (Phase B) — `MCPStdioVerifier` + `SandboxVerifier` Protocol + Registry + entry_points + SHA-256 재현성 해시 |
+| **`v0.21.0`** | **NOM IR 허브** (Phase C) — `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환 + `compile_nom_graph` one-shot + Tool Synthesis → wheel 파이프라인 E2E |
 
 이전 변경 (`v0.11.14 → v0.11.23`, Claude Code 5-Level 압축 / tool_choice API / drift-free 연결선)은 [CHANGELOG.md](CHANGELOG.md) 참조.
 
@@ -426,10 +499,10 @@ config = HarnessConfig(
 
 ## 로드맵
 
-- **Phase C** — NOM IR 일원화 (`core/nom.py` 의 `to_mcp()` / `to_wheel()` / `to_sandbox_payload()` 를 compile 진입점으로 통합). Tool Synthesis Loop 가 Sandbox Gate 재사용.
 - **HTTP MCP Verifier** — `MCPStreamableHTTPVerifier` 추가. JSON-RPC over HTTP SSE.
 - **Gallery hot-reload** — 설치된 wheel 의 entry_points 핫리스캔 (discover_galleries force-refresh).
 - **Docker-wrapped SandboxVerifier** — container 런타임 격리로 rlimit 한계 넘기.
+- **NOM → Sandbox 자동 게이트** — `compile_nom_graph(..., verify=True)` 옵션으로 Sandbox Verifier 자동 실행.
 
 ---
 

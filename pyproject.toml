@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.20.0"
-description = "XGEN Harness — Sandbox Verifier: MCP stdio 서버 publish 전 initialize + tools/list + rlimit 검증 게이트"
+version = "0.21.0"
+description = "XGEN Harness — NOM IR 허브: to_mcp_schema/to_sandbox_payload/to_wheel_snapshot 3 변환 + compile_nom_graph one-shot + Tool Synthesis 통합"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

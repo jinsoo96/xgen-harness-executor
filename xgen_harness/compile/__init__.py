@@ -45,6 +45,7 @@ from .wheel import (
     GALLERY_DIST_PREFIX,
     GALLERY_PKG_PREFIX,
 )
+from .nom_compile import compile_nom_graph
 from .gallery import (
     InstalledGallery,
     discover_galleries,
@@ -81,6 +82,8 @@ __all__ = [
     "compile_workflow",
     "GALLERY_DIST_PREFIX",
     "GALLERY_PKG_PREFIX",
+    # v0.21.0 Phase C — NOM 허브
+    "compile_nom_graph",
     # gallery (단계 6)
     "InstalledGallery",
     "discover_galleries",

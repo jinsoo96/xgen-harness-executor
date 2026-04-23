@@ -5,6 +5,33 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] — 2026-04-24
+
+### 🌀 NOM IR 허브 — Phase C 완결
+
+v0.16.0 에서 선언된 NOM (Node Object Model) 의 주석 약속 — "`to_mcp() / to_wheel() / to_sandbox_payload()` 한 곳에서 확정" — 이 실체화됨. Stage / Strategy / Tool / MCP server / 외부 플러그인 노드가 **하나의 IR** 을 통해 wheel / MCP / sandbox 3 경로로 분기.
+
+### 추가
+- `NOMGraph.to_mcp_schema(include_kinds=..., name_strategy=...)` — NOM → MCP `tools/list` 응답 스키마 (Claude Desktop/Cursor 호환)
+- `NOMGraph.to_sandbox_payload(node_id, input)` — NOM → `Sandbox.run_nom_tool` payload (격리 실행 브리지)
+- `NOMGraph.to_wheel_snapshot(gallery_name, ...)` — NOM → `WorkflowSnapshot` (기존 `build_wheel` 경로 재사용, 비파괴)
+- `xgen_harness.compile.compile_nom_graph(graph, ...)` — NOM 전용 one-shot 진입점 (`compile_workflow` 와 병렬)
+- `xgen_harness/compile/nom_compile.py` 신설
+- `tools/synthesis.py` `synthesized_tools_as_nom_graph(tools)` — 여러 Tool Synthesis 결과 → NOMGraph → 한 번에 wheel
+- top-level export: `NOMKind / NOMParam / NOMOutput / NOMNode / NOMGraph / snapshot_current_registry_as_nom / compile_nom_graph`
+
+### 설계
+- 기존 `compile_workflow()` / `WorkflowSnapshot` 은 **그대로 유지** (워크플로우 중심 경로). NOM 은 추가 진입점 (노드 그래프 중심).
+- 두 경로는 `WorkflowSnapshot` + `build_wheel()` 에서 수렴 — 중복 빌드 로직 없음.
+- 외부 기여자는 `NOMGraph` 만 만들면 wheel/MCP/sandbox 파이프라인 자동 사용.
+
+### 실측 스모크
+- 수동 NOM (2 노드 TOOL) → to_mcp_schema → [search, fetch] 정확, required 필드 표시
+- to_sandbox_payload(node_id) → entry/input/metadata 정상, 예외 경로 (KeyError / ValueError) 확인
+- to_wheel_snapshot → workflow_type="nom", from_nom=True 플래그 확인
+- compile_nom_graph → `xgen_gallery_nom_ping-0.1.0-py3-none-any.whl` 6.1KB 생성
+- synthesized_tools_as_nom_graph([t1, t2]) → NOMGraph → compile_nom_graph → wheel. **Tool Synthesis → 배포** 파이프라인 최초 E2E.
+
 ## [0.20.0] — 2026-04-24
 
 ### 🛡️ Sandbox Verifier — MCP stdio 서버 publish-time 게이트

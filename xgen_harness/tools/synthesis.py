@@ -267,6 +267,35 @@ def to_nom_node(tool: SynthesizedTool) -> "NOMNode":
     )
 
 
+def synthesized_tools_as_nom_graph(
+    tools: list[SynthesizedTool],
+    *,
+    metadata: Optional[dict] = None,
+) -> "NOMGraph":
+    """여러 SynthesizedTool → 하나의 `NOMGraph` (v0.21.0 Phase C 통로).
+
+    Tool Synthesis Loop 이 누적한 도구들을 **한 번에 wheel 로 쌀 때** 쓴다::
+
+        from xgen_harness import compile_nom_graph
+        from xgen_harness.tools.synthesis import synthesized_tools_as_nom_graph
+
+        graph = synthesized_tools_as_nom_graph([slugify_tool, camel_tool])
+        result = compile_nom_graph(
+            graph, gallery_name="my_synth_tools", gallery_version="0.1.0",
+        )
+        # → pip install 가능한 wheel 이 dist/ 에.
+    """
+    from ..core.nom import NOMGraph
+    meta = {"source": "tool_synthesis", "tool_count": len(tools)}
+    if metadata:
+        meta.update(metadata)
+    return NOMGraph(
+        nodes=[to_nom_node(t) for t in tools],
+        edges=[],
+        metadata=meta,
+    )
+
+
 def upload_synthesized_to_gallery(tool: SynthesizedTool, manifest_path: str) -> str:
     """검증 통과 도구를 로컬 매니페스트에 upsert.
 

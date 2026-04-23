@@ -142,8 +142,18 @@ from .core.sandbox_verifiers import (
     bootstrap_default_sandbox_verifiers,
     verify_mcp_stdio,
 )
+# v0.21.0 — NOM IR (Phase C: 단일 IR 허브)
+from .core.nom import (
+    NOMKind,
+    NOMParam,
+    NOMOutput,
+    NOMNode,
+    NOMGraph,
+    snapshot_current_registry_as_nom,
+)
+from .compile import compile_nom_graph
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 __all__ = [
     # Core
@@ -283,4 +293,12 @@ __all__ = [
     "list_sandbox_verifiers",
     "bootstrap_default_sandbox_verifiers",
     "verify_mcp_stdio",
+    # v0.21.0 — NOM IR (Phase C)
+    "NOMKind",
+    "NOMParam",
+    "NOMOutput",
+    "NOMNode",
+    "NOMGraph",
+    "snapshot_current_registry_as_nom",
+    "compile_nom_graph",
 ]

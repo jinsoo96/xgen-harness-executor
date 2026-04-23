@@ -129,6 +129,10 @@ class NOMGraph:
     """여러 NOMNode 를 묶은 실행 그래프.
 
     compile/ 에서 워크플로우 스냅샷 → NOMGraph → wheel/MCP/Gallery 로 역직렬화.
+
+    v0.21.0 — `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환이
+    주석의 약속대로 실체화. 외부 NOM (LLM 이 생성한 도구 그래프, 외부 플러그인 노드) 도
+    같은 wheel/MCP/sandbox 파이프라인을 쓸 수 있게 한다.
     """
     nodes: list[NOMNode] = field(default_factory=list)
     edges: list[dict] = field(default_factory=list)  # {source, target, label}
@@ -147,6 +151,145 @@ class NOMGraph:
             nodes=[NOMNode.from_dict(n) for n in d.get("nodes", [])],
             edges=list(d.get("edges", [])),
             metadata=dict(d.get("metadata", {})),
+        )
+
+    # ─────────────────────────────────────────────
+    # v0.21.0 Phase C — 3 변환 (NOM IR 허브의 본체)
+    # ─────────────────────────────────────────────
+
+    def to_mcp_schema(
+        self,
+        *,
+        include_kinds: Optional[list[NOMKind]] = None,
+        name_strategy: str = "last_segment",
+    ) -> list[dict]:
+        """NOM → MCP `tools/list` 응답의 `tools` 배열 스키마.
+
+        Claude Desktop / Cursor / 임의 MCP 클라이언트가 그대로 읽을 수 있는 JSON.
+        NOMNode 의 ``inputs`` → JSON Schema ``properties`` 로 변환.
+
+        Parameters
+        ----------
+        include_kinds : list[NOMKind] | None
+            포함할 kind 필터. 기본 [TOOL, MCP_SERVER] — 실제 도구 호출 단위.
+        name_strategy : str
+            도구 이름 규칙. ``last_segment`` (기본): id 의 마지막 `.` 뒤 부분,
+            ``full_id``: id 전체 그대로.
+
+        Returns
+        -------
+        list[dict]  각 dict 는 ``{"name": str, "description": str, "inputSchema": {...}}``.
+
+        Example
+        -------
+        >>> graph = NOMGraph(nodes=[
+        ...     NOMNode(id="x.tools.search", kind=NOMKind.TOOL, description="웹 검색",
+        ...             inputs=[NOMParam(name="q", type="string", required=True)]),
+        ... ])
+        >>> graph.to_mcp_schema()[0]["name"]
+        'search'
+        """
+        if include_kinds is None:
+            include_kinds = [NOMKind.TOOL, NOMKind.MCP_SERVER]
+        allowed = set(include_kinds)
+        out: list[dict] = []
+        for n in self.nodes:
+            if n.kind not in allowed:
+                continue
+            tool_name = n.id.rsplit(".", 1)[-1] if name_strategy == "last_segment" else n.id
+            properties: dict[str, dict] = {}
+            required: list[str] = []
+            for p in n.inputs:
+                spec: dict[str, Any] = {"type": p.type}
+                if p.description:
+                    spec["description"] = p.description
+                if p.enum:
+                    spec["enum"] = list(p.enum)
+                if p.default is not None:
+                    spec["default"] = p.default
+                properties[p.name] = spec
+                if p.required:
+                    required.append(p.name)
+            input_schema: dict[str, Any] = {"type": "object", "properties": properties}
+            if required:
+                input_schema["required"] = required
+            out.append({
+                "name": tool_name,
+                "description": n.description or n.name or tool_name,
+                "inputSchema": input_schema,
+            })
+        return out
+
+    def to_sandbox_payload(self, node_id: str, input: dict) -> dict:
+        """특정 NOMNode 를 `Sandbox.run_nom_tool` 이 받는 payload 로 직렬화.
+
+        `core/sandbox.py` 의 ``Sandbox.run_nom_tool(entry, input_payload)`` 와
+        조합하면 NOM 노드 하나를 격리 환경에서 시연 가능.
+
+        Raises
+        ------
+        KeyError
+            ``node_id`` 가 그래프에 없을 때.
+        ValueError
+            노드의 ``entry`` 가 비어있을 때 (동적 로드 불가).
+        """
+        node = next((n for n in self.nodes if n.id == node_id), None)
+        if node is None:
+            raise KeyError(f"node '{node_id}' not in graph")
+        if not node.entry:
+            raise ValueError(
+                f"node '{node_id}' has no entry (kind={node.kind.value}); "
+                "sandbox execution requires 'module:callable' entry"
+            )
+        return {
+            "entry": node.entry,
+            "input": dict(input or {}),
+            "metadata": {
+                "node_id": node.id,
+                "kind": node.kind.value,
+                "name": node.name,
+                "version": node.version,
+                "plugin_package": node.plugin_package,
+            },
+        }
+
+    def to_wheel_snapshot(
+        self,
+        *,
+        gallery_name: str,
+        gallery_version: str = "0.1.0",
+        harness_config: Optional[Any] = None,
+        extra_metadata: Optional[dict] = None,
+    ) -> Any:
+        """NOM → `WorkflowSnapshot` (기존 `build_wheel` 에 그대로 전달 가능).
+
+        NOM 그래프를 ``workflow_data`` 의 nodes/edges 로 직렬화 + ``metadata.from_nom=True``.
+        harness_config 미지정 시 빈 dict 로 기본값 생성 — 실행이 필요 없는 도구 묶음
+        (Tool Synthesis 결과, 외부 플러그인 세트) 을 그대로 wheel 로 쌀 수 있다.
+
+        Import 지연: compile.snapshot.WorkflowSnapshot 가 실제로는 compile 서브모듈에만
+        존재하므로 여기서 지연 import.
+        """
+        from ..compile.snapshot import WorkflowSnapshot
+        config_dict = harness_config
+        if config_dict is None:
+            config_dict = {}
+        if not isinstance(config_dict, dict) and hasattr(config_dict, "to_dict"):
+            config_dict = config_dict.to_dict()
+        workflow_data = {
+            "workflow_type": "nom",
+            "nodes": [n.to_dict() for n in self.nodes],
+            "edges": list(self.edges),
+        }
+        meta = {"from_nom": True, "nom_metadata": dict(self.metadata)}
+        if extra_metadata:
+            meta.update(extra_metadata)
+        return WorkflowSnapshot.from_config(
+            harness_config=config_dict,
+            workflow_data=workflow_data,
+            gallery_name=gallery_name,
+            gallery_version=gallery_version,
+            extra_metadata=meta,
         )
 
 
