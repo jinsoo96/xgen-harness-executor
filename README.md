@@ -20,11 +20,23 @@ pip install xgen-harness
 
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.
 > 사용자는 **무엇을** 할지 선언, 하네스는 **어떻게** 를 자동 조립.
-> 현재 상태(`v0.11.23`): Stage × Strategy × Capability 3층, 40+ Strategy, **5-Level Cascade Compression** (Claude Code 이식), **tool_choice API** (OpenAI/Anthropic/LangChain 통합), **drift-free 연결선** (엔진↔이식↔프론트 단일 진실), 컴파일러(→ wheel), DAG 오케스트레이터.
+> 현재 상태(`v0.16.6`): **Stage = 환경 슬롯** 정의 — 각 Stage 가 자기 환경(capability/도구/리소스/파라미터) 을 LLM 에 노출하고 자율 선택. **s00_harness 통제탑** (Planner + 본문 LLM 호출 owner), **OrchestratorRegistry** (linear / iterative / plan_execute / react / dag), **Pipeline Role 체계** (이름 리터럴 0 — `orchestrator_planner` / `main_actor` / `scorer` 역할로 Stage 검색), Stage × Strategy × Capability 3층, 40+ Strategy, **5-Level Cascade Compression** (Claude Code 이식), **tool_choice API**, **drift-free 연결선**, 컴파일러(→ wheel), DAG 오케스트레이터.
 
 ---
 
-## 🆕 최신 주요 변경 (v0.11.14 → v0.11.23)
+## 🆕 최신 주요 변경 (v0.12 → v0.16 — REAL HARNESS 진화)
+
+| 버전 | 핵심 |
+|------|------|
+| `v0.12.0` | **REAL HARNESS Phase 1** — `s00_harness` Planner 메타 스테이지 도입 + self-describing catalog + 13 Stage 디렉토리화. LLM 이 카탈로그 보고 Stage / 파라미터 / 도구 자율 조립 |
+| `v0.13.0` | **REAL HARNESS Phase 2** — 단일 provider 핸들 (Pipeline 진입부 ensure_provider 1회) + iterative planning (매 iter 시작에 Planner 재호출, 누적 state 기반 replan, `Plan.done` 으로 종료) |
+| `v0.14.0` | **s00_harness 통제탑 승격** — `s07_llm` Stage 삭제 + 번호 시프트. 본문 LLM 호출을 `s00_harness.main_call` 이 소유. `TransportStrategy` (streaming / batch) 승격, `harness_mode` 3 모드 (autonomous / selected / off) |
+| `v0.15.0~3` | **재귀적 자율주행** — `HarnessPlan.max_iterations` / `orchestrator_hint` (LLM 자율 결정), `OrchestratorRegistry` (linear / iterative / plan_execute / react / dag), Stage display_name=Auto, fs_scanner 자동 발견, catalog `source_file` 노출, Stage-local strategies 자동 스캔 |
+| `v0.16.0~6` | **자가증식 골조 + 이름 리터럴 0** — Sandbox / NOM / NodePlugin / ToolSynthesis 통합, Sandbox rlimit 하드닝, `XGEN_HARNESS_PRELOAD_MANIFEST` env 자동 LocalManifest 주입, s04_tool 브릿지 (전역 tool_sources → tool_definitions 자동), tool_result content string 정규화 (Anthropic 400 해소), **Pipeline Role 체계** — `orchestrator_planner` / `main_actor` / `scorer` 역할 검색으로 Stage 이름 리터럴 12 → 0 |
+
+---
+
+## 📜 이전 변경 (v0.11.14 → v0.11.23)
 
 ### Claude Code 압축 패턴 이식 (v0.11.14~17)
 
