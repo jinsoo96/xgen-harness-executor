@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.17.0"
-description = "XGEN Harness — Policy Gate (v0.17): 선언형 Guard 체인 + 4 훅 포인트 + entry_points Guard 플러그인 + Stage machine-only 모델"
+version = "0.19.0"
+description = "XGEN Harness — Policy Gate: 선언형 Guard 체인 + 4 훅 포인트 + entry_points Guard 플러그인 + Stage machine-only 모델"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
