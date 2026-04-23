@@ -32,6 +32,46 @@ pip install xgen-harness
 
 ---
 
+## 🎯 Phase A / B / C 수렴 — 한 그림
+
+외부 기여자는 `NOMGraph` 만 만들면 **세 경로** 에 자동 합류:
+
+```
+                       외부 기여자는 NOMGraph 만 만들면…
+                                     ▼
+                             ┌───────────────┐
+                             │   NOMGraph    │   ← v0.21.0 IR 허브
+                             │  (Phase C)    │
+                             └──┬─────┬──────┘
+                                │     │     └────────┐
+                     to_wheel   │     │ to_mcp       │ to_sandbox
+                     _snapshot  ▼     ▼ _schema      ▼ _payload
+                      ┌─────────────┐ ┌─────┐   ┌─────────┐
+                      │ compile     │ │ MCP │   │ Sandbox │
+                      │ _workflow   │ │tools│   │.run_nom │
+                      │ (v0.10+)    │ │/list│   │_tool    │
+                      └──┬──────────┘ └──┬──┘   └────┬────┘
+                         ▼               ▼           ▼
+                      [wheel]    [Claude Desktop]  [격리 실행]
+                         │
+                 ┌───────▼────────┐
+                 │ Sandbox Gate   │  ← v0.20.0 Phase B
+                 │ MCPStdioVerify │     (initialize + tools/list + rlimit)
+                 └───────┬────────┘
+                         ▼
+                 [Station POST /sessions]     ← v0.18.0 Phase A
+                         ▼
+                 [s04_tool 카탈로그]          ← 사용자 UI (양방향)
+```
+
+| Phase | 버전 | 무엇을 해결했나 |
+|---|---|---|
+| **A** | v0.18.0 | 양방향 MCP — 하네스 ↔ MCP 생태계. wheel 을 MCP stdio 서버로 자동 말아올리고, Station 의 활성 세션을 카탈로그로 자동 가져온다 |
+| **B** | v0.20.0 | Sandbox Gate — Station 등록 전 격리 검증 (`MCPStdioVerifier`). JSON-RPC 왕복 + POSIX rlimit + SHA-256 재현성 해시 |
+| **C** | v0.21.0 | NOM IR 허브 — Stage/Strategy/Tool/MCP/Plugin 을 단일 IR 로. `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환으로 위 3 경로 전부 커버 |
+
+---
+
 ## 빠른 시작 — 4 줄
 
 ```python
