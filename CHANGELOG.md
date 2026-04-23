@@ -5,6 +5,32 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] — 2026-04-24
+
+### 🛡️ Sandbox Verifier — MCP stdio 서버 publish-time 게이트
+
+v0.18 Phase A 에서 "하네스 워크플로우 → wheel → MCP stdio 서버" 자동 말아올리기가 완성됐지만, 외부 호스트(xgen-mcp-station) 에 등록되기 **전** 에 건전성·스키마·리소스를 검증할 관문이 없었다. v0.20.0 은 이 문지기(Phase B Gate) 를 엔진 기본 기능으로 제공한다.
+
+### 추가
+- `xgen_harness/core/sandbox_verifiers.py` 신설
+  - `SandboxVerifier` Protocol — Registry + `entry_points("xgen_harness.sandbox_verifiers")` 로 확장
+  - `MCPStdioVerifier` (기본) — JSON-RPC over stdio 로 `initialize` → `notifications/initialized` → `tools/list` 왕복, 스키마 유효성 검증, 정규화된 tools 배열의 SHA-256 해시 반환 (재현성 지표)
+  - POSIX rlimit (`SandboxLimits`) + timeout + stderr tail cap — `core/sandbox.py` 와 동일 정책으로 통일
+  - 편의 함수 `verify_mcp_stdio(command, ...)`
+- `VerifyResult` dataclass — `ok` / `tools` / `tool_count` / `handshake_ms` / `tools_ms` / `payload_hash` / `stderr_tail` / `error` / `timed_out` / `applied_limits`
+- `__init__.py` 에서 전부 top-level export (Sandbox 관련도 함께)
+
+### 설계 원칙 (유지)
+- 엔진은 generic primitive — 호출자가 `command: list[str]` 을 준비, verifier 는 격리 subprocess 기동만 담당. xgen-mcp-station / Claude API 등 특정 서비스를 모른다.
+- if/elif 분기 없음 — 새 verifier (mcp-http, docker-wrapped, wasm) 는 `register_sandbox_verifier()` 한 줄 또는 entry_points 로 추가.
+
+### 실측 스모크 (로컬)
+- `MCPStdioVerifier.verify(command=[python, "-u", "-m", "xgen_gallery_verif_smoke.cli", "serve-mcp"])` 
+- 결과: `ok=True`, `tool_count=1`, `tools=['run_workflow']`, handshake 370ms, tools/list 1ms, stderr empty, rlimit `{cpu_seconds=30, address_space_mb=2048, max_open_files=256}` 적용 확인
+
+### 이식측 wiring
+- 이식측 `xgen-workflow/controller/workflow/endpoints/harness_publish.py` 의 `MCPStationPublisher.publish()` 가 Station 등록 **전** 에 `MCPStdioVerifier` 로 검증 → 통과 시 `payload_hash` 를 session 메타에 첨부. `HARNESS_SANDBOX_POLICY` env(`strict`/`advisory`/`off`)로 정책 조절. *(이식측 커밋은 PyPI 배포 후 별도 진행 예정)*
+
 ## [0.16.6] — 2026-04-22
 
 ### 🎯 Pipeline Role 체계 — Stage 이름 리터럴 12 → 0

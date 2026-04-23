@@ -130,8 +130,20 @@ from .compile import (
     discover_galleries,
     get_gallery,
 )
+# v0.20.0 — Sandbox Verifier (Phase B: publish-time gate)
+from .core.sandbox import Sandbox, SandboxLimits, SandboxResult, run_sandboxed
+from .core.sandbox_verifiers import (
+    SandboxVerifier,
+    VerifyResult,
+    MCPStdioVerifier,
+    register_sandbox_verifier,
+    get_sandbox_verifier,
+    list_sandbox_verifiers,
+    bootstrap_default_sandbox_verifiers,
+    verify_mcp_stdio,
+)
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 __all__ = [
     # Core
@@ -258,4 +270,17 @@ __all__ = [
     "InstalledGallery",
     "discover_galleries",
     "get_gallery",
+    # v0.20.0 — Sandbox Verifier
+    "Sandbox",
+    "SandboxLimits",
+    "SandboxResult",
+    "run_sandboxed",
+    "SandboxVerifier",
+    "VerifyResult",
+    "MCPStdioVerifier",
+    "register_sandbox_verifier",
+    "get_sandbox_verifier",
+    "list_sandbox_verifiers",
+    "bootstrap_default_sandbox_verifiers",
+    "verify_mcp_stdio",
 ]
