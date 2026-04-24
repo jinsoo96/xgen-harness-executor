@@ -5,6 +5,74 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] — 2026-04-24
+
+### 🧰 MCP Tool annotations 1급화 + 행동 지문 회귀 테스트
+
+도구 분류가 이름 휴리스틱에 의존하던 취약점 해소 + 회귀 방어선 구축.
+
+### 추가
+
+- **Tool ABC 에 힌트 4종 1급 속성** (`tools/base.py`)
+  - `read_only_hint` — 외부 상태 미변경 → s07_act 가 asyncio.gather 병렬 실행
+  - `destructive_hint` — 되돌릴 수 없음 → HITL / Policy Gate 트리거용
+  - `idempotent_hint` — 같은 입력 → 같은 결과 (재시도 안전)
+  - `open_world_hint` — 외부 시스템 영향 (네트워크·파일시스템)
+  - `annotations()` 메서드로 MCP 표준 블록 캡슐화
+  - `to_api_format()` / `to_index_entry()` 모두 annotations 포함
+
+- **빌트인 도구 힌트 정확화** (`tools/builtin.py`)
+  discover_tools / search_tools / fetch_pd — 전부 readOnly + idempotent + !openWorld
+  (프로세스 내부 state 만 읽음)
+
+- **MCP 서버 annotations 우선 수용** (`tools/mcp_client.py`)
+  MCP 서버가 2025-06-18+ 표준 annotations 를 보내면 그대로 사용. 없을 때만
+  legacy 이름 휴리스틱 폴백 (deprecated 경로, 다음 메이저에서 제거).
+
+- **GalleryTool annotations 파싱** (`tools/gallery.py`)
+  `tool_def["annotations"]` 우선 + legacy `is_read_only` 폴백. 4 필드 전부 캐싱.
+
+- **RAG Tool 힌트 선언** (`tools/rag_tool.py`)
+  readOnly + idempotent + openWorld.
+
+- **s04_tool 이 ToolSource annotations 전파** (`stages/s04_tool/stage.py`)
+  `list_tools()` 응답의 annotations 를 `state.tool_definitions` 에 그대로 실음.
+
+- **tests/test_plan_fingerprint.py** — Planner 정규화 행동 지문 5 케이스
+  `HarnessPlanner._build_plan_from_tool_input` (순수 함수) 의 결정적 출력을
+  `tests/fingerprints/plan_*.json` 에 baseline 저장 → 이후 실행마다 비교.
+  단위 테스트로는 못 잡는 "에이전트 행동 변화" 를 지문으로 감지.
+  시나리오: simple_qa / rag_with_judge / filters_unknown_stage /
+  injects_required / malformed_types_defended.
+
+### 변경
+
+- **s07_act 이름 휴리스틱 완전 폐기** (`stages/s07_act/stage.py`)
+  이전: `{"create","update","delete",...}` 키워드 매칭 → "search_and_create_plan"
+  같은 이름이 write 로 오분류 → 병렬 실행 손실.
+  현재: `_resolve_read_only_hint()` 헬퍼가 5 단 우선순위로 결정.
+    1) tool_definitions[*].annotations.readOnlyHint (MCP 표준)
+    2) Tool 인스턴스.read_only_hint
+    3) legacy tool_definitions metadata.is_read_only
+    4) legacy instance.is_read_only
+    5) False (안전 쪽 — 명시 선언 없으면 순차 실행)
+
+- **`Tool.is_read_only` 는 별칭으로 유지**
+  v0.24 에서 제거 예정. 외부 구현체 backward-compat.
+
+### 검증
+
+- pytest 11/11 PASS (import_smoke 5 + plan_fingerprint 6)
+- fingerprint baseline 5 개 커밋됨 — 향후 정규화 변화 즉시 감지
+- backward-compat 확인: 기존 `is_read_only` 쓰는 외부 Tool 구현체 영향 없음
+
+### 관찰
+
+- `plan_injects_required.json` baseline 이 REQUIRED_STAGES (s01_input /
+  s09_decide / s11_finalize) 자동 주입이 Planner 에서 일어나지 **않음**을
+  기록. 문서와 실제 코드 갭 드러남 — 향후 `_build_plan_from_tool_input`
+  수정 시 리뷰 대상.
+
 ## [0.22.1] — 2026-04-24
 
 ### 🔧 v0.22.0 후속 — 재검수 결과 2건 해소

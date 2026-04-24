@@ -21,7 +21,7 @@ pip install xgen-harness
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.  
 > 13 Stage 가 환경 슬롯(capability/도구/리소스/파라미터를 LLM 에 노출), 사용자는 **무엇을** 할지만 선언, 하네스가 **어떻게** 자동 조립.
 
-**v0.22.0 기준**
+**v0.23.0 기준**
 1. **Stage = 환경 슬롯** + **LLM 자율 선택** (Planner 통제탑 · Auto/Selected/Off 3 모드)
 2. **자동 오케스트레이터** (linear/iterative/plan_execute/react/dag) — 행동 속성은 `OrchestratorSpec.replan_per_iter / max_iterations_override` 로 선언적. 외부 오케스트레이터도 동일 계약.
 3. **Strategy × Capability 3층 구조**
@@ -30,6 +30,7 @@ pip install xgen-harness
 6. **Sandbox Verifier** (v0.20.0) — 발행 전 `initialize + tools/list + rlimit` **격리 게이트**
 7. **NOM IR 허브** (v0.21.0) — Stage/Strategy/Tool/MCP/Plugin 을 단일 IR 로 통합. `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환. `compile_nom_graph(graph, ...)` one-shot
 8. **엔진 독립성 완결** (v0.22.0) — xgen 특화 코드(Adapter/Service/NodeAdapter/SSE 2,040 LOC) 는 호스트 측 소유. `ExternalNodeRef` Protocol 로 호스트가 4 필드 dataclass 만 등록하면 duck-typing 자동 감지. `REQUIRED_STAGES` 는 live set — `mark_stage_required()` 로 외부 등록. 기본 모델은 `XGEN_HARNESS_<PROVIDER>_DEFAULT_MODEL` env 우선.
+9. **MCP Tool Annotations 1급화 + 행동 지문 회귀 테스트** (v0.23.0) — Tool ABC 에 `read_only_hint / destructive_hint / idempotent_hint / open_world_hint` 4 힌트 1급 속성. `s07_act` 이름 휴리스틱 (`"create"/"update"/...` 키워드 매칭) 완전 폐기 → `annotations.readOnlyHint` 5 단 우선순위 조회. MCP 서버가 2025-06-18+ 표준 `annotations` 블록을 보내면 그대로 수용. Planner 정규화 행동 지문 5 케이스 (`tests/test_plan_fingerprint.py`) — 단위 테스트로 못 잡는 "에이전트 행동 변화" 감지.
 
 ---
 
