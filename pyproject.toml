@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.24.1"
-description = "XGEN Harness — HITL Guard + Compact Tool + approval SSE (v0.24.0 후속: __version__ drift 핫픽스)"
+version = "0.24.2"
+description = "XGEN Harness — s04_tool tool_index list/dict 혼용 핫픽스 (Auto 모드 builtin_tools=[] 경로 AttributeError 해소)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

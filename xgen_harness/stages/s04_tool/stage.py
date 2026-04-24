@@ -147,10 +147,13 @@ class ToolIndexStage(Stage):
             strategy = ProgressiveDiscovery()
         tool_index, augmented_defs = await strategy.discover(state.tool_definitions, state)
 
-        # discover_tools 빌트인은 selected_builtins에 포함된 경우만 유지
+        # discover_tools 빌트인은 selected_builtins에 포함된 경우만 유지.
+        # v0.24.2 — tool_index 는 list[dict] (ProgressiveDiscovery.discover 반환형). 이전 코드의
+        # dict comprehension 은 초기 dict 구조 시절 잔재로, Auto 모드에서 Planner 가
+        # builtin_tools=[] 로 제안 시 분기 진입 → `list.items()` AttributeError 로 터졌음.
         if "discover_tools" not in selected_builtins:
             augmented_defs = [td for td in augmented_defs if td.get("name") != "discover_tools"]
-            tool_index = {k: v for k, v in tool_index.items() if k != "discover_tools"}
+            tool_index = [ti for ti in tool_index if ti.get("name") != "discover_tools"]
             logger.info("[Tool Index] discover_tools excluded (not in builtin_tools)")
 
         state.tool_definitions = augmented_defs
