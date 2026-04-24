@@ -156,7 +156,18 @@ from .core.nom import (
 )
 from .compile import compile_nom_graph
 
-__version__ = "0.22.1"
+# v0.24.1 — pyproject.toml 과의 버전 drift 방지를 위해 런타임 조회로 전환.
+# 이전 방식(하드코딩 "0.22.1") 은 pyproject bump 시마다 수동 갱신 필요해 0.24.0 시점에
+# drift 발각(pip metadata=0.24.0 vs runtime=0.22.1). importlib.metadata 는 설치된
+# wheel 의 METADATA 에서 정확한 값을 읽으므로 drift 불가.
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    try:
+        __version__ = _pkg_version("xgen-harness")
+    except PackageNotFoundError:
+        __version__ = "0.0.0+uninstalled"
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # Core

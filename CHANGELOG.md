@@ -5,6 +5,27 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] — 2026-04-24
+
+### 🔧 v0.24.0 후속 — `__version__` drift 핫픽스
+
+PyPI 0.24.0 publish 검증 중 `xgen_harness.__version__ == "0.22.1"` 발견.
+pyproject.toml 은 0.24.0 이지만 `xgen_harness/__init__.py` 의 하드코딩
+문자열이 동기화되지 않아 런타임이 틀린 버전을 보고.
+
+### 수정
+
+- `xgen_harness/__init__.py` : `__version__` 를 하드코딩 문자열 → 런타임
+  `importlib.metadata.version("xgen-harness")` 조회로 전환. 설치된 wheel
+  의 METADATA 에서 정확한 값을 읽으므로 pyproject.toml 만 bump 하면
+  자동 반영. PackageNotFoundError 시 `"0.0.0+uninstalled"` 폴백 (소스
+  로만 실행하는 dev/CI 환경 호환).
+
+### 검증
+
+- PyPI 0.24.1 publish 후 `xgen_harness.__version__ == "0.24.1"` 확인.
+- 기존 22 pytest 회귀 없음.
+
 ## [0.24.0] — 2026-04-24
 
 ### 🛡 HITL Guard + 🗜 Agent-controlled Compact Tool + approval.required SSE

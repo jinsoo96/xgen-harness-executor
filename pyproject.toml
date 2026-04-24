@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.24.0"
-description = "XGEN Harness — HITL Guard + Agent-controlled Compact Tool + approval.required SSE (MCP annotations 생태 확장)"
+version = "0.24.1"
+description = "XGEN Harness — HITL Guard + Compact Tool + approval SSE (v0.24.0 후속: __version__ drift 핫픽스)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
