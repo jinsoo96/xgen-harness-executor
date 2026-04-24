@@ -5,6 +5,40 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.4] — 2026-04-24
+
+### 🧬 annotations 를 tool payload 에서 근본 분리 (provider-agnostic)
+
+v0.24.3 은 Anthropic 한정 화이트리스트 안전망이었음. 외부 provider (Bedrock /
+Google / 커스텀 entry_points) 도 같은 문제를 겪을 수 있어 **payload 구조 자체에서**
+annotations 를 뺌.
+
+### 변경
+
+- `Tool.to_api_format()` 반환값에서 `annotations` 키 제거 → LLM provider 표준 포맷
+  (name/description/input_schema) 만 포함. **모든 provider 안전**.
+- `ToolGroup` 에 `annotations: dict[str, dict[str, Any]]` 신규 필드 — tool_name 별
+  MCP annotations 블록 보관 (payload 와 분리).
+- `s04_tool/stage.py` 가 외부 ToolSource 의 annotations 를 `state.tool.annotations[name]`
+  맵으로 분리 저장. `state.tool_definitions` 에는 들어가지 않음.
+- `s07_act._resolve_read_only_hint` 3단 → 6단 확장: state.tool.annotations 1차 →
+  Tool 인스턴스 속성 → legacy tool_definitions annotations → legacy metadata.is_read_only
+  → legacy is_read_only → False fallback.
+- `HITLGuard._resolve_annotations` 도 동일 3단 우선순위 (map → legacy definitions → instance).
+- `to_index_entry()` 는 annotations 유지 — UI/Progressive Disclosure 표시용, API payload 아님.
+
+### 안전망 유지
+
+- v0.24.3 의 `anthropic.py` 화이트리스트 정제는 **보조 방어막** 으로 그대로 유지
+  (외부 ToolSource 가 실수로 legacy 포맷 넣어도 payload 오염 차단).
+
+### 하위호환
+
+- 구 버전 외부 MCP 가 tool_def 에 annotations 를 넣어 보내면 s04 가 분리 저장.
+- s07_act / HITL 이 legacy 경로 (tool_definitions.annotations) 도 여전히 읽음.
+
+---
+
 ## [0.24.3] — 2026-04-24
 
 ### 🔥 Anthropic tools annotations 400 핫픽스

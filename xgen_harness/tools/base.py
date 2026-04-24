@@ -120,12 +120,18 @@ class Tool(ABC):
         }
 
     def to_api_format(self) -> dict:
-        """Anthropic tool 정의 포맷 + MCP annotations."""
+        """LLM provider 표준 tool 정의 포맷 (Anthropic/OpenAI/Bedrock 공통).
+
+        v0.24.4 — annotations 필드 제거. Anthropic API 가 unknown field 로 400
+        거부하는 문제(v0.24.3 화이트리스트 안전망 외에) 의 근본 해결:
+        payload 포맷 자체에서 annotations 를 빼고, s04_tool 이 별도 맵
+        (`state.tool.annotations`) 으로 분리 저장한다. 힌트 조회는 s07_act /
+        HITLGuard 가 그 맵 또는 Tool.annotations() 메서드를 본다.
+        """
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": self.input_schema,
-            "annotations": self.annotations(),
         }
 
     def to_index_entry(self) -> dict:

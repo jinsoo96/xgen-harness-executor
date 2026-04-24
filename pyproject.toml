@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.24.3"
-description = "XGEN Harness — Anthropic tools annotations 필드 400 핫픽스 (v0.23+ MCP annotations 전송 차단, 화이트리스트 정제)"
+version = "0.24.4"
+description = "XGEN Harness — MCP annotations 를 tool payload 에서 분리 (provider-agnostic). state.tool.annotations 맵 신설, Tool.to_api_format() 순수화, s07/HITL 3단 폴백"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

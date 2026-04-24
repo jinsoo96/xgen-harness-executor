@@ -114,10 +114,12 @@ class ToolIndexStage(Stage):
                         "description": t.get("description", ""),
                         "input_schema": t.get("input_schema") or {"type": "object"},
                     }
-                    # v0.23.0 — ToolSource 가 준 annotations 그대로 전파 (MCP 표준).
-                    # s07_act 의 read_only 판별이 이 필드를 우선 참조.
-                    if t.get("annotations"):
-                        td["annotations"] = t["annotations"]
+                    # v0.24.4 — ToolSource 가 준 annotations 는 state.tool.annotations
+                    # 맵으로 분리 저장. tool_definitions 는 LLM provider 표준 payload 만
+                    # 포함 (annotations 섞이면 Anthropic 400 등 provider 별 거부 위험).
+                    ann = t.get("annotations")
+                    if ann:
+                        state.tool.annotations[nm] = dict(ann)
                     state.tool_definitions.append(td)
                     existing_names.add(nm)
                     source_count += 1

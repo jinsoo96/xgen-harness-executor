@@ -254,31 +254,38 @@ class ExecuteStage(Stage):
     def _resolve_read_only_hint(
         self, tool_name: str, state: PipelineState, tool_registry: dict,
     ) -> bool:
-        """MCP annotations.readOnlyHint 우선 — 순서:
+        """MCP annotations.readOnlyHint 우선 — 순서 (v0.24.4 재조정):
 
-        1. `tool_definitions[*].annotations.readOnlyHint` (s04 가 to_api_format 으로 실어줌,
-           외부 MCP 도 서버가 선언한 것 그대로)
+        1. `state.tool.annotations[tool_name].readOnlyHint` (s04 가 tool_definitions
+           와 분리해 저장 — payload 오염 방지)
         2. `tool_registry[name].read_only_hint` (Tool 인스턴스 속성)
-        3. legacy `tool_definitions[*].metadata.is_read_only`
-        4. legacy `tool_registry[name].is_read_only`
-        5. **fallback: False** — 명시 선언이 없으면 안전 쪽(write 취급, 순차 실행).
+        3. legacy `tool_definitions[*].annotations.readOnlyHint` (구 버전 외부 MCP
+           호환 — 앞으로는 annotations 가 definitions 에 섞이지 않지만 잔존 가능성)
+        4. legacy `tool_definitions[*].metadata.is_read_only`
+        5. legacy `tool_registry[name].is_read_only`
+        6. **fallback: False** — 명시 선언이 없으면 안전 쪽(write 취급, 순차 실행).
            이전 버전의 이름 휴리스틱은 제거 (false positive 유발).
         """
-        # 1. tool_definitions annotations (MCP 표준)
-        for td in state.tool_definitions:
-            if td.get("name") != tool_name:
-                continue
-            ann = td.get("annotations") or {}
-            if "readOnlyHint" in ann:
-                return bool(ann["readOnlyHint"])
-            break
+        # 1. state.tool.annotations 맵 (v0.24.4 분리 저장)
+        ann = (state.tool.annotations or {}).get(tool_name) or {}
+        if "readOnlyHint" in ann:
+            return bool(ann["readOnlyHint"])
 
         # 2. Tool 인스턴스의 read_only_hint 속성
         inst = tool_registry.get(tool_name)
         if inst is not None and hasattr(inst, "read_only_hint"):
             return bool(inst.read_only_hint)
 
-        # 3. legacy metadata.is_read_only (tool_definitions)
+        # 3. legacy tool_definitions annotations (구 버전 호환)
+        for td in state.tool_definitions:
+            if td.get("name") != tool_name:
+                continue
+            legacy_ann = td.get("annotations") or {}
+            if "readOnlyHint" in legacy_ann:
+                return bool(legacy_ann["readOnlyHint"])
+            break
+
+        # 4. legacy metadata.is_read_only (tool_definitions)
         for td in state.tool_definitions:
             if td.get("name") == tool_name:
                 meta = td.get("metadata") or {}
@@ -286,11 +293,11 @@ class ExecuteStage(Stage):
                     return bool(meta["is_read_only"])
                 break
 
-        # 4. legacy is_read_only (instance)
+        # 5. legacy is_read_only (instance)
         if inst is not None and hasattr(inst, "is_read_only"):
             return bool(inst.is_read_only)
 
-        # 5. 안전 쪽 fallback
+        # 6. 안전 쪽 fallback
         return False
 
     async def _enrich_with_capability(

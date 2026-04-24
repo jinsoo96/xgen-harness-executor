@@ -664,14 +664,24 @@ class HITLGuard(Guard):
         return False
 
     def _resolve_annotations(self, state: Any, tool_name: str) -> dict[str, Any]:
-        """tool_definitions 에서 annotations 찾기. 없으면 Tool 인스턴스에서."""
+        """annotations 조회 — v0.24.4 우선순위:
+        1. state.tool.annotations 분리 맵 (payload 오염 방지 설계)
+        2. legacy tool_definitions[*].annotations (구 버전 외부 MCP 호환)
+        3. Tool 인스턴스의 annotations() 메서드
+        """
+        tool_group = getattr(state, "tool", None)
+        if tool_group is not None:
+            ann_map = getattr(tool_group, "annotations", None) or {}
+            ann = ann_map.get(tool_name)
+            if ann:
+                return dict(ann)
         for td in getattr(state, "tool_definitions", []) or []:
             td_name = td.get("name") or ((td.get("function") or {}).get("name"))
             if td_name != tool_name:
                 continue
-            ann = td.get("annotations") or (td.get("function") or {}).get("annotations")
-            if ann:
-                return dict(ann)
+            legacy_ann = td.get("annotations") or (td.get("function") or {}).get("annotations")
+            if legacy_ann:
+                return dict(legacy_ann)
             break
         tool_registry = (getattr(state, "metadata", {}) or {}).get("tool_registry") or {}
         inst = tool_registry.get(tool_name)

@@ -51,6 +51,11 @@ class ToolGroup:
     pending_calls: list[dict[str, Any]] = field(default_factory=list)
     results: list[dict[str, Any]] = field(default_factory=list)
     executed_count: int = 0
+    # v0.24.4 — MCP annotations 블록(readOnlyHint / destructiveHint / idempotentHint /
+    # openWorldHint) 을 tool_name 별로 보관. definitions 에 섞여 있으면 LLM provider 가
+    # unknown field 로 거부(Anthropic 400) 하므로 **payload 와 분리**. s07_act / HITLGuard
+    # 가 이 맵을 1차로 조회하고, 없으면 Tool 인스턴스의 annotations() 메서드로 fallback.
+    annotations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
