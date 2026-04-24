@@ -153,7 +153,7 @@ from .core.nom import (
 )
 from .compile import compile_nom_graph
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 __all__ = [
     # Core

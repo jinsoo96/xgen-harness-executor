@@ -130,10 +130,10 @@ try:
                 if data.get("type") != "execute":
                     continue
 
-                from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
+                from ..providers import get_default_provider, get_default_model
                 user_input = data.get("input", "")
                 provider = data.get("provider") or get_default_provider()
-                model = data.get("model") or PROVIDER_DEFAULT_MODEL.get(provider, "")
+                model = data.get("model") or get_default_model(provider)
                 disabled = set(data.get("disabled_stages", []))
 
                 config = HarnessConfig(provider=provider, model=model, disabled_stages=disabled)

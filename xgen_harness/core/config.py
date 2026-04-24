@@ -34,8 +34,31 @@ ALL_STAGES = [
     "s11_finalize",
 ]
 
-# 비활성화 불가 스테이지 (s00_harness 는 use_planner/harness_mode 로 통제)
-REQUIRED_STAGES = {"s01_input", "s09_decide", "s11_finalize"}
+# 비활성화 불가 스테이지 — 엔진 기본값 3개. 외부 기여자는 `mark_stage_required()` 로 추가.
+# v0.22.0 — 하드 set 이었던 것을 live set 으로 유지 + 등록 API 추가. 모든 참조는 이 동일
+# set 을 읽기 때문에 외부 등록이 즉시 반영된다 (snapshot 이 아니다).
+REQUIRED_STAGES: set[str] = {"s01_input", "s09_decide", "s11_finalize"}
+
+
+def mark_stage_required(stage_id: str) -> None:
+    """새 Stage 를 "비활성화 불가" 로 등록.
+
+    외부 패키지가 자기 Stage 를 반드시 돌게 하려면 import 시 호출.
+    기본 3개는 엔진이 이미 등록돼 있다.
+    """
+    if not isinstance(stage_id, str) or not stage_id.strip():
+        raise ValueError("stage_id must be non-empty string")
+    REQUIRED_STAGES.add(stage_id)
+
+
+def unmark_stage_required(stage_id: str) -> None:
+    """테스트/운영에서 필수 지정 해제."""
+    REQUIRED_STAGES.discard(stage_id)
+
+
+def get_required_stages() -> set[str]:
+    """현재 필수 Stage id set 의 읽기용 스냅샷 복사."""
+    return set(REQUIRED_STAGES)
 
 
 @dataclass

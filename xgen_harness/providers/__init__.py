@@ -85,7 +85,7 @@ def get_provider_models(provider: str) -> list[str]:
     PROVIDER_MODELS 에 append → 자동 반영.
     """
     models: list[str] = []
-    default = PROVIDER_DEFAULT_MODEL.get(provider.lower(), "")
+    default = get_default_model(provider)  # env override 존중
     if default:
         models.append(default)
     for m in PROVIDER_MODELS.get(provider.lower(), []):
@@ -202,8 +202,23 @@ def resolve_api_key_from_file(provider: str) -> Optional[str]:
 
 
 def get_default_model(provider: str) -> str:
-    """프로바이더의 기본 모델명 반환."""
-    return PROVIDER_DEFAULT_MODEL.get(provider.lower(), "")
+    """프로바이더의 기본 모델명 반환.
+
+    v0.22.0 — env override 우선. 모델 업그레이드를 코드 수정 없이 런타임에 반영.
+
+    우선순위:
+      1) ``XGEN_HARNESS_{PROVIDER_UPPER}_DEFAULT_MODEL`` env
+         (예: ``XGEN_HARNESS_ANTHROPIC_DEFAULT_MODEL=claude-sonnet-4-6-20260101``)
+      2) ``PROVIDER_DEFAULT_MODEL`` 레지스트리 (register_provider 로 외부 교체 가능)
+      3) 빈 문자열 (상위 호출자가 폴백 결정)
+    """
+    key = (provider or "").lower()
+    if key:
+        env_name = f"XGEN_HARNESS_{key.upper()}_DEFAULT_MODEL"
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
+            return env_val
+    return PROVIDER_DEFAULT_MODEL.get(key, "")
 
 
 def list_providers() -> list[str]:

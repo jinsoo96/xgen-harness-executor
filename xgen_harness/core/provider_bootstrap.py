@@ -44,7 +44,7 @@ async def ensure_provider(state: "PipelineState", *, stage_id: str = "") -> "LLM
     from .execution_context import get_api_key as ctx_get_api_key
     from ..providers import (
         create_provider, get_api_key_env, resolve_api_key_from_file,
-        PROVIDER_DEFAULT_MODEL,
+        get_default_model,
     )
 
     config = state.config
@@ -52,7 +52,7 @@ async def ensure_provider(state: "PipelineState", *, stage_id: str = "") -> "LLM
         raise PipelineAbortError("Config not set", stage_id or "provider_bootstrap")
 
     provider_name: str = (config.provider or "").lower()
-    model_name: str = config.model or PROVIDER_DEFAULT_MODEL.get(provider_name, "")
+    model_name: str = config.model or get_default_model(provider_name)
     if not provider_name or not model_name:
         raise PipelineAbortError(
             f"Provider/model not resolved (provider={provider_name!r}, model={model_name!r})",

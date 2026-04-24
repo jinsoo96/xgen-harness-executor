@@ -5,6 +5,43 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] — 2026-04-24
+
+### 🧹 엔진 독립성 + 레지스트리 완성
+
+내부 코드 감사 결과 치명 등급 지적 3건 정리. 엔진은 이제 xgen 을 전혀 모른다.
+
+### Breaking (이식측 행동 필요)
+
+- **`xgen_harness.integrations/` 디렉터리 삭제**. xgen 특화 코드(XgenAdapter / XgenServiceProvider / xgen NodeAdapter / SSE 변환 / workflow_bridge) 는 호스트(xgen-workflow) 측 `harness_bridge/` 로 이전. 엔진이 `editor.node_composer` 같은 호스트 모듈을 보던 잔재 제거.
+- **`xgen_harness.adapters.xgen.XgenAdapter` 삭제**. 같은 경로로 이전.
+- 호스트는 `adapters.resource_registry.ExternalNodeRef` Protocol 을 만족하는 dataclass(node_id / category / spec_id / params 4 필드) 를 tool_executor 로 등록하면 엔진이 자동 감지 (duck-typing).
+
+### 추가
+
+- `adapters.resource_registry.ExternalNodeRef` — runtime_checkable Protocol. `_XgenNodeRef` isinstance 체크가 이 Protocol 로 일반화.
+- `core.config.mark_stage_required(stage_id)` / `unmark_stage_required(...)` / `get_required_stages()`. `REQUIRED_STAGES` 는 live set 으로 외부 등록 즉시 반영.
+- `OrchestratorSpec.replan_per_iter` / `max_iterations_override`. pipeline 이 이름 if-else 대신 spec 을 조회하여 행동 분기. 외부 orchestrator 도 선언만 하면 엔진이 동일하게 존중.
+- `providers.get_default_model(provider)` — env override (`XGEN_HARNESS_{PROVIDER}_DEFAULT_MODEL`) 우선. 새 모델 출시 시 코드 수정 없이 런타임 반영.
+- `core.pipeline.ROLE_ORCHESTRATOR_PLANNER / ROLE_POLICY_GATE / ROLE_MAIN_ACTOR / ROLE_SCORER` 상수 박제. 리터럴 중복 제거.
+
+### 변경
+
+- `core.pipeline.py` 의 `"linear"/"plan_execute"` 이름 분기 → `get_orchestrator(name).replan_per_iter / max_iterations_override` 조회.
+- 전 코드에서 `PROVIDER_DEFAULT_MODEL.get(...)` 직접 호출 → `get_default_model(...)` 로 교체 (builder/session/provider_bootstrap/multi_agent/api.router).
+- `pyproject.toml` `package-data` 의 `integrations/*.json` 항목 제거.
+
+### 제거되지 않은 것 (v0.23+ 예정)
+
+- `core.stage_config` 의 UI 리터럴(`icon`/`fields.label` 등). 프론트가 이 필드를 렌더에 사용하는지 전수 확인 후 별도 PR 에서 이전 예정.
+
+### 감사 후속 — 이전 감사의 오진 수정
+
+- `events.types` 의 `MissingParamEvent / StageSubstepEvent / RetryEvent / PlanningEvent` 는 **죽은 코드 아님**. `state.emit_verbose(...)` wrapper 경유 emit 총 14 건 확인. 삭제 계획 철회.
+- `core.planner.py:419` 의 `chosen.sort(...)` 는 실행 순서가 아닌 표시용 정렬 (_planner_skips 는 set membership). 자율주행 훼손 아님. 유지.
+
+---
+
 ## [0.21.0] — 2026-04-24
 
 ### 🌀 NOM IR 허브 — Phase C 완결

@@ -30,6 +30,16 @@ from ..errors import HarnessError, PipelineAbortError
 logger = logging.getLogger("harness.pipeline")
 
 
+# ─── Role 상수 (v0.22.0) ─────────────────────────────────────────────
+# Stage.role 이름은 pipeline ↔ stage 간 계약. 리터럴을 파일 여기저기 박지 않고
+# 상수로 통일해 외부 기여자가 "어떤 role 이름이 예약돼 있는가" 를 한눈에 보게 한다.
+# 외부 Stage 가 여기 이름으로 role 을 선언하면 Pipeline 이 동일하게 대우한다.
+ROLE_ORCHESTRATOR_PLANNER = "orchestrator_planner"  # s00_harness 류 — main_call/replan 호출 대상
+ROLE_POLICY_GATE = "policy_gate"                    # Policy Gate Stage — 4 훅 경로 소유
+ROLE_MAIN_ACTOR = "main_actor"                      # s07_act 류 — main_call 투입 지점
+ROLE_SCORER = "scorer"                              # validation_score 를 StageExit 에 노출할 Stage
+
+
 class Pipeline:
     """하네스 파이프라인 실행기"""
 
@@ -76,7 +86,7 @@ class Pipeline:
         # 선언하면 Pipeline 코드 변경 0 으로 대체 가능.
         mode = getattr(config, "harness_mode", "") or ("autonomous" if config.use_planner else "off")
         if mode != "off":
-            planner_stage = _find_role_in_registry(reg, config, "orchestrator_planner")
+            planner_stage = _find_role_in_registry(reg, config, ROLE_ORCHESTRATOR_PLANNER)
             if planner_stage is not None:
                 # 기존 stages 에서 같은 stage_id 제거 후 최상단 prepend.
                 stages = [s for s in stages if s.stage_id != planner_stage.stage_id]
@@ -130,22 +140,34 @@ class Pipeline:
             #   react / dag  : 엔진 no-op (이식측 dispatcher 위임)
             s00_stage = self._find_loop_s00()
             # v0.17.0 — Policy Gate (role="policy_gate") 인스턴스. 없으면 훅 no-op.
-            policy_stage = self._find_role_stage("policy_gate")
+            policy_stage = self._find_role_stage(ROLE_POLICY_GATE)
+            # v0.22.0 — orchestrator 행동을 레지스트리 spec 으로 조회. "linear"/"plan_execute"
+            # if-else 하드코딩 제거. 외부 orchestrator 도 replan_per_iter/max_iterations_override
+            # 를 선언만 하면 엔진이 동일하게 존중.
+            from .orchestrator_registry import get_orchestrator
             orch_hint = (state.metadata.get("orchestrator_hint") or "").strip().lower()
-            logger.info(
-                "[Pipeline] Phase B: Agentic Loop (max %d iterations, orchestrator_hint=%r)",
-                self.config.max_iterations, orch_hint or "iterative(default)",
+            orch_spec = get_orchestrator(orch_hint) or get_orchestrator("iterative")
+            effective_max_iter = (
+                orch_spec.max_iterations_override
+                if orch_spec and orch_spec.max_iterations_override is not None
+                else self.config.max_iterations
             )
-            while state.loop_decision == "continue" and not state.is_over_iterations and not state.is_over_budget:
+            replan_per_iter = bool(orch_spec.replan_per_iter) if orch_spec else True
+            logger.info(
+                "[Pipeline] Phase B: Agentic Loop (max_iter=%d, orchestrator=%r, replan=%s)",
+                effective_max_iter, (orch_spec.name if orch_spec else orch_hint) or "iterative(default)",
+                replan_per_iter,
+            )
+            while state.loop_decision == "continue" and state.loop_iteration < effective_max_iter and not state.is_over_budget:
                 state.loop_iteration += 1
                 logger.info("[Pipeline] Loop iteration %d", state.loop_iteration)
 
-                # iterative replan — 2번째 iter 부터. linear / plan_execute 는 replan 생략.
-                # Plan 이 done 플래그를 세우면 즉시 종료 (모든 hint 공통).
+                # iterative replan — 2번째 iter 부터. replan_per_iter=False 면 생략.
+                # Plan 이 done 플래그를 세우면 즉시 종료 (공통).
                 if (
                     state.loop_iteration > 1
                     and s00_stage is not None
-                    and orch_hint not in ("linear", "plan_execute")
+                    and replan_per_iter
                 ):
                     await self._execute_stage(s00_stage, state)
                     plan = state.metadata.get("harness_plan") or {}
@@ -156,14 +178,14 @@ class Pipeline:
 
                 for stage in self.loop_stages:
                     # v0.17.0 — Policy Gate 는 loop 순서에서 skip. Pipeline 이 3 훅에 별도 호출.
-                    if stage.role == "policy_gate":
+                    if stage.role == ROLE_POLICY_GATE:
                         await self._emit_bypass(stage, state, reason="Policy Gate 는 훅 경로로 호출")
                         continue
 
                     # v0.16.6 — "main_actor" role Stage 직전에 Planner 의 main_call 주입.
                     # 이름 리터럴("s07_act") 대신 Stage.role 로 검색 → 외부 Stage 가
                     # 같은 role 로 바꿔 끼워도 자동 인식.
-                    if stage.role == "main_actor":
+                    if stage.role == ROLE_MAIN_ACTOR:
                         # v0.17.0 — pre_main 훅 (입력/Plan 정책)
                         await self._invoke_policy_gate(state, policy_stage, "pre_main")
                         if state.policy_block_reason:
@@ -195,9 +217,14 @@ class Pipeline:
                 # v0.17.0 — iter 말미 loop_boundary 훅 (예산·반복 등 누적 정책)
                 await self._invoke_policy_gate(state, policy_stage, "loop_boundary")
 
-                # v0.15.3 — linear hint: 1회만 돌고 강제 종료. replan/iteration 전부 skip.
-                if orch_hint == "linear" and state.loop_decision == "continue":
-                    logger.info("[Pipeline] orchestrator_hint=linear — 1회 실행 후 종료")
+                # v0.22.0 — max_iterations_override=1 (linear 등) 이면 강제 종료.
+                # 이름 리터럴 없이 spec 의 수치를 본다.
+                if (
+                    orch_spec
+                    and orch_spec.max_iterations_override == 1
+                    and state.loop_decision == "continue"
+                ):
+                    logger.info("[Pipeline] orchestrator %r max_iter=1 — 1회 실행 후 종료", orch_spec.name)
                     state.loop_decision = "complete"
                     break
 
@@ -295,7 +322,7 @@ class Pipeline:
                 stage_name=stage.display_name_ko,
                 output=result,
                 # v0.16.6 — "scorer" role Stage 의 StageExit 에만 validation_score 노출.
-                score=state.validation_score if stage.role == "scorer" else None,
+                score=state.validation_score if stage.role == ROLE_SCORER else None,
                 step=step,
                 total=self._total_stage_count,
             ))
@@ -395,7 +422,7 @@ class Pipeline:
         fallback 상태에서는 skip 하지 않음 (전체 실행 — 하위 호환).
         v0.16.6 — Planner 자신(role="orchestrator_planner") 은 skip 대상 외.
         """
-        if stage.role == "orchestrator_planner":
+        if stage.role == ROLE_ORCHESTRATOR_PLANNER:
             return False
         plan = state.metadata.get("harness_plan")
         if not isinstance(plan, dict):
@@ -469,7 +496,7 @@ class Pipeline:
         Phase B iter 의 replan 은 같은 인스턴스를 재호출해야 Plan 이 누적·갱신.
         Planner 비활성이면 None 반환. 이름 리터럴 없이 role 로만 검색.
         """
-        return self._find_role_stage("orchestrator_planner")
+        return self._find_role_stage(ROLE_ORCHESTRATOR_PLANNER)
 
     def _find_role_stage(self, role: str) -> Optional[Stage]:
         """v0.17.0 — role 이름으로 Stage 인스턴스 조회 (범용)."""

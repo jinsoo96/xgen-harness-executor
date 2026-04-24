@@ -23,10 +23,27 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Protocol, Union, runtime_checkable
 
 from ..core.services import ServiceProvider, NullServiceProvider
 from ..tools.base import Tool, ToolResult
+
+
+@runtime_checkable
+class ExternalNodeRef(Protocol):
+    """호스트 환경(xgen-workflow 등)이 `execute_tool` 경로에 끼워넣는 노드 실행 참조.
+
+    Why: 엔진은 xgen 특화 타입(`_XgenNodeRef` 등)을 더 이상 직접 import 하지 않는다.
+    호스트가 이 Protocol 을 만족하는 dataclass 를 tool_executor 로 등록하면,
+    `execute_tool` 이 duck-typing 으로 감지하여 `_call_xgen_node` 로 위임한다.
+
+    How to apply: 호스트는 dataclass 에 아래 4 필드만 맞추면 자동 합류.
+    별도 register 호출 불필요 (runtime_checkable Protocol + isinstance).
+    """
+    node_id: str
+    category: str
+    spec_id: str
+    params: dict
 
 logger = logging.getLogger("harness.resources")
 
@@ -159,9 +176,6 @@ class ResourceRegistry:
 
     async def execute_tool(self, tool_name: str, tool_input: dict) -> str:
         """도구 실행 — MCP, API, Gallery, 빌트인 전부 통합."""
-        # 지연 import — 순환 참조 회피
-        from ..integrations.xgen_node_adapters import _XgenNodeRef
-
         executor = self._tool_executors.get(tool_name)
         if executor is None:
             return f"Error: Tool '{tool_name}' not found in registry"
@@ -176,9 +190,7 @@ class ResourceRegistry:
                 return await self._call_api_tool(executor.spec, tool_input)
             elif isinstance(executor, _DBToolRef):
                 return await self._call_db_tool(executor, tool_input)
-            elif isinstance(executor, _XgenNodeRef):
-                # 병합 순서: manual 이 마지막에 spread — LLM 이 스키마를 우회해 manual 키를
-                # 끼워넣어도 덮어쓰지 못하게. 최종 우선순위: manual > auto (tool_input).
+            elif isinstance(executor, ExternalNodeRef):
                 merged = {
                     **(tool_input or {}),
                     **(executor.params or {}),

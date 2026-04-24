@@ -30,9 +30,9 @@ class PipelineBuilder:
     """Fluent builder로 파이프라인 구성"""
 
     def __init__(self):
-        from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
+        from ..providers import get_default_provider, get_default_model
         self._provider = get_default_provider()
-        self._model = PROVIDER_DEFAULT_MODEL.get(self._provider, "")
+        self._model = get_default_model(self._provider)
         self._api_key = ""
         self._temperature = 0.7
         self._max_tokens = 8192

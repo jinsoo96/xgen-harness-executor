@@ -105,12 +105,12 @@ class HarnessSession:
     @classmethod
     def from_dict(cls, data: dict) -> "HarnessSession":
         """직렬화된 상태에서 세션 복원"""
-        from ..providers import PROVIDER_DEFAULT_MODEL, get_default_provider
+        from ..providers import get_default_provider, get_default_model
         config_data = data.get("config", {})
         provider = config_data.get("provider") or get_default_provider()
         config = HarnessConfig(
             provider=provider,
-            model=config_data.get("model") or PROVIDER_DEFAULT_MODEL.get(provider, ""),
+            model=config_data.get("model") or get_default_model(provider),
             temperature=config_data.get("temperature", 0.7),
             max_tokens=config_data.get("max_tokens", 8192),
             system_prompt=config_data.get("system_prompt", ""),

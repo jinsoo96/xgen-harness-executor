@@ -19,12 +19,17 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class OrchestratorSpec:
-    """Orchestrator 설명."""
+    """Orchestrator 설명 + 엔진이 읽는 행동 속성.
+
+    v0.22.0 — 행동 분기를 spec 으로 옮김. pipeline 은 이름으로 if-else 하지 않고
+    속성을 조회한다. 외부 orchestrator 는 새 값을 선언적으로 주기만 하면 엔진이 반영.
+    """
     name: str
     description: str
-    # 프로그램적 힌트 — 이식측 dispatcher 가 이 값을 보고 실제 구현 매핑.
-    # 엔진은 해석하지 않음 (자유 문자열).
     dispatch_key: str = ""
+    # 엔진 행동 힌트. 외부 패턴도 동일 의미로 사용.
+    replan_per_iter: bool = True           # False 면 매 iter s00 재호출 생략 (plan_execute 류)
+    max_iterations_override: Optional[int] = None  # 지정하면 config.max_iterations 를 이것으로 덮음 (linear=1)
 
 
 _REGISTRY: dict[str, OrchestratorSpec] = {}
@@ -36,6 +41,8 @@ def register_orchestrator(
     *,
     description: str = "",
     dispatch_key: str = "",
+    replan_per_iter: bool = True,
+    max_iterations_override: Optional[int] = None,
 ) -> None:
     """새 orchestrator 를 레지스트리에 등록.
 
@@ -45,7 +52,11 @@ def register_orchestrator(
     if not isinstance(name, str) or not name.strip():
         raise ValueError("orchestrator name must be non-empty string")
     _REGISTRY[name] = OrchestratorSpec(
-        name=name, description=description, dispatch_key=dispatch_key or name
+        name=name,
+        description=description,
+        dispatch_key=dispatch_key or name,
+        replan_per_iter=replan_per_iter,
+        max_iterations_override=max_iterations_override,
     )
 
 
@@ -88,30 +99,36 @@ def _ensure_defaults_registered() -> None:
             "linear",
             description="한 번 돌고 종료. 단순 Q&A, 단발성 요청에 적합.",
             dispatch_key="linear",
+            replan_per_iter=False,
+            max_iterations_override=1,
         )
     if "iterative" not in _REGISTRY:
         register_orchestrator(
             "iterative",
             description="매 iter 재계획. Plan 이 이전 결과 보고 다음 행동 결정.",
             dispatch_key="iterative",
+            replan_per_iter=True,
         )
     if "react" not in _REGISTRY:
         register_orchestrator(
             "react",
             description="도구 호출 결과(Observation)보고 다음 Thought→Action.",
             dispatch_key="react",
+            replan_per_iter=True,
         )
     if "plan_execute" not in _REGISTRY:
         register_orchestrator(
             "plan_execute",
             description="첫 Plan 고수. 멀티 스텝 계획을 세우고 흔들리지 않고 실행.",
             dispatch_key="plan_execute",
+            replan_per_iter=False,
         )
     if "dag" not in _REGISTRY:
         register_orchestrator(
             "dag",
             description="멀티 에이전트 DAG. 노드 간 병렬/직렬 혼합, 이식측 DAGOrchestrator 가 실행.",
             dispatch_key="dag",
+            replan_per_iter=True,
         )
 
     # entry_points 기반 자동 발견 — pip install xxx 한 것이 즉시 합류.
@@ -142,6 +159,8 @@ def _discover_from_entry_points() -> None:
                         spec["name"],
                         description=spec.get("description", ""),
                         dispatch_key=spec.get("dispatch_key", ""),
+                        replan_per_iter=bool(spec.get("replan_per_iter", True)),
+                        max_iterations_override=spec.get("max_iterations_override"),
                     )
             except Exception:
                 # 개별 entry_point 실패는 전체 등록을 막지 않는다.

@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.21.0"
-description = "XGEN Harness — NOM IR 허브: to_mcp_schema/to_sandbox_payload/to_wheel_snapshot 3 변환 + compile_nom_graph one-shot + Tool Synthesis 통합"
+version = "0.22.0"
+description = "XGEN Harness — 엔진 독립성 완결: integrations/adapters.xgen 삭제, ExternalNodeRef Protocol, OrchestratorSpec 행동 속성, REQUIRED_STAGES 레지스트리, env-first default model"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
@@ -84,10 +84,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["xgen_harness*"]
 
-# v0.8.38+ 노드 파라미터 control policy JSON 을 휠에 포함
-# v0.10.0+ 컴파일러 템플릿은 순수 Python 문자열이라 package-data 불필요 (templates/__init__.py 에 내장)
-[tool.setuptools.package-data]
-"xgen_harness" = ["integrations/*.json"]
+# v0.10.0+ 컴파일러 템플릿은 순수 Python 문자열이라 package-data 불필요.
+# v0.22.0+ integrations/ 삭제 — xgen 특화 정책 JSON 은 이식 측(harness_bridge) 소유.
 
 # ─── v0.11.21 — 타입체커 gate (점진 도입) ───
 # code review 등급 C+ (타입 안전성) → B+ 로 끌어올리는 baseline.
