@@ -56,7 +56,7 @@ async def get_catalog_async(
         resources_hint = {
             k: v for k, v in workflow_hints.items()
             if k in ("mcp_sessions", "rag_collections", "custom_tools",
-                     "cli_skills", "capabilities", "node_tags", "folders", "files",
+                     "capabilities", "node_tags", "folders", "files",
                      "db_connections", "ontology_collections")
         }
         if resources_hint:

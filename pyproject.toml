@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.24.5"
-description = "XGEN Harness — 공용 tool sanitize (base.LLMProvider._sanitize_tool_defs). Anthropic 화이트리스트 하드코딩을 기반 메서드 + ALLOWED_TOOL_KEYS 오버라이드로 일반화"
+version = "0.25.0"
+description = "XGEN Harness — ToolSource 를 유일한 도구 공급 채널로 승격. s04_tool 의 mcp_sessions/custom_tools/node_tags/cli_skills 4 하드코딩 경로 제거, selected_tools + tool_source_filters 단일 맵 + /api/harness/tool-sources 엔드포인트"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

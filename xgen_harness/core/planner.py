@@ -41,8 +41,8 @@ class HarnessPlan:
         stage_id → 스킵 이유. 프론트 표시용.
     params : dict[str, dict[str, Any]]
         stage_id → 파라미터 override. Pipeline 실행 전 state.config.stage_params 에 병합.
-        도구/리소스 선택 (mcp_sessions / rag_collections / selected_custom_tools /
-        capabilities 등) 도 이 dict 에 들어간다.
+        도구/리소스 선택 (s04_tool 의 selected_tools / tool_source_filters /
+        rag_collections / capabilities 등) 도 이 dict 에 들어간다.
     strategies : dict[str, str]
         stage_id → Strategy 이름. state.config.active_strategies 에 병합.
     reasoning : str
@@ -108,8 +108,9 @@ PLAN_TOOL_INPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": {"type": "object"},
             "description": (
                 "stage_id → 파라미터 override dict. Stage 의 fields.default 와 다를 때만. "
-                "도구 선택(mcp_sessions / rag_collections / selected_custom_tools / "
-                "capabilities / node_tags 등) 도 이 안에 기록."
+                "s04_tool 의 도구 선택은 selected_tools (source_id → 도구 이름 리스트) 와 "
+                "tool_source_filters (source_id → 필터 파라미터) 로 기록. "
+                "rag_collections / capabilities 도 이 안에."
             ),
         },
         "strategies": {

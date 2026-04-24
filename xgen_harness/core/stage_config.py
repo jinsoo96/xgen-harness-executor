@@ -238,20 +238,36 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s04_tool": {
-        "description_ko": "사용할 도구, MCP 세션, 문서 컬렉션을 선택합니다. Progressive Disclosure로 효율적으로 관리합니다.",
-        "when_to_use": "외부 도구(API/DB/웹/MCP)·RAG 컬렉션·custom_tools·capabilities 중 하나 이상 필요. 도구 선택 자체가 이 Stage 의 핵심.",
+        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / synthesized / 외부 entry_points).",
+        "when_to_use": "외부 도구·RAG 컬렉션·capability 중 하나 이상 필요. 도구 공급 = ToolSource 단일 채널.",
         "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
         "cost_hint": "low",
-        "description_en": "Select tools, MCP sessions, and document collections.",
+        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / synthesized / external entry_points).",
         "icon": "🔧",
         "fields": [
+            # v0.25.0 — 단일 도구 공급 경로. source_id → 허용 도구 이름 리스트.
+            #   키 없음 = 해당 소스 전체 포함.
+            #   빈 리스트 = 소스 비활성.
+            #   이름 리스트 = 그 도구만 포함.
+            # 프론트가 /api/harness/tool-sources 응답으로 Box 를 동적 렌더한 뒤,
+            # 사용자가 Box 안 체크박스를 켠 도구 이름만 채워 준다.
             {
-                "id": "mcp_sessions",
-                "label": "MCP 세션",
-                "type": "multi_select",
-                "options_source": "mcp_sessions",
-                "default": [],
-                "description": "연결할 MCP 세션 (GitHub, Slack, DB 등)",
+                "id": "selected_tools",
+                "label": "Selected Tools (by source)",
+                "type": "object",
+                "default": {},
+                "description": "source_id → 허용 도구 이름 리스트. 키 없음=소스 전체, 빈 리스트=소스 비활성.",
+            },
+            # 각 ToolSource 의 filter_schema 에 따라 프론트가 sub-UI 를 렌더하고,
+            # 사용자가 선택한 값이 여기 저장된다. 예:
+            #   {"mcp-sessions": {"session_ids": ["abc"]},
+            #    "xgen-nodes":   {"tags": ["api", "database"]}}
+            {
+                "id": "tool_source_filters",
+                "label": "Tool Source Filters",
+                "type": "object",
+                "default": {},
+                "description": "소스별 list_tools 필터 파라미터 맵.",
             },
             {
                 "id": "rag_collections",
@@ -281,26 +297,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "도구 호출 강제 (v0.11.19+)",
                 "type": "toggle",
                 "default": False,
-                "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건. rag_tool_mode=tool + rag_ingestion_mode=tool_only 조합 필수.",
-            },
-            # v0.11.23 — 이식 options_source 4종을 엔진 stage_config 에 공식 선언.
-            # 이전까지 이식 `harness_options_registry.py` 에서 stage_id="s04_tool" 을
-            # 수동으로 박아두던 것을 자동 역매핑 경로로 전환.
-            {
-                "id": "custom_tools",
-                "label": "Custom API Tools",
-                "type": "multi_select",
-                "options_source": "tools",
-                "default": [],
-                "description": "사용자 도구 저장소에 등록된 API 도구 선택.",
-            },
-            {
-                "id": "cli_skills",
-                "label": "Local CLI Skills",
-                "type": "multi_select",
-                "options_source": "local-cli-skills",
-                "default": [],
-                "description": "Local CLI skill 도구 선택.",
+                "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건.",
             },
             {
                 "id": "capabilities",
@@ -310,21 +307,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": [],
                 "description": "Capability 카탈로그 선택 — 도구 자동 바인딩.",
             },
-            {
-                "id": "node_tags",
-                "label": "Node Tags",
-                "type": "multi_select",
-                "options_source": "nodes-tags",
-                "default": [],
-                "description": "xgen 노드 태그 기반 도구 그룹.",
-            },
         ],
         "behavior": [
+            "단일 공급 채널: 모든 도구는 ToolSource.list_tools() 로 수집",
             "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",
             "Level 2: discover_tools로 상세 스키마 조회",
-            "Level 3: 실제 도구 실행 (s08_act)",
+            "Level 3: 실제 도구 실행 (s07_act)",
             "RAG: Documents API로 벡터 검색 → 시스템 프롬프트에 주입",
-            "MCP: MCP 서비스에서 도구 자동 디스커버리",
+            "확장: 외부 패키지가 entry_points(xgen_harness.tool_sources) 로 자기 소스 등록",
         ],
     },
     "s05_strategy": {

@@ -68,6 +68,9 @@ class StageDescription:
     description: str = ""
     required: bool = False
     active: bool = True
+    # Pipeline role — "policy_gate" / "orchestrator_planner" / "main_actor" / "scorer" / "".
+    # 프론트가 hook-only Stage (policy_gate) 를 일반 loop 순번에서 분리 렌더할 때 기준.
+    role: str = ""
     strategies: list[StrategyInfo] = field(default_factory=list)
     # I/O 계약 (Stage 인터페이스 정형화)
     input_requires: list[str] = field(default_factory=list)
@@ -193,6 +196,7 @@ class Stage(ABC):
             display_name_ko=self.display_name_ko,
             phase=self.phase,
             order=self.order,
+            role=self.role,
             strategies=self.list_strategies(),
         )
         # I/O 스펙 포함

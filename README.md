@@ -21,7 +21,7 @@ pip install xgen-harness
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.  
 > 13 Stage 가 환경 슬롯(capability/도구/리소스/파라미터를 LLM 에 노출), 사용자는 **무엇을** 할지만 선언, 하네스가 **어떻게** 자동 조립.
 
-**v0.24.0 기준**
+**v0.25.0 기준**
 1. **Stage = 환경 슬롯** + **LLM 자율 선택** (Planner 통제탑 · Auto/Selected/Off 3 모드)
 2. **자동 오케스트레이터** (linear/iterative/plan_execute/react/dag) — 행동 속성은 `OrchestratorSpec.replan_per_iter / max_iterations_override` 로 선언적. 외부 오케스트레이터도 동일 계약.
 3. **Strategy × Capability 3층 구조**
@@ -29,9 +29,88 @@ pip install xgen-harness
 5. **양방향 MCP** (v0.18.0) — 하네스 워크플로우 → wheel → **MCP stdio 서버 자동 말아올리기**, 마켓·설치된 MCP 를 s04_tool 카탈로그에 자동 주입
 6. **Sandbox Verifier** (v0.20.0) — 발행 전 `initialize + tools/list + rlimit` **격리 게이트**
 7. **NOM IR 허브** (v0.21.0) — Stage/Strategy/Tool/MCP/Plugin 을 단일 IR 로 통합. `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환. `compile_nom_graph(graph, ...)` one-shot
-8. **엔진 독립성 완결** (v0.22.0) — xgen 특화 코드(Adapter/Service/NodeAdapter/SSE 2,040 LOC) 는 호스트 측 소유. `ExternalNodeRef` Protocol 로 호스트가 4 필드 dataclass 만 등록하면 duck-typing 자동 감지. `REQUIRED_STAGES` 는 live set — `mark_stage_required()` 로 외부 등록. 기본 모델은 `XGEN_HARNESS_<PROVIDER>_DEFAULT_MODEL` env 우선.
-9. **MCP Tool Annotations 1급화 + 행동 지문 회귀 테스트** (v0.23.0) — Tool ABC 에 `read_only_hint / destructive_hint / idempotent_hint / open_world_hint` 4 힌트 1급 속성. `s07_act` 이름 휴리스틱 (`"create"/"update"/...` 키워드 매칭) 완전 폐기 → `annotations.readOnlyHint` 5 단 우선순위 조회. MCP 서버가 2025-06-18+ 표준 `annotations` 블록을 보내면 그대로 수용. Planner 정규화 행동 지문 5 케이스 (`tests/test_plan_fingerprint.py`) — 단위 테스트로 못 잡는 "에이전트 행동 변화" 감지.
-10. **HITL Guard + Agent-controlled Compact Tool + approval SSE** (v0.24.0) — v0.23 annotations 를 실제 안전·절감 게이트로 확장. **HITLGuard** 는 `destructiveHint=true` 도구 호출 전 `ApprovalRequiredEvent` 방출 + 사용자 승인 대기 → `resolve_approval()` 로 실행 재개. 승인자가 `edited_input` 주면 args 자동 교체 (오입력 교정). **CompactTool** 은 LLM 이 자율 호출해 `tool_results_before:N` / `history_before:N` / `pd_store:<kind>` 를 요약으로 치환 — 누적 컨텍스트 부풀이 해소. `Guard.check_async` + `GuardChain.invoke_async` 비동기 경로. 22/22 pytest PASS.
+8. **엔진 독립성 완결** (v0.22.0) — xgen 특화 코드(Adapter/Service/NodeAdapter/SSE 2,040 LOC) 는 호스트 측 소유. `ExternalNodeRef` Protocol 로 호스트가 4 필드 dataclass 만 등록하면 duck-typing 자동 감지.
+9. **MCP Tool Annotations 1급화** (v0.23.0) — Tool ABC 에 4 힌트 1급 속성. `s07_act` 이름 휴리스틱 완전 폐기 → `annotations.readOnlyHint` 우선순위 조회.
+10. **HITL Guard + Agent-controlled Compact Tool** (v0.24.0) — `destructiveHint=true` 도구 호출 전 approval 모달 + `CompactTool` 로 LLM 이 자율 컨텍스트 압축.
+11. **ToolSource 단일 공급 채널** (v0.25.0) — s04_tool 이 도구를 얻는 **유일한 경로**. `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 하드코딩 stage_param 전부 제거. 이식·외부 플러그인은 `ToolSource` Protocol (`source_id` / `display_name` / `filter_schema` / `list_tools(filters)` / `call_tool(name, args)` / `has_tool(name)`) 만 만족해서 `register_tool_source()` 또는 `entry_points(group="xgen_harness.tool_sources")` 로 합류. 신설 `GET /api/harness/tool-sources` 가 등록된 모든 소스의 메타 + `list_tools()` 결과를 한 번에 내려줘서 프론트 s04 가 **하드코딩 Box 없이 동적 N Box** 렌더. `use_request_headers()` 컨텍스트가 Authorization / x-user-* 를 downstream ToolSource 에 자동 전파.
+
+---
+
+## 🧩 ToolSource — 도구 공급의 단일 경로 (v0.25.0)
+
+하네스 에이전트가 쓸 수 있는 도구는 **한 가지 경로** 로만 들어온다:
+
+```python
+from xgen_harness.tools import ToolSource, register_tool_source
+
+class MySource:
+    source_id = "my-tools"
+    display_name = "My Tools"
+    display_name_ko = "내 도구"
+    description = "외부 API 도구 모음"
+    icon = "🛠"
+    category = "api"
+    # 필터 스키마 — 프론트 s04 UI 가 Box 안에 sub-UI 로 자동 렌더.
+    filter_schema = {
+        "tags": {"type": "multi_select", "options_source": "my-tags",
+                 "label_ko": "태그", "label_en": "Tags"},
+    }
+
+    async def list_tools(self, filters=None) -> list[dict]:
+        # filters["tags"] 있으면 필터 적용. 각 dict 는 {name, description,
+        # input_schema, annotations?, tags?} 표준 스키마.
+        ...
+
+    async def call_tool(self, name: str, args: dict) -> dict:
+        # tool 실행. 반환 dict 는 {"content": str, "is_error": bool?}.
+        ...
+
+    def has_tool(self, name: str) -> bool: ...
+
+register_tool_source(MySource())
+```
+
+**entry_points 자동 발견**:
+
+```toml
+# pyproject.toml
+[project.entry-points."xgen_harness.tool_sources"]
+my_source = "my_pkg:MySource"
+```
+
+pip install 후 엔진 재시작 → **엔진 / 이식 / 프론트 코드 0 수정** 으로 s04 UI 에 "My Tools" Box 가 자동 등장하고 LLM 이 호출 가능.
+
+**stage_params** (v0.24 → v0.25 Breaking):
+
+| v0.24 (제거) | v0.25 |
+|---|---|
+| `mcp_sessions: list[str]` | `selected_tools: dict[str, list[str]]` (source_id → 도구 이름) |
+| `custom_tools: list[str]` | 키 없음 = 소스 전체, `[]` = 소스 비활성 |
+| `node_tags: list[str]` | `tool_source_filters: dict[str, dict]` (소스별 list_tools 필터) |
+| `cli_skills: list[str]` | (껍데기였음 — GC) |
+
+**엔드포인트** (신설):
+
+```
+GET /api/harness/tool-sources?include_tools=true&filters=<json>
+→ {
+    "sources": [
+      {
+        "source_id": "mcp-sessions",
+        "display_name": "MCP Sessions",
+        "display_name_ko": "MCP 세션",
+        "description": "...",
+        "icon": "🔌",
+        "category": "mcp",
+        "filter_schema": {"session_ids": {...}},
+        "tools": [{"name": "...", "description": "...", "input_schema": {...}}]
+      },
+      ...
+    ]
+  }
+```
+
+요청 헤더 (Authorization / x-user-*) 는 `use_request_headers()` contextvar 로 전파되어 각 ToolSource 의 self-loopback 호출에 재사용된다.
 
 ---
 

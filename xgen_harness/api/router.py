@@ -65,6 +65,67 @@ try:
             s["behavior"] = cfg.get("behavior", [])
         return {"stages": stages, "required": list(REQUIRED_STAGES), "all": ALL_STAGES}
 
+    # === Tool Sources (v0.25.0) ===
+    #
+    # 단일 도구 공급 채널. 등록된 모든 ToolSource 의 메타 + list_tools 결과.
+    # 프론트 s04 UI 가 이 응답 하나로 Box 전부 동적 렌더.
+    #
+    # 쿼리 파라미터 (옵션):
+    #   include_tools=true  — 각 소스의 list_tools() 결과 포함 (기본 true)
+    #   filters=<json>      — {source_id: {...}} 필터 맵 (UI 에서 sub-UI 상태 전파용)
+
+    from fastapi import Request
+
+    @harness_router.get("/tool-sources")
+    async def list_tool_sources(
+        request: Request,
+        include_tools: bool = True,
+        filters: str = "",
+    ):
+        """등록된 ToolSource 메타 + (옵션) 각 소스의 도구 목록.
+
+        요청 헤더 (Authorization / x-user-*) 는 ``use_request_headers`` 컨텍스트로
+        전파되어 각 ToolSource 의 self-loopback 호출에 재사용된다.
+
+        응답 shape::
+
+            {
+              "sources": [
+                {
+                  "source_id": "mcp-sessions",
+                  "display_name": "MCP Sessions",
+                  "display_name_ko": "MCP 세션",
+                  "description": "...",
+                  "icon": "🔌",
+                  "category": "mcp",
+                  "filter_schema": {...},
+                  "tools": [
+                    {"name": "...", "description": "...", "input_schema": {...}, "tags": [...]}
+                  ]
+                },
+                ...
+              ]
+            }
+        """
+        from ..tools import describe_all_sources, list_all_tools, use_request_headers
+
+        sources = describe_all_sources()
+        if include_tools:
+            parsed_filters: dict = {}
+            if filters:
+                try:
+                    parsed_filters = json.loads(filters) or {}
+                except Exception as e:
+                    logger.debug("[tool-sources] filters json parse failed: %s", e)
+            with use_request_headers(dict(request.headers)):
+                tools_by_sid = await list_all_tools(parsed_filters)
+            for s in sources:
+                s["tools"] = tools_by_sid.get(s["source_id"], [])
+        else:
+            for s in sources:
+                s["tools"] = []
+        return {"sources": sources}
+
     # === 동적 옵션 (v0.11.25 제거) ===
     #
     # 엔진이 MCP 세션 / RAG 컬렉션 조회용 엔드포인트를 제공하던 경로는 삭제됨.

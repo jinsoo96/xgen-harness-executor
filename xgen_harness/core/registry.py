@@ -152,6 +152,7 @@ class ArtifactRegistry:
                     "display_name_ko": desc.display_name_ko,
                     "phase": desc.phase,
                     "order": desc.order,
+                    "role": desc.role,
                     "active": desc.active,
                     "required": stage_id in REQUIRED_STAGES,
                     "artifacts": list(artifacts.keys()),

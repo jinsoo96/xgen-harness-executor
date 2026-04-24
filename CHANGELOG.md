@@ -5,6 +5,104 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] — 2026-04-24
+
+### ⚠️ Breaking: ToolSource 를 **유일한 도구 공급 채널** 로 승격
+
+v0.24 까지 s04_tool 이 도구를 긁어오는 길은 네 갈래였다 — `mcp_sessions`,
+`custom_tools`, `node_tags`, `cli_skills`. 네 개 각각에 대해 stage 내부에 특수
+분기가 있었고, 엔진이 xgen-mcp-station / xgen-core function_storage 를 직접
+HTTP 호출하는 독립성 위반이 누적. v0.25 는 이 전체를 `ToolSource` Protocol
+하나로 수렴한다.
+
+### 변경
+
+- `xgen_harness/tools/__init__.py`
+  - `ToolSource` Protocol 에 `list_tools(filters=None)` 시그니처 추가 (기존
+    구현도 backwards compat — TypeError 흡수해서 인자 없이 재호출).
+  - `describe_tool_source(source) -> dict` — source_id / display_name /
+    display_name_ko / description / icon / category / filter_schema 를 UI
+    메타로 노출. 속성 누락 시 안전 폴백.
+  - `describe_all_sources()` + `list_all_tools(filters_by_source)` — 엔진
+    `/tool-sources` 엔드포인트가 쓰는 고수준 헬퍼.
+  - `source_of(tool_name)` — 도구 이름 → 소스 id 역매핑 (s07_act 가 dispatch
+    직전 "누가 실행할지" 확인용).
+  - `use_request_headers(headers)` contextmanager + `get_request_headers()` —
+    `/tool-sources` 핸들러가 요청 헤더를 contextvar 에 실어주면 downstream
+    ToolSource 가 self-loopback 호출 시 Authorization / x-user-* 전파.
+  - `register_tool_source()` 이 동일 `source_id` 재등록 시 기존 슬롯을 **교체**
+    (hot-reload 시나리오).
+
+- `xgen_harness/stages/s04_tool/stage.py` — 전면 재작성
+  - `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` stage_param
+    읽기 경로 전부 제거.
+  - `selected_tools: dict[str, list[str]]` 단일 파라미터 — 키 없음=소스 전체
+    포함, 빈 리스트=소스 비활성, 이름 리스트=화이트리스트.
+  - `tool_source_filters: dict[str, dict]` 단일 파라미터 — 각 소스의
+    `list_tools` filter 파라미터 맵.
+  - `_discover_selected_mcp_tools()` / `_collect_mcp_sessions_from_workflow()`
+    삭제 (MCP 디스커버리는 호스트 측 `MCPStationToolSource` 가 담당).
+  - `tool_source_of: dict[tool_name -> source_id]` 를 state.metadata 에 기록
+    (s07_act dispatch 디버깅 / audit 용).
+  - `sources_discover_start` / `sources_discover_complete` StageSubstepEvent
+    추가.
+
+- `xgen_harness/core/stage_config.py` — s04_tool 필드 재정의
+  - `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 필드 삭제.
+  - `selected_tools` + `tool_source_filters` object 필드 신설.
+
+- `xgen_harness/api/router.py`
+  - `GET /api/harness/tool-sources?include_tools=true&filters=<json>` 신규
+    엔드포인트. 등록된 모든 `ToolSource` 메타 + 각 소스의 `list_tools()` 결과를
+    통째로 반환. 요청 헤더를 `use_request_headers()` 로 전파.
+
+- `xgen_harness/core/planner.py` — submit_plan 도구 설명 업데이트 (s04_tool
+  파라미터 명칭 `selected_tools` / `tool_source_filters` 반영).
+
+### 마이그레이션 (이식 / 외부 플러그인)
+
+**이식**: xgen 특화 소스 3 개를 `ToolSource` 로 구현해서 등록:
+  - `MCPStationToolSource` (source_id=`mcp-sessions`) — 기존 Station `/sessions` + 각 세션 `/tools` 를 `list_tools` / `call_tool` 로 감쌈. 기존 `_discover_selected_mcp_tools` 대체.
+  - `CustomAPIToolSource` (source_id=`custom-api`) — xgen-core `tools` 저장소 self-loopback 조회, 요청 헤더 전파로 user 컨텍스트 유지.
+  - `XgenNodeToolSource` (source_id=`xgen-nodes`) — `constants/node_registry.json` 파싱 + `ExternalNodeRef` 로 ResourceRegistry 실행 경로 재사용.
+
+`harness_bridge/__init__.py` 가 최초 import 시점에 `register_all_tool_sources()` 호출 → 엔진 레지스트리에 자동 주입.
+
+**외부 기여자**: 자기 wheel 의 `pyproject.toml` 에
+```toml
+[project.entry-points."xgen_harness.tool_sources"]
+my_source = "my_pkg:MySource"
+```
+선언만 하면 엔진 / 이식 / 프론트 코드 수정 0 으로 s04 UI 에 "My Source" Box 가 자동 등장.
+
+### 프론트 (xgen-frontend @xgen/api-client)
+
+- 신규 `listHarnessToolSources(filters?)` + 타입 `HarnessToolSource` /
+  `HarnessToolSourceItem` / `HarnessToolSourceFilterField` /
+  `HarnessToolSourcesResponse`.
+- `features/main-harness/src/components/resource-selector.tsx` 의 `ToolSelector`
+  전면 재작성 — 하드코딩 4 Box (MCP / Custom / CLI / nodeTags) 구조 삭제,
+  `/tool-sources` 응답 기반 동적 N Box 렌더. 각 Box 상단에 source.description
+  안내 카드 + filter_schema 기반 sub-UI (`ToolSourceFilterWidget` — multi_select
+  / text / toggle 세 위젯) + "전체 포함 / 비활성" 빠른 액션 + 도구 체크박스.
+- MCP Market 설치 UI 는 유지 — 설치는 `mcp-sessions` 소스의 공급원 확장 경로.
+
+### 하위호환
+
+- Breaking. 저장된 하네스 워크플로우에 `stage_params.s04_tool.mcp_sessions` 등
+  구형 키가 있으면 v0.25.0 엔진은 조용히 무시. 프론트 리로드 시 자동으로
+  `selected_tools` / `tool_source_filters` 로 재선택 필요 (사용자 수동).
+- 엔진 `describe_tool_source()` 는 Protocol 속성 누락 시 폴백 제공 — 구형
+  ToolSource 구현 (`source_id` 없음) 도 `type(source).__name__` 이름으로 UI 에
+  등장.
+
+### 관련 메모 / 설계 문서
+
+- `docs/worklog/2026-04-24-toolsource-unification.md` (예정)
+- 메모리: `feedback_harness_scope_only.md` (레거시 workflow 인프라 무침범 원칙 준수)
+
+---
+
 ## [0.24.5] — 2026-04-24
 
 ### 🧰 공용 tool sanitize — provider 하드코딩 분기 일반화
