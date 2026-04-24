@@ -5,6 +5,31 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.2] — 2026-04-24
+
+### 🔥 Auto 모드 s04_tool AttributeError 핫픽스
+
+프로덕션 Auto 모드 실행에서 `'list' object has no attribute 'items'` 로 s04_tool 직후 중단.
+
+### 원인
+
+- `ProgressiveDiscovery.discover` 반환형은 `tuple[list[dict], list[dict]]` — `tool_index` 는 **list**
+- `s04_tool/stage.py:153` 은 초기 dict 구조 시절 잔재로 `tool_index = {k: v for k, v in tool_index.items() ...}` dict comprehension 호출
+- 평소엔 `selected_builtins` 기본값 `["discover_tools"]` 덕분에 L151 분기 (`if "discover_tools" not in selected_builtins`) 가 False 라 숨어있던 버그
+- Auto 모드에서 Planner LLM 이 `builtin_tools=[]` 또는 discover_tools 뺀 list 로 제안 → 분기 True → `list.items()` 호출 → AttributeError
+
+### 수정
+
+- `s04_tool/stage.py:153` dict comprehension → list comprehension (`[ti for ti in tool_index if ti.get("name") != "discover_tools"]`)
+- 다른 5 소비처 (s03_prompt / s07_act / state.py 등) 는 전부 이미 list 로 일관 처리 중 — 본 수정은 s04_tool 1곳만 영향
+
+### 검증
+
+- `grep -rn tool_index.items() xgen_harness/` → 결과 0 (수정 후)
+- `grep -rn state.tool_index xgen_harness/` → 전부 list 순회/append
+
+---
+
 ## [0.24.1] — 2026-04-24
 
 ### 🔧 v0.24.0 후속 — `__version__` drift 핫픽스
