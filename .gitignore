@@ -11,3 +11,9 @@ node_modules/
 dist/
 *.egg-info/
 build/
+
+# 로컬 전용 (작성자 참고용 — 레포 추적 X)
+docs/
+bench_*.json
+smoke_report.json
+.pytest_cache/
