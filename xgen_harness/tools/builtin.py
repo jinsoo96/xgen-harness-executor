@@ -270,3 +270,253 @@ class FetchPDTool(Tool):
         meta = entry.get("meta", {})
         header = f"[pd:{kind}:{rid}] meta={meta}" if meta else f"[pd:{kind}:{rid}]"
         return ToolResult.success(f"{header}\n\n{full}")
+
+
+class CompactTool(Tool):
+    """대화 이력·도구 결과를 LLM 이 스스로 축약해 컨텍스트 비용을 줄임.
+
+    자동 threshold(s07_act 의 50KB per-tool-result 컷) 는 **개별 결과** 만 자름.
+    여러 턴·여러 도구 결과가 누적해 부풀면 자동으로 못 잡는다. CompactTool 은
+    LLM 이 "지금 무엇을 버려도 되는지" 판단하고 직접 호출해 버림 (Anthropic·
+    Cursor 류 long-running agent 표준 패턴).
+
+    scope:
+      - `tool_results_before:N` — N번째 이전 turn 들의 도구 결과 메시지 요약
+      - `history_before:N`      — N번째 이전 대화 턴 요약
+      - `pd_store:<kind>`       — pd_stores 의 특정 kind 원본을 요약으로 대체
+
+    summary_hint:
+      LLM 이 "어떤 정보를 남길지" 힌트 (예: "주문번호와 금액만", "에러 스택만").
+      비워두면 일반 요약.
+
+    summarizer 주입 방식:
+      s04_tool 이 Tool 인스턴스 생성 시 state 와 summarizer(콜러블) 를 바인딩.
+      summarizer 는 `(texts: list[str], hint: str) -> str` 시그니처.
+      기본 summarizer 는 state.provider 로 짧은 LLM 호출 수행 — provider 없으면
+      length-based truncate 로 폴백 (의미론 손실 있지만 동작 유지).
+
+    파괴적 호출 — `destructive_hint=True`. HITLGuard 가 트리거 대상으로 잡으면
+    사용자 승인 후 실행. 프로덕션에선 일반적으로 `trigger_destructive=True`
+    기본이라 compact 도 한 번 확인을 거치게 됨. dev 환경은 auto-approve 권장.
+    """
+
+    def __init__(self, state_ref, summarizer=None):
+        self._state = state_ref
+        self._summarizer = summarizer   # async callable or None
+
+    @property
+    def name(self) -> str:
+        return "compact"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Compact older tool results or conversation turns into a short summary "
+            "to reduce context size. Use when prior turns have large tool outputs "
+            "you no longer need verbatim. Provide `scope` (e.g. "
+            "'tool_results_before:5') and optional `summary_hint` for what to keep."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "description": (
+                        "Target to compact. One of: "
+                        "'tool_results_before:<N>' | 'history_before:<N>' | 'pd_store:<kind>'"
+                    ),
+                },
+                "summary_hint": {
+                    "type": "string",
+                    "description": "Optional. What to preserve in the summary "
+                                   "(e.g. 'order numbers and amounts only').",
+                },
+            },
+            "required": ["scope"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "system"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return False   # 메시지 치환 — state 변경
+
+    @property
+    def destructive_hint(self) -> bool:
+        return True    # 원본 문자열 손실 (요약 치환)
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return False   # 두 번 부르면 요약의 요약
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False   # 프로세스 내부 state 만
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        scope = (input_data.get("scope") or "").strip()
+        hint = (input_data.get("summary_hint") or "").strip()
+        if not scope:
+            return ToolResult.error("'scope' is required.")
+
+        kind, _, arg = scope.partition(":")
+        kind = kind.strip()
+        arg = arg.strip()
+
+        if kind == "tool_results_before":
+            return await self._compact_tool_results_before(arg, hint)
+        if kind == "history_before":
+            return await self._compact_history_before(arg, hint)
+        if kind == "pd_store":
+            return await self._compact_pd_store(arg, hint)
+        return ToolResult.error(
+            f"Unknown scope kind {kind!r}. Supported: "
+            "tool_results_before:<N> | history_before:<N> | pd_store:<kind>"
+        )
+
+    async def _compact_tool_results_before(self, arg: str, hint: str) -> ToolResult:
+        try:
+            n = int(arg)
+        except Exception:
+            return ToolResult.error(f"tool_results_before:<N> expects integer, got {arg!r}")
+
+        # messages 에서 user 역할의 tool_result content block 을 가진 메시지를 역순 스캔
+        targets_idx: list[int] = []
+        messages = self._state.messages or []
+        for i, m in enumerate(messages):
+            content = m.get("content") if isinstance(m, dict) else None
+            if not isinstance(content, list):
+                continue
+            if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+                targets_idx.append(i)
+
+        if len(targets_idx) <= n:
+            return ToolResult.success(
+                f"only {len(targets_idx)} tool_result messages present; nothing before index {n}."
+            )
+
+        victims = targets_idx[:-n] if n > 0 else targets_idx
+        texts: list[str] = []
+        for i in victims:
+            content = messages[i]["content"]
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    c = b.get("content")
+                    if isinstance(c, str):
+                        texts.append(c)
+                    elif isinstance(c, list):
+                        for sub in c:
+                            if isinstance(sub, dict) and sub.get("type") == "text":
+                                texts.append(sub.get("text", ""))
+
+        summary = await self._summarize(texts, hint or "preserve key facts for later reference")
+        replacement = f"[compacted {len(victims)} tool_result messages — hint: {hint or '-'}]\n\n{summary}"
+
+        # 첫 victim 위치에 요약 메시지 하나로 치환, 나머지 삭제.
+        first = victims[0]
+        new_msg = {"role": "user", "content": replacement}
+        new_messages = []
+        replaced = False
+        victim_set = set(victims)
+        for i, m in enumerate(messages):
+            if i in victim_set:
+                if not replaced:
+                    new_messages.append(new_msg)
+                    replaced = True
+                continue
+            new_messages.append(m)
+        self._state.messages = new_messages
+
+        return ToolResult.success(
+            f"compacted {len(victims)} tool_result messages → 1 summary "
+            f"(~{len(replacement):,} chars)",
+            victims=len(victims),
+            chars=len(replacement),
+        )
+
+    async def _compact_history_before(self, arg: str, hint: str) -> ToolResult:
+        try:
+            n = int(arg)
+        except Exception:
+            return ToolResult.error(f"history_before:<N> expects integer, got {arg!r}")
+
+        # 전체 messages 를 두 구간으로 분리: 보존(마지막 N 턴) + 희생(그 이전)
+        msgs = list(self._state.messages or [])
+        if len(msgs) <= n:
+            return ToolResult.success(
+                f"only {len(msgs)} messages present; nothing before index {n}."
+            )
+        victims = msgs[:-n] if n > 0 else msgs
+        keep = msgs[-n:] if n > 0 else []
+
+        texts: list[str] = []
+        for m in victims:
+            content = m.get("content") if isinstance(m, dict) else m
+            if isinstance(content, str):
+                texts.append(f"[{m.get('role','?')}] {content}")
+            elif isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict):
+                        t = b.get("text") or b.get("content") or ""
+                        if isinstance(t, str) and t:
+                            texts.append(f"[{m.get('role','?')}] {t}")
+
+        summary = await self._summarize(texts, hint or "preserve intent, decisions, and key facts")
+        summary_msg = {"role": "user", "content": f"[compacted history — {hint or '-'}]\n\n{summary}"}
+        self._state.messages = [summary_msg] + keep
+
+        return ToolResult.success(
+            f"compacted {len(victims)} messages → 1 summary "
+            f"(kept last {len(keep)})",
+            victims=len(victims),
+            kept=len(keep),
+        )
+
+    async def _compact_pd_store(self, kind: str, hint: str) -> ToolResult:
+        bucket = self._state.pd_stores.get(kind) if hasattr(self._state, "pd_stores") else None
+        if not bucket:
+            return ToolResult.error(f"pd_store kind {kind!r} empty or missing.")
+
+        ids = list(bucket.keys())
+        texts = [bucket[rid].get("full", "") for rid in ids]
+        summary = await self._summarize(texts, hint or f"summarize {kind} entries")
+
+        # 각 entry 의 full 을 요약 한 줄로 대체 (preview 는 유지).
+        for rid in ids:
+            bucket[rid]["full"] = f"[compacted — hint: {hint or '-'}]\n{summary}"
+            bucket[rid].setdefault("meta", {})["compacted"] = True
+
+        return ToolResult.success(
+            f"compacted pd_store[{kind}] {len(ids)} entries",
+            entries=len(ids),
+        )
+
+    async def _summarize(self, texts: list[str], hint: str) -> str:
+        """summarizer 주입 우선, 없으면 길이 기반 폴백."""
+        joined = "\n\n---\n\n".join(t for t in texts if t)
+        if not joined:
+            return "(empty)"
+
+        if self._summarizer is not None:
+            try:
+                result = self._summarizer(joined, hint)
+                if hasattr(result, "__await__"):
+                    result = await result
+                if isinstance(result, str) and result.strip():
+                    return result.strip()
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger("harness.tools.compact").warning(
+                    "summarizer failed, falling back to truncate: %s", e,
+                )
+
+        # 폴백: 앞부분 N자만 유지. 의미론 손실 있지만 동작 유지.
+        limit = 2000
+        if len(joined) <= limit:
+            return joined
+        return joined[:limit] + f"\n... [truncated from {len(joined):,} chars — no summarizer available]"
