@@ -133,7 +133,9 @@ class Guard(Strategy, ABC):
       3. `param_schema()` — 사용자가 UI 에서 편집할 파라미터 스키마
       4. `hook_points` — 이 Guard 가 실행되어야 할 훅 집합
       5. `configure(params)` — 런타임 파라미터 주입
-      6. `check(state, context)` — 실제 검사 로직
+      6. `check(state, context)` — 동기 검사 로직 (대부분의 Guard)
+      7. `check_async(state, context)` — 옵션. 비동기 대기가 필요한 Guard (HITL 등).
+         기본 구현은 `check()` 를 그대로 호출. 오버라이드 시 async 로 선언.
     """
 
     @classmethod
@@ -150,6 +152,14 @@ class Guard(Strategy, ABC):
     def check(self, state: Any, context: HookContext) -> GuardResult:
         """state + context 를 검사하여 통과/차단 결정."""
         ...
+
+    async def check_async(self, state: Any, context: HookContext) -> GuardResult:
+        """비동기 검사 — HITL 같은 대기 필요한 Guard 가 오버라이드.
+
+        기본 구현은 `check()` 동기 호출을 그대로 반환. 대부분의 Guard 는 이대로 OK.
+        GuardChain.invoke_async 가 이 메서드를 호출. 동기 `invoke` 는 `check` 직접 호출.
+        """
+        return self.check(state, context)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -195,6 +205,38 @@ class GuardChain:
                 r = g.check(state, context)
             except Exception as e:
                 logger.warning("[GuardChain] %s.check failed (hook=%s): %s", g.name, hook.value, e)
+                r = GuardResult(passed=True, guard_name=g.name, reason=f"check failed: {e}", severity="warn")
+            results.append(r)
+            if not r.passed and short_circuit and r.severity == "block":
+                logger.warning("[GuardChain] Blocked by %s @ %s: %s", r.guard_name, hook.value, r.reason)
+                break
+        return results
+
+    async def invoke_async(
+        self,
+        hook: HookPoint,
+        state: Any,
+        pending_tool_call: Optional[dict[str, Any]] = None,
+        short_circuit: bool = True,
+    ) -> list[GuardResult]:
+        """비동기 경로 — HITLGuard 같이 await 가 필요한 Guard 를 지원.
+
+        Guard.check_async 를 호출. 기본 구현이 check() 래핑이라 기존 Guard 전부
+        그대로 호환. HITLGuard 만 override 해서 state.request_approval 을 await.
+        """
+        context = HookContext(
+            hook=hook,
+            pending_tool_call=pending_tool_call,
+            tool_call_history=getattr(state, "tool_call_history", []) or [],
+        )
+        results: list[GuardResult] = []
+        for g in self._guards:
+            if hook not in g.hook_points:
+                continue
+            try:
+                r = await g.check_async(state, context)
+            except Exception as e:
+                logger.warning("[GuardChain] %s.check_async failed (hook=%s): %s", g.name, hook.value, e)
                 r = GuardResult(passed=True, guard_name=g.name, reason=f"check failed: {e}", severity="warn")
             results.append(r)
             if not r.passed and short_circuit and r.severity == "block":
@@ -476,6 +518,179 @@ class ContentGuard(Guard):
                             severity="block",
                         )
         return GuardResult(passed=True, guard_name=self.name)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HITL Guard — Human-In-The-Loop (v0.24.0)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class HITLGuard(Guard):
+    """파괴적 도구 호출 전 사용자 승인 대기.
+
+    MCP 표준 annotations 를 읽어 `destructiveHint` / `openWorldHint` 등이
+    True 인 도구만 승인 모달을 띄운다. 승인되면 실행 재개, 거부되면
+    가짜 tool_result(is_error=True) 로 LLM 에게 이유 전달 → 재계획 루프.
+
+    - hook_points: PRE_TOOL (도구별 개별 호출 경로)
+    - 승인 대기: state.request_approval() 을 await → 이식측이
+      /approvals/{id} 로 resolve 할 때까지 블록.
+    - timeout_sec=0 은 무한 대기 — 이식측 기본 300초 권장.
+
+    trigger 파라미터:
+      - `destructive` (기본 True) — destructiveHint=True 인 도구 승인 요구
+      - `open_world`  (기본 False) — openWorldHint=True 만 승인 요구
+      - `non_readonly`(기본 False) — readOnlyHint=False 이면 승인 (최보수)
+    """
+
+    _uuid_counter: int = 0
+
+    def __init__(
+        self,
+        *,
+        trigger_destructive: bool = True,
+        trigger_open_world: bool = False,
+        trigger_non_readonly: bool = False,
+        timeout_sec: int = 300,
+        auto_approve_for_dev: bool = False,
+    ):
+        self._trigger_destructive = bool(trigger_destructive)
+        self._trigger_open_world = bool(trigger_open_world)
+        self._trigger_non_readonly = bool(trigger_non_readonly)
+        self._timeout_sec = int(timeout_sec) if timeout_sec else 0
+        self._auto_approve = bool(auto_approve_for_dev)
+
+    @property
+    def name(self) -> str:
+        return "hitl"
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return [
+            FieldSchema(id="trigger_destructive", type="toggle", default=True),
+            FieldSchema(id="trigger_open_world", type="toggle", default=False),
+            FieldSchema(id="trigger_non_readonly", type="toggle", default=False),
+            FieldSchema(id="timeout_sec", type="number", default=300, min=0, max=3600),
+            FieldSchema(id="auto_approve_for_dev", type="toggle", default=False),
+        ]
+
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        return {HookPoint.PRE_TOOL}
+
+    def configure(self, config: dict[str, Any]) -> None:
+        if "trigger_destructive" in config:
+            self._trigger_destructive = bool(config["trigger_destructive"])
+        if "trigger_open_world" in config:
+            self._trigger_open_world = bool(config["trigger_open_world"])
+        if "trigger_non_readonly" in config:
+            self._trigger_non_readonly = bool(config["trigger_non_readonly"])
+        if "timeout_sec" in config:
+            try:
+                self._timeout_sec = max(0, int(config["timeout_sec"]))
+            except Exception:
+                pass
+        if "auto_approve_for_dev" in config:
+            self._auto_approve = bool(config["auto_approve_for_dev"])
+
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        """sync 경로 — HITL 은 async 가 본체라 여기선 항상 pass 반환.
+
+        PolicyGate 가 sync `invoke` 를 썼다면 HITL 없이 지나감. 이식측은
+        `invoke_async` 경로로 전환해야 실제 승인 대기가 작동한다.
+        """
+        return GuardResult(passed=True, guard_name=self.name, severity="info",
+                           reason="hitl: sync-path no-op (use invoke_async)")
+
+    async def check_async(self, state: Any, context: HookContext) -> GuardResult:
+        tc = context.pending_tool_call or {}
+        tool_name = tc.get("tool_name") or tc.get("name") or "?"
+        tool_use_id = tc.get("tool_use_id") or tc.get("id") or ""
+        tool_input = tc.get("tool_input") or tc.get("input") or {}
+
+        annotations = self._resolve_annotations(state, tool_name)
+        if not self._should_trigger(annotations):
+            return GuardResult(passed=True, guard_name=self.name)
+
+        if self._auto_approve:
+            return GuardResult(
+                passed=True, guard_name=self.name, severity="info",
+                reason=f"auto-approve(dev): {tool_name}",
+            )
+
+        reason = self._format_reason(annotations)
+        import uuid as _uuid
+        approval_id = f"apv_{_uuid.uuid4().hex[:12]}"
+
+        decision = await state.request_approval(
+            approval_id=approval_id,
+            tool_name=tool_name,
+            tool_use_id=tool_use_id,
+            tool_input=tool_input,
+            guard_name=self.name,
+            annotations=annotations,
+            reason=reason,
+            timeout_sec=self._timeout_sec,
+        )
+
+        verdict = (decision.get("decision") or "").lower()
+        if verdict == "approve":
+            edited = decision.get("edited_input") or {}
+            if edited and edited != tool_input:
+                # 사용자가 args 편집 → pending_tool_call 에 반영.
+                tc["tool_input"] = edited
+            return GuardResult(passed=True, guard_name=self.name,
+                               reason="approved", severity="info")
+
+        user_reason = decision.get("reason") or ""
+        block_reason = f"hitl {verdict}: {user_reason}" if user_reason else f"hitl {verdict}"
+        tool_msg = (
+            f"Execution of '{tool_name}' was {verdict} by human reviewer. "
+            f"Reason: {user_reason or 'no reason given'}. "
+            f"Do not retry unless the user explicitly asks again."
+        )
+        return GuardResult(
+            passed=False, guard_name=self.name,
+            reason=block_reason, severity="block",
+            tool_error_message=tool_msg,
+        )
+
+    def _should_trigger(self, annotations: dict[str, Any]) -> bool:
+        if self._trigger_destructive and bool(annotations.get("destructiveHint")):
+            return True
+        if self._trigger_open_world and bool(annotations.get("openWorldHint")):
+            return True
+        if self._trigger_non_readonly and not bool(annotations.get("readOnlyHint", True)):
+            return True
+        return False
+
+    def _resolve_annotations(self, state: Any, tool_name: str) -> dict[str, Any]:
+        """tool_definitions 에서 annotations 찾기. 없으면 Tool 인스턴스에서."""
+        for td in getattr(state, "tool_definitions", []) or []:
+            td_name = td.get("name") or ((td.get("function") or {}).get("name"))
+            if td_name != tool_name:
+                continue
+            ann = td.get("annotations") or (td.get("function") or {}).get("annotations")
+            if ann:
+                return dict(ann)
+            break
+        tool_registry = (getattr(state, "metadata", {}) or {}).get("tool_registry") or {}
+        inst = tool_registry.get(tool_name)
+        if inst is not None and hasattr(inst, "annotations"):
+            try:
+                return dict(inst.annotations())
+            except Exception:
+                pass
+        return {}
+
+    def _format_reason(self, annotations: dict[str, Any]) -> str:
+        parts = []
+        if annotations.get("destructiveHint"):
+            parts.append("destructiveHint=true")
+        if annotations.get("openWorldHint"):
+            parts.append("openWorldHint=true")
+        if annotations.get("readOnlyHint") is False:
+            parts.append("readOnlyHint=false")
+        return ", ".join(parts) or "hitl trigger"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

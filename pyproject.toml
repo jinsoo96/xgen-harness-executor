@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.23.0"
-description = "XGEN Harness — Tool annotations 1급화 (readOnly/destructive/idempotent/openWorld) + s07_act 이름 휴리스틱 폐기 + Planner 행동 지문 회귀 테스트"
+version = "0.24.0"
+description = "XGEN Harness — HITL Guard + Agent-controlled Compact Tool + approval.required SSE (MCP annotations 생태 확장)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
@@ -76,6 +76,7 @@ cost_budget       = "xgen_harness.stages.strategies.guard:CostBudgetGuard"
 iteration         = "xgen_harness.stages.strategies.guard:IterationGuard"
 content           = "xgen_harness.stages.strategies.guard:ContentGuard"
 tool_precondition = "xgen_harness.stages.strategies.guard_precondition:ToolPreconditionGuard"
+hitl              = "xgen_harness.stages.strategies.guard:HITLGuard"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

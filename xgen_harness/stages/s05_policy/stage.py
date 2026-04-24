@@ -114,9 +114,9 @@ class PolicyGateStage(Stage):
         if not chain.guards:
             return {"hook": hook.value, "guards": 0}
 
-        # PRE_TOOL 은 도구 호출별로 개별 검사
+        # PRE_TOOL 은 도구 호출별로 개별 검사 (v0.24.0 — HITL 대기 지원 async 경로)
         if hook == HookPoint.PRE_TOOL:
-            return self._check_pre_tool(state, chain)
+            return await self._check_pre_tool(state, chain)
 
         # 그 외 단일 검사
         results = chain.invoke(hook, state)
@@ -137,8 +137,11 @@ class PolicyGateStage(Stage):
             "blocked_guard": blocked.guard_name if blocked else "",
         }
 
-    def _check_pre_tool(self, state: PipelineState, chain) -> dict[str, Any]:
+    async def _check_pre_tool(self, state: PipelineState, chain) -> dict[str, Any]:
         """pending_tool_calls 각 항목에 대해 Guard 체인 실행.
+
+        v0.24.0 — invoke_async 사용. HITL 같은 await 필요 Guard 지원.
+        기존 sync Guard 는 Guard.check_async 기본 구현이 check() 래핑이라 무영향.
 
         차단된 tc 는 pending 에서 제거하고 가짜 tool_result (is_error=True) 주입.
         LLM 은 다음 턴에 에러 결과를 보고 스스로 교정 시도.
@@ -153,7 +156,7 @@ class PolicyGateStage(Stage):
         checked = 0
         for tc in pending:
             checked += 1
-            results = chain.invoke(HookPoint.PRE_TOOL, state, pending_tool_call=tc)
+            results = await chain.invoke_async(HookPoint.PRE_TOOL, state, pending_tool_call=tc)
             blocked = next((r for r in results if not r.passed and r.severity == "block"), None)
             if not blocked:
                 continue
