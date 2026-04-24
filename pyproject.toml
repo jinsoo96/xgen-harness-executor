@@ -116,4 +116,7 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+# v0.22.0 — test_*.py 는 레포 루트에 직접 위치. 이전 설정(`tests/`) 은 존재하지 않는
+# 디렉터리를 가리켜 `pytest` 가 0 건 수집하던 오래된 잔재였음.
+testpaths = ["."]
+python_files = ["test_*.py"]
