@@ -5,6 +5,79 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] — 2026-04-24
+
+### 🛡 HITL Guard + 🗜 Agent-controlled Compact Tool + approval.required SSE
+
+v0.23.0 의 Tool annotations (destructive/open_world/...) 를 **실제 안전 게이트**
+와 **컨텍스트 절감 게이트** 로 확장. production 에이전트 표준 패턴
+(Claude Code / Cursor / Aider 류) 과 동일 수준.
+
+### 추가
+
+- **HITLGuard** (`stages/strategies/guard.py`)
+  - Human-In-The-Loop — destructive/open_world 도구 호출 전 사용자 승인 대기
+  - `hook_points = {PRE_TOOL}` — 도구별 개별 승인
+  - trigger 파라미터: `trigger_destructive` (기본 True) / `trigger_open_world` /
+    `trigger_non_readonly`
+  - `timeout_sec=300` 기본, 0 이면 무한 대기
+  - `auto_approve_for_dev=True` 로 개발 환경 우회
+  - 거부 시 가짜 `tool_result(is_error=True)` 를 LLM 에 전달 → 재계획 루프
+  - 승인자가 `edited_input` 제공하면 args 자동 교체 (오입력 교정)
+  - `xgen_harness.guards` entry_points 에 "hitl" 이름으로 등록
+
+- **Guard.check_async + GuardChain.invoke_async** (`stages/strategies/guard.py`)
+  - 비동기 경로 신설. 기존 sync Guard 는 `check_async` 기본 구현이
+    `check()` 래핑이라 **완전 backward-compat**.
+  - HITLGuard 만 `check_async` override 해서 `state.request_approval` 을 await.
+  - `s05_policy/stage.py` PRE_TOOL 경로가 `invoke_async` 로 전환.
+
+- **PipelineState.request_approval / resolve_approval / pending_approval_ids**
+  (`core/state.py`)
+  - 내부 `_approval_futures` 딕셔너리. `request_approval` 이
+    `ApprovalRequiredEvent` 방출 + Future 생성 + await.
+  - 이식측이 `resolve_approval(id, decision, reason, edited_input)` 호출
+    → Future 풀려 실행 재개.
+  - `state.emit_event()` — verbose 여부 무관 필수 이벤트 발행 경로 신설.
+
+- **ApprovalRequiredEvent / ApprovalDecidedEvent** (`events/types.py`)
+  - SSE 이벤트 2종. `event_to_dict` 에 type_map 등록.
+  - 최상위 `xgen_harness` 에서 export.
+  - 프론트는 기존 EventLog 구독으로 approval_required 수신 → 모달 렌더.
+
+- **CompactTool** (`tools/builtin.py`)
+  - LLM 이 자율 호출하는 컨텍스트 압축 도구. 자동 50KB threshold 가 못 잡는
+    **누적 부풀이** 해소.
+  - scope: `tool_results_before:N` / `history_before:N` / `pd_store:<kind>`
+  - `summary_hint` 파라미터로 "뭘 남길지" LLM 이 선언
+  - `destructive_hint=True` — HITLGuard 가 자동 트리거해 사용자 확인 가능
+  - summarizer 미주입 시 길이 기반 truncate 폴백 (의미론 손실 but 동작 유지)
+
+- **tests/test_hitl_and_compact.py** (11 케이스)
+  - approval 이벤트 직렬화
+  - request_approval + resolve_approval 라운드트립
+  - approval_timeout
+  - HITL 비-destructive 스킵 / 승인·거부·auto-approve
+  - GuardChain.invoke_async 혼합 (sync+async Guard)
+  - CompactTool history_before / tool_results_before / annotations
+
+### 변경
+
+- s05_policy 의 PRE_TOOL 경로가 sync `invoke` → async `invoke_async` 로 전환.
+  기존 5 내장 Guard 는 check_async 기본 구현 타고 그대로 동작.
+
+### 검증
+
+- pytest 22/22 PASS (import_smoke 5 + plan_fingerprint 6 + hitl_and_compact 11)
+- 기존 v0.23 fingerprint baseline 그대로 통과 — Planner 행동 변화 0
+
+### 이식측 요구
+
+- pin 상향 필요: `xgen-harness>=0.23,<0.24` → `>=0.24,<0.25`
+- `POST /api/agentflow/harness/approvals/{approval_id}` 엔드포인트 추가
+  (body: `{decision, reason?, edited_input?}`)
+- SSE 중계 시 `approval_required` 이벤트 타입 프론트 전달
+
 ## [0.23.0] — 2026-04-24
 
 ### 🧰 MCP Tool annotations 1급화 + 행동 지문 회귀 테스트
