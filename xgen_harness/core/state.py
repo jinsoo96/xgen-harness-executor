@@ -5,6 +5,7 @@ PipelineState — 파이프라인 실행 상태
 하네스 파이프라인 실행 상태.
 """
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -138,6 +139,15 @@ class PipelineState:
     # Policy Gate 가 차단한 경우 이유/Guard 이름. ThresholdDecide 가 이 신호로 loop 종료.
     policy_block_reason: str = ""
     policy_block_guard: str = ""
+
+    # --- HITL (Human-In-The-Loop) 승인 큐 — v0.24.0 ---
+    # approval_id → Future. HITLGuard 가 `await_approval(id, timeout)` 으로 대기,
+    # 이식측 엔드포인트가 `resolve_approval(id, decision, ...)` 로 풀어줌.
+    # 이식측 SSE 중계가 `ApprovalRequiredEvent` 를 프론트에 전달 → 사용자 승인 →
+    # POST /approvals/{id} → 엔진 resolve.
+    _approval_futures: dict[str, "asyncio.Future[dict[str, Any]]"] = field(
+        default_factory=dict, repr=False, compare=False,
+    )
 
     # --- Progressive Disclosure 저장소 ---
     # 큰 리소스의 원본을 보존하면서 messages 에는 preview 만 노출하는 패턴의 백업 저장소.
@@ -302,6 +312,103 @@ class PipelineState:
             # 난도를 올리므로 로거에 흔적. logging 모듈은 모듈 로드 시점에만 필요.
             import logging as _logging
             _logging.getLogger("harness.state").debug("emit_verbose suppressed: %s", e)
+
+    # --- HITL (Human-In-The-Loop) 승인 API — v0.24.0 ---
+
+    async def emit_event(self, event: Any) -> None:
+        """verbose 여부와 무관하게 이벤트 발행. HITL 같은 실행 흐름 필수 이벤트 전용.
+
+        `emit_verbose` 는 관찰용으로 verbose_events 플래그에 따라 게이트되지만,
+        approval_required 는 놓치면 사용자 승인을 못 받아 대기가 영원해지므로
+        별도 경로로 무조건 방출.
+        """
+        if self.event_emitter is None:
+            return
+        try:
+            await self.event_emitter.emit(event)
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger("harness.state").warning("emit_event failed: %s", e)
+
+    async def request_approval(
+        self,
+        *,
+        approval_id: str,
+        tool_name: str,
+        tool_use_id: str,
+        tool_input: dict[str, Any],
+        guard_name: str,
+        annotations: Optional[dict[str, Any]] = None,
+        reason: str = "",
+        timeout_sec: int = 0,
+    ) -> dict[str, Any]:
+        """ApprovalRequiredEvent 를 방출하고 resolve 까지 대기.
+
+        이식측이 `resolve_approval(approval_id, decision, ...)` 호출 → 반환값 dict.
+        `timeout_sec > 0` 이면 시간 초과 시 {"decision": "timeout"} 로 풀림.
+
+        반환 dict 키:
+          - decision: "approve" | "deny" | "timeout"
+          - reason: 사용자 제공 사유 (deny/timeout)
+          - edited_input: 승인자가 수정한 args (approve 에서만 의미 있음)
+        """
+        from ..events.types import ApprovalRequiredEvent, ApprovalDecidedEvent
+
+        loop = asyncio.get_running_loop()
+        future: "asyncio.Future[dict[str, Any]]" = loop.create_future()
+        self._approval_futures[approval_id] = future
+
+        await self.emit_event(ApprovalRequiredEvent(
+            approval_id=approval_id,
+            tool_name=tool_name,
+            tool_use_id=tool_use_id,
+            tool_input=dict(tool_input or {}),
+            guard_name=guard_name,
+            annotations=dict(annotations or {}),
+            reason=reason,
+            timeout_sec=int(timeout_sec or 0),
+        ))
+
+        try:
+            if timeout_sec and timeout_sec > 0:
+                decision = await asyncio.wait_for(future, timeout=timeout_sec)
+            else:
+                decision = await future
+        except asyncio.TimeoutError:
+            decision = {"decision": "timeout", "reason": "no response in time", "edited_input": {}}
+        finally:
+            self._approval_futures.pop(approval_id, None)
+
+        await self.emit_event(ApprovalDecidedEvent(
+            approval_id=approval_id,
+            decision=decision.get("decision", ""),
+            reason=decision.get("reason", ""),
+            edited_input=dict(decision.get("edited_input") or {}),
+        ))
+        return decision
+
+    def resolve_approval(
+        self,
+        approval_id: str,
+        *,
+        decision: str,
+        reason: str = "",
+        edited_input: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """이식측이 사용자 결정을 엔진에 전달. 이미 풀렸거나 없으면 False 반환."""
+        fut = self._approval_futures.get(approval_id)
+        if fut is None or fut.done():
+            return False
+        fut.set_result({
+            "decision": decision,
+            "reason": reason or "",
+            "edited_input": dict(edited_input or {}),
+        })
+        return True
+
+    def pending_approval_ids(self) -> list[str]:
+        """현재 대기 중인 approval id 목록. 이식측 헬스체크·취소 용."""
+        return [k for k, f in self._approval_futures.items() if not f.done()]
 
     @property
     def elapsed_ms(self) -> int:

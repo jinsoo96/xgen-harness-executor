@@ -191,6 +191,35 @@ class PlanningEvent(HarnessEvent):
     orchestrator_hint: str = ""                         # v0.15.0 — "linear"|"iterative"|"react"|"plan_execute"|"dag"
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HITL (Human-In-The-Loop) — v0.24.0
+#  destructive/open_world 도구 호출 직전에 사용자 승인 요구. 프론트가 이 이벤트를
+#  받으면 모달을 띄우고, 사용자 결정을 이식측 `/approvals/{id}` 로 POST → 엔진
+#  `state.resolve_approval()` 이 대기 중인 future 를 풀어 실행 재개.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@dataclass
+class ApprovalRequiredEvent(HarnessEvent):
+    """파괴적 도구 실행 전 사용자 승인 요청."""
+    approval_id: str = ""                               # 이식측이 resolve 시 참조할 고유 id
+    tool_name: str = ""
+    tool_use_id: str = ""
+    tool_input: dict = field(default_factory=dict)
+    guard_name: str = ""                                # 승인을 트리거한 Guard (예: "hitl")
+    annotations: dict = field(default_factory=dict)    # readOnlyHint/destructiveHint/... 전달
+    reason: str = ""                                    # "destructiveHint=true" 등
+    timeout_sec: int = 0                                # 0 이면 무한 대기 (이식측 기본 5분 권장)
+
+
+@dataclass
+class ApprovalDecidedEvent(HarnessEvent):
+    """승인 결정 결과 (감사·replay 용 이벤트 스트림 기록)."""
+    approval_id: str = ""
+    decision: str = ""                                  # "approve" | "deny" | "timeout"
+    reason: str = ""                                    # 사용자가 제공한 사유 (deny 시 LLM 에 전달)
+    edited_input: dict = field(default_factory=dict)   # 승인자가 args 를 수정했으면 그 값
+
+
 def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
     """이벤트를 harness_router.py가 이해하는 (event_type, data) dict로 변환"""
     type_map = {
@@ -210,6 +239,8 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
         StageSubstepEvent: "stage_substep",
         RetryEvent: "retry",
         PlanningEvent: "planning",
+        ApprovalRequiredEvent: "approval_required",
+        ApprovalDecidedEvent: "approval_decided",
     }
     event_type = type_map.get(type(event), "unknown")
 

@@ -39,6 +39,9 @@ from .events.types import (
     StageSubstepEvent,
     RetryEvent,
     PlanningEvent,
+    # v0.24.0 — HITL 승인 이벤트. 이식측이 SSE 로 프론트에 중계.
+    ApprovalRequiredEvent,
+    ApprovalDecidedEvent,
 )
 from .core.catalog import get_catalog
 from .core.planner import HarnessPlanner, HarnessPlan
@@ -195,6 +198,9 @@ __all__ = [
     "RetryEvent",
     # v0.12.0 — Harness Planner (REAL_HARNESS §4)
     "PlanningEvent",
+    # v0.24.0 — HITL 승인 이벤트
+    "ApprovalRequiredEvent",
+    "ApprovalDecidedEvent",
     "get_catalog",
     "HarnessPlanner",
     "HarnessPlan",
