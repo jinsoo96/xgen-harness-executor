@@ -1,0 +1,15 @@
+{
+  "chosen": [
+    "s01_input",
+    "s07_act",
+    "s11_finalize"
+  ],
+  "skipped": {},
+  "params": {},
+  "strategies": {},
+  "done": false,
+  "source": "llm",
+  "planner_model": "",
+  "max_iterations": null,
+  "orchestrator_hint": ""
+}

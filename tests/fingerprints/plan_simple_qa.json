@@ -1,0 +1,21 @@
+{
+  "chosen": [
+    "s01_input",
+    "s03_prompt",
+    "s07_act",
+    "s11_finalize"
+  ],
+  "skipped": {
+    "s02_history": "no prior turn",
+    "s08_judge": "low complexity"
+  },
+  "params": {},
+  "strategies": {
+    "s07_act": "parallel_read"
+  },
+  "done": false,
+  "source": "llm",
+  "planner_model": "",
+  "max_iterations": null,
+  "orchestrator_hint": ""
+}

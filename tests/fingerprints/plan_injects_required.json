@@ -1,0 +1,13 @@
+{
+  "chosen": [
+    "s07_act"
+  ],
+  "skipped": {},
+  "params": {},
+  "strategies": {},
+  "done": false,
+  "source": "llm",
+  "planner_model": "",
+  "max_iterations": null,
+  "orchestrator_hint": ""
+}

@@ -1,0 +1,11 @@
+{
+  "chosen": [],
+  "skipped": {},
+  "params": {},
+  "strategies": {},
+  "done": true,
+  "source": "llm",
+  "planner_model": "",
+  "max_iterations": null,
+  "orchestrator_hint": ""
+}
