@@ -21,14 +21,15 @@ pip install xgen-harness
 > 워크플로우를 **"짜는 것"** 이 아니라 **"설정하는 것"** 으로 바꾼 에이전트 실행기.  
 > 13 Stage 가 환경 슬롯(capability/도구/리소스/파라미터를 LLM 에 노출), 사용자는 **무엇을** 할지만 선언, 하네스가 **어떻게** 자동 조립.
 
-**v0.21.0 기준**
+**v0.22.0 기준**
 1. **Stage = 환경 슬롯** + **LLM 자율 선택** (Planner 통제탑 · Auto/Selected/Off 3 모드)
-2. **자동 오케스트레이터** (linear/iterative/plan_execute/react/dag)
+2. **자동 오케스트레이터** (linear/iterative/plan_execute/react/dag) — 행동 속성은 `OrchestratorSpec.replan_per_iter / max_iterations_override` 로 선언적. 외부 오케스트레이터도 동일 계약.
 3. **Strategy × Capability 3층 구조**
 4. **Policy Gate** (v0.17.0) — 선언형 Guard 체인 × 4 훅 포인트
 5. **양방향 MCP** (v0.18.0) — 하네스 워크플로우 → wheel → **MCP stdio 서버 자동 말아올리기**, 마켓·설치된 MCP 를 s04_tool 카탈로그에 자동 주입
 6. **Sandbox Verifier** (v0.20.0) — 발행 전 `initialize + tools/list + rlimit` **격리 게이트**
 7. **NOM IR 허브** (v0.21.0) — Stage/Strategy/Tool/MCP/Plugin 을 단일 IR 로 통합. `to_mcp_schema()` / `to_sandbox_payload()` / `to_wheel_snapshot()` 3 변환. `compile_nom_graph(graph, ...)` one-shot
+8. **엔진 독립성 완결** (v0.22.0) — xgen 특화 코드(Adapter/Service/NodeAdapter/SSE 2,040 LOC) 는 호스트 측 소유. `ExternalNodeRef` Protocol 로 호스트가 4 필드 dataclass 만 등록하면 duck-typing 자동 감지. `REQUIRED_STAGES` 는 live set — `mark_stage_required()` 로 외부 등록. 기본 모델은 `XGEN_HARNESS_<PROVIDER>_DEFAULT_MODEL` env 우선.
 
 ---
 
