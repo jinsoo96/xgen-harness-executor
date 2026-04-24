@@ -5,6 +5,31 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.3] — 2026-04-24
+
+### ♻️ harness_mode 도메인 언어 캡슐화 (자가 감사 후속)
+
+사용자 지적 "엔진 하드코딩 / 확장성 해치는 짓 없었지" 감사 결과 1 지점 개선.
+`s06_context/stage.py:49` 의 `harness_mode == "autonomous"` 리터럴 비교를 헬퍼
+메서드 호출로 전환. 새 모드 (예: `"safe_mode"`) 도입 시 엔진·이식에 흩어진 리터럴
+비교를 추적할 필요 없이 `HarnessConfig.is_autonomous()` 한 지점만 조정.
+
+### 변경
+- `xgen_harness/core/config.py` — `HarnessConfig.is_autonomous()` / `is_selected()` /
+  `is_off()` 3 헬퍼 박제. `harness_mode` 값 소문자 정규화 포함.
+- `xgen_harness/stages/s06_context/stage.py` — 리터럴 비교 → `config.is_autonomous()`
+  호출. `getattr(..., lambda: True)` 폴백으로 구형 config 인스턴스도 graceful.
+
+### 자가 감사 결과
+- ✅ 엔진 내 xgen / 이식측 특화 리터럴 없음 (v0.22 독립성 유지)
+- ✅ ToolSource Protocol + entry_points 로 확장성 강화
+- ✅ STAGE_DISPLAY_NAMES 에 s05_policy 보강 — 내장 Stage 매핑 완성 (외부 Stage 는 `display_name` property override 로 합류 가능)
+- ✅ `harness_mode` 리터럴 비교 제거 (본 릴리즈)
+
+### Breaking 없음
+
+---
+
 ## [0.25.2] — 2026-04-24
 
 ### 🩹 s06_context RAG 폴백이 사용자 의도 무시하던 버그 수정

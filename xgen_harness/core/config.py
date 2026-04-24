@@ -159,6 +159,18 @@ class HarnessConfig:
         if not self.harness_mode:
             self.harness_mode = "autonomous" if self.use_planner else "off"
 
+    # v0.25.3 — harness_mode 리터럴 비교를 쓰는 Stage / Strategy 가 늘어나면서
+    # 문자열을 여기저기 하드코딩하면 새 모드(예: "safe_mode") 도입 시 추적 범위가 커짐.
+    # HarnessConfig 에 헬퍼 3 개를 박제해서 도메인 언어를 캡슐화.
+    def is_autonomous(self) -> bool:
+        return str(self.harness_mode or "").lower() == "autonomous"
+
+    def is_selected(self) -> bool:
+        return str(self.harness_mode or "").lower() == "selected"
+
+    def is_off(self) -> bool:
+        return str(self.harness_mode or "").lower() == "off"
+
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록.
 

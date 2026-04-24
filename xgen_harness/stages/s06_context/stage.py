@@ -46,11 +46,11 @@ class ContextStage(Stage):
         rag_collections: list[str] = list(self.get_param("rag_collections", state, []) or [])
         # v0.25.2 — config.rag_collections 폴백은 **autonomous 모드에서만** 허용.
         # 사용자가 UI 에서 컬렉션을 명시 비워 저장한 경우 (selected/off 모드), 자동 폴백으로
-        # 전체 문서 기반 답변이 나가면 안 된다. harness_mode 기본값은 'autonomous' — SDK 로
-        # HarnessConfig(rag_collections=...) 주입하는 레거시 경로는 그대로 작동.
+        # 전체 문서 기반 답변이 나가면 안 된다. v0.25.3 은 리터럴 비교 대신
+        # HarnessConfig.is_autonomous() 헬퍼로 도메인 언어 캡슐화.
         if not rag_collections and hasattr(config, 'rag_collections'):
-            harness_mode = str(getattr(config, 'harness_mode', 'autonomous') or 'autonomous').lower()
-            if harness_mode == 'autonomous':
+            is_auto = bool(getattr(config, 'is_autonomous', lambda: True)())
+            if is_auto:
                 rag_collections = list(getattr(config, 'rag_collections', []) or [])
 
         # folders → 해당 폴더 안의 컬렉션 자동 추가 (DocumentService.list_collections 위임)
