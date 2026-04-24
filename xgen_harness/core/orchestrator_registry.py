@@ -51,10 +51,13 @@ def register_orchestrator(
     """
     if not isinstance(name, str) or not name.strip():
         raise ValueError("orchestrator name must be non-empty string")
-    _REGISTRY[name] = OrchestratorSpec(
-        name=name,
+    # v0.22.1 — 대소문자 정규화. pipeline.py 는 orch_hint 를 .lower() 로 조회하므로
+    # 등록 이름과 조회 키가 case 불일치하면 영원히 miss → iterative fallback 되는 사일런트 버그.
+    key = name.strip().lower()
+    _REGISTRY[key] = OrchestratorSpec(
+        name=key,
         description=description,
-        dispatch_key=dispatch_key or name,
+        dispatch_key=(dispatch_key or key).strip().lower(),
         replan_per_iter=replan_per_iter,
         max_iterations_override=max_iterations_override,
     )
@@ -62,7 +65,7 @@ def register_orchestrator(
 
 def unregister_orchestrator(name: str) -> None:
     """테스트/런타임 교체용. 기본값도 제거 가능."""
-    _REGISTRY.pop(name, None)
+    _REGISTRY.pop(name.strip().lower() if isinstance(name, str) else name, None)
 
 
 def list_orchestrators() -> list[str]:
@@ -82,7 +85,9 @@ def get_orchestrator_specs() -> list[dict]:
 
 def get_orchestrator(name: str) -> Optional[OrchestratorSpec]:
     _ensure_defaults_registered()
-    return _REGISTRY.get(name)
+    if not isinstance(name, str):
+        return None
+    return _REGISTRY.get(name.strip().lower())
 
 
 def _ensure_defaults_registered() -> None:

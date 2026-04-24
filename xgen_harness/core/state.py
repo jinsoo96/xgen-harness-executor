@@ -312,9 +312,6 @@ class PipelineState:
         if self.config and self.config.cost_budget_usd:
             return self.cost_usd > self.config.cost_budget_usd
         return False
-
-    @property
-    def is_over_iterations(self) -> bool:
-        if self.config:
-            return self.loop_iteration >= self.config.max_iterations
-        return self.loop_iteration >= 10
+    # v0.22.1 — is_over_iterations property 삭제. pipeline.py 가 직접
+    # `loop_iteration < effective_max_iter` 조건으로 체크하며 override 가능한
+    # max_iterations_override(OrchestratorSpec) 를 존중하므로 이 property 는 죽은 코드였음.

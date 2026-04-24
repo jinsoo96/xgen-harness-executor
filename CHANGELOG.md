@@ -5,6 +5,31 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] — 2026-04-24
+
+### 🔧 v0.22.0 후속 — 재검수 결과 2건 해소
+
+엄밀 재검수에서 잠재 사일런트 버그 + 죽은 property 검출. 기능 변경 없고 견고성만 향상.
+
+### 수정
+
+- **`register_orchestrator` 케이스 민감 → 정규화**
+  외부 기여자가 `register_orchestrator("MyPattern", ...)` 대소문자 섞어 등록하면,
+  `pipeline.py:148` 의 `orch_hint.strip().lower()` 조회와 불일치해서 영원히 miss →
+  iterative fallback 되는 사일런트 버그. register/get/unregister 모두 `name.strip().lower()`
+  정규화로 통일. 기존 기본 5개(모두 소문자 등록)는 무영향.
+- **`state.is_over_iterations` property 제거**
+  v0.22.0 에서 pipeline 이 `loop_iteration < effective_max_iter` 직접 계산으로 전환해
+  이 property 의 호출 횟수 0. 삭제.
+
+### 검증 실측
+
+- `get_orchestrator("MyCustom")` / `get_orchestrator("mycustom")` / `get_orchestrator("  MYCUSTOM  ")` 모두 동일 spec 반환
+- `grep -rn is_over_iterations` 결과 0 (주석 제외)
+- 기존 기본 5 orchestrator(linear/iterative/react/plan_execute/dag) 행동 동일
+
+---
+
 ## [0.22.0] — 2026-04-24
 
 ### 🧹 엔진 독립성 + 레지스트리 완성
