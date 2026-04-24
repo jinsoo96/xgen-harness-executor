@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2] — 2026-04-24
+
+### 🩹 s06_context RAG 폴백이 사용자 의도 무시하던 버그 수정
+
+사용자가 `/harness` UI 에서 RAG 컬렉션 체크박스를 **비운 상태로 저장** 했음에도 응답이 특정 문서 기반으로 나가는 현상. 원인은 `s06_context/stage.py:47-48` 의 `config.rag_collections` 자동 폴백. 이식측이 HarnessConfig 에 레거시 컬렉션을 채우면 `stage_params.s06_context.rag_collections` 가 비어있어도 그 값으로 전체 검색이 돌아갔다.
+
+### 변경
+- `xgen_harness/stages/s06_context/stage.py` — `config.rag_collections` 폴백을 **`harness_mode == "autonomous"` 일 때만** 허용. `selected` / `off` 모드는 사용자가 UI 에서 명시 선택한 `stage_params` 만 존중. 사용자가 빈 컬렉션으로 저장하면 RAG 검색 자체가 skip.
+- `config.harness_mode` 기본값은 `"autonomous"` — SDK 로 직접 `HarnessConfig(rag_collections=[...])` 주입하는 레거시 경로는 그대로 작동.
+
+### 관련 UX 원칙 박제
+- `selected` / `off` 모드 = "사용자 직접 지시" → stage_params 가 비어있으면 Stage 비활성 (레거시 config 폴백 금지)
+- `autonomous` 모드 = "LLM 알아서" → config 폴백 + Planner 가 params override 로 채움 허용
+
+### Breaking 없음
+- 기본 모드가 `autonomous` 라 기존 SDK 사용자 영향 없음.
+
+---
+
 ## [0.25.1] — 2026-04-24
 
 ### 🩹 s05_policy 표시 이름 누락 수정 + docstring 사용자 친화화
