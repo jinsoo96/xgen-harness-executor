@@ -157,11 +157,37 @@ class MCPTool(Tool):
     def category(self) -> str:
         return f"mcp:{self._session_id[:8]}"
 
+    # v0.23.0 — MCP 서버가 선언한 annotations 우선. 없으면 이름 휴리스틱 폴백.
+    # MCP 표준 (2025-06-18+) 은 tools/list 응답 각 tool 에 annotations 블록을 포함.
+    def _annotation(self, key: str, default: bool) -> bool:
+        ann = self._tool_def.get("annotations") or {}
+        if key in ann:
+            return bool(ann[key])
+        # legacy 호환 (일부 MCP 서버가 top-level 로 보냄)
+        if key == "readOnlyHint" and "is_read_only" in self._tool_def:
+            return bool(self._tool_def["is_read_only"])
+        return default
+
     @property
-    def is_read_only(self) -> bool:
+    def read_only_hint(self) -> bool:
+        if self._tool_def.get("annotations") is not None:
+            return self._annotation("readOnlyHint", False)
+        # 서버가 annotations 미제공 → 휴리스틱 (deprecated 경로)
         name_lower = self.name.lower()
         write_keywords = {"create", "update", "delete", "write", "send", "post", "put", "remove"}
         return not any(kw in name_lower for kw in write_keywords)
+
+    @property
+    def destructive_hint(self) -> bool:
+        return self._annotation("destructiveHint", False)
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return self._annotation("idempotentHint", False)
+
+    @property
+    def open_world_hint(self) -> bool:
+        return self._annotation("openWorldHint", True)  # MCP 는 원격 호출 기본
 
     async def execute(self, input_data: dict) -> ToolResult:
         # call_tool_raw 는 MCPCallResult 로 성공/실패를 구조화 반환 — prefix 매칭 없이 status 로 분기.

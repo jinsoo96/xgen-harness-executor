@@ -114,6 +114,10 @@ class ToolIndexStage(Stage):
                         "description": t.get("description", ""),
                         "input_schema": t.get("input_schema") or {"type": "object"},
                     }
+                    # v0.23.0 — ToolSource 가 준 annotations 그대로 전파 (MCP 표준).
+                    # s07_act 의 read_only 판별이 이 필드를 우선 참조.
+                    if t.get("annotations"):
+                        td["annotations"] = t["annotations"]
                     state.tool_definitions.append(td)
                     existing_names.add(nm)
                     source_count += 1

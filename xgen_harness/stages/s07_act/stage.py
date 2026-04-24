@@ -99,12 +99,10 @@ class ExecuteStage(Stage):
     ) -> tuple[list[dict[str, Any]], int]:
         """parallel_read 전략: 읽기 전용 도구는 병렬, 쓰기 도구는 순차.
 
-        is_read_only 판별 순서:
-        1. tool_registry에 등록된 Tool 인스턴스의 is_read_only 속성
-        2. tool_definitions의 metadata.is_read_only 필드
-        3. 이름 기반 휴리스틱 (write 키워드 미포함이면 read_only)
+        v0.23.0 — MCP annotations.readOnlyHint 1급 필드 우선. 이름 휴리스틱 폐기
+        (false positive 유발). annotations 이 전혀 없을 때만 안전 쪽(write 취급)으로
+        fallback. 호출부가 명시적 선언을 안 한 경우는 순차 실행이 옳다.
         """
-        write_keywords = {"create", "update", "delete", "write", "send", "post", "put", "remove", "insert", "drop"}
         tool_registry = state.metadata.get("tool_registry", {})
 
         read_calls = []
@@ -112,31 +110,8 @@ class ExecuteStage(Stage):
 
         for tc in tool_calls:
             tool_name = tc.get("tool_name", "")
-            is_read_only = None
-
-            # 1. Tool 인스턴스에서 확인
-            tool_instance = tool_registry.get(tool_name)
-            if tool_instance and hasattr(tool_instance, "is_read_only"):
-                is_read_only = tool_instance.is_read_only
-
-            # 2. tool_definitions metadata에서 확인
-            if is_read_only is None:
-                for td in state.tool_definitions:
-                    if td.get("name") == tool_name:
-                        meta = td.get("metadata", {})
-                        if "is_read_only" in meta:
-                            is_read_only = meta["is_read_only"]
-                        break
-
-            # 3. 이름 기반 휴리스틱 폴백
-            if is_read_only is None:
-                name_lower = tool_name.lower()
-                is_read_only = not any(kw in name_lower for kw in write_keywords)
-
-            if is_read_only:
-                read_calls.append(tc)
-            else:
-                write_calls.append(tc)
+            read_only = self._resolve_read_only_hint(tool_name, state, tool_registry)
+            (read_calls if read_only else write_calls).append(tc)
 
         results: list[dict[str, Any]] = []
         total_chars = 0
@@ -275,6 +250,48 @@ class ExecuteStage(Stage):
                 ))
 
             return {"tool_name": tool_name, "success": False, "error": str(e)}, 0
+
+    def _resolve_read_only_hint(
+        self, tool_name: str, state: PipelineState, tool_registry: dict,
+    ) -> bool:
+        """MCP annotations.readOnlyHint 우선 — 순서:
+
+        1. `tool_definitions[*].annotations.readOnlyHint` (s04 가 to_api_format 으로 실어줌,
+           외부 MCP 도 서버가 선언한 것 그대로)
+        2. `tool_registry[name].read_only_hint` (Tool 인스턴스 속성)
+        3. legacy `tool_definitions[*].metadata.is_read_only`
+        4. legacy `tool_registry[name].is_read_only`
+        5. **fallback: False** — 명시 선언이 없으면 안전 쪽(write 취급, 순차 실행).
+           이전 버전의 이름 휴리스틱은 제거 (false positive 유발).
+        """
+        # 1. tool_definitions annotations (MCP 표준)
+        for td in state.tool_definitions:
+            if td.get("name") != tool_name:
+                continue
+            ann = td.get("annotations") or {}
+            if "readOnlyHint" in ann:
+                return bool(ann["readOnlyHint"])
+            break
+
+        # 2. Tool 인스턴스의 read_only_hint 속성
+        inst = tool_registry.get(tool_name)
+        if inst is not None and hasattr(inst, "read_only_hint"):
+            return bool(inst.read_only_hint)
+
+        # 3. legacy metadata.is_read_only (tool_definitions)
+        for td in state.tool_definitions:
+            if td.get("name") == tool_name:
+                meta = td.get("metadata") or {}
+                if "is_read_only" in meta:
+                    return bool(meta["is_read_only"])
+                break
+
+        # 4. legacy is_read_only (instance)
+        if inst is not None and hasattr(inst, "is_read_only"):
+            return bool(inst.is_read_only)
+
+        # 5. 안전 쪽 fallback
+        return False
 
     async def _enrich_with_capability(
         self, tool_name: str, tool_input: dict, state: PipelineState

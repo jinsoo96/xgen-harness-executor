@@ -84,8 +84,16 @@ class RAGSearchTool(Tool):
         return "retrieval"
 
     @property
-    def is_read_only(self) -> bool:
+    def read_only_hint(self) -> bool:
         return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True  # 같은 쿼리·컬렉션이면 같은 결과 (인덱스 고정일 때)
+
+    @property
+    def open_world_hint(self) -> bool:
+        return True  # xgen-documents / Qdrant 외부 호출
 
     async def execute(self, input_data: dict) -> ToolResult:
         query = input_data.get("query", "")

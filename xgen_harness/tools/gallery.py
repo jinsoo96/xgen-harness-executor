@@ -83,9 +83,15 @@ class GalleryTool(Tool):
         self._description = tool_def.get("description", "")
         self._input_schema = tool_def.get("input_schema", tool_def.get("inputSchema", {}))
         self._category = tool_def.get("category", package_name)
-        self._is_read_only = tool_def.get("is_read_only", False)
         self._dispatcher = dispatcher
         self._package = package_name
+
+        # v0.23.0 — annotations 우선 + legacy is_read_only 폴백
+        ann = tool_def.get("annotations") or {}
+        self._read_only = bool(ann.get("readOnlyHint", tool_def.get("is_read_only", False)))
+        self._destructive = bool(ann.get("destructiveHint", False))
+        self._idempotent = bool(ann.get("idempotentHint", False))
+        self._open_world = bool(ann.get("openWorldHint", True))
 
     @property
     def name(self) -> str:
@@ -104,8 +110,20 @@ class GalleryTool(Tool):
         return self._category
 
     @property
-    def is_read_only(self) -> bool:
-        return self._is_read_only
+    def read_only_hint(self) -> bool:
+        return self._read_only
+
+    @property
+    def destructive_hint(self) -> bool:
+        return self._destructive
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return self._idempotent
+
+    @property
+    def open_world_hint(self) -> bool:
+        return self._open_world
 
     async def execute(self, input_data: dict) -> ToolResult:
         try:

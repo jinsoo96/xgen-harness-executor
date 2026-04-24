@@ -54,6 +54,18 @@ class DiscoverToolsTool(Tool):
     def category(self) -> str:
         return "system"
 
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False  # 내부 카탈로그만 읽음
+
     async def execute(self, input_data: dict) -> ToolResult:
         tool_name = input_data.get("tool_name", "")
 
@@ -117,8 +129,16 @@ class SearchToolsTool(Tool):
         return "system"
 
     @property
-    def is_read_only(self) -> bool:
+    def read_only_hint(self) -> bool:
         return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
 
     async def execute(self, input_data: dict) -> ToolResult:
         q = (input_data.get("query") or "").strip().lower()
@@ -215,8 +235,16 @@ class FetchPDTool(Tool):
         return "system"
 
     @property
-    def is_read_only(self) -> bool:
+    def read_only_hint(self) -> bool:
         return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False  # pd_stores 는 프로세스 내부 state
 
     async def execute(self, input_data: dict) -> ToolResult:
         kind = (input_data.get("kind") or "").strip()
