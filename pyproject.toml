@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.22.1"
-description = "XGEN Harness — v0.22.0 후속: orchestrator 이름 case-insensitive 정규화 + is_over_iterations dead property 제거"
+version = "0.23.0"
+description = "XGEN Harness — Tool annotations 1급화 (readOnly/destructive/idempotent/openWorld) + s07_act 이름 휴리스틱 폐기 + Planner 행동 지문 회귀 테스트"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
