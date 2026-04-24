@@ -105,6 +105,38 @@ class LLMProvider(ABC):
             return 0, "empty"
         return max(1, len(text) // 3), "estimate_chars_3"
 
+    # ─── Tool payload sanitize (v0.24.5 공용 안전망) ──────────────────────
+    # LLM provider 는 자기 API 스펙에 없는 키가 payload 에 섞이면 400 을 낸다.
+    # v0.23 의 MCP annotations / 외부 ToolSource 가 붙인 metadata 등이 실수로
+    # state.tool_definitions 에 스며들면 Anthropic 이 unknown field 거부.
+    # 모든 provider 가 동일한 방어선을 공유하도록 base 에 기본 구현을 제공한다.
+    #
+    # 원칙: 각 provider 는 `ALLOWED_TOOL_KEYS` 집합을 override 해 자기 API 에서
+    # 허용하는 확장 키(예: Anthropic `cache_control`) 를 추가 선언. 기본값은
+    # LLM 표준 공통 키 (name / description / input_schema / type).
+    # OpenAI 처럼 완전히 다른 포맷으로 변환하는 provider 는 본 메서드 대신
+    # 자체 `_convert_tools` 에서 name/description/parameters 만 뽑으면 족하다.
+
+    ALLOWED_TOOL_KEYS: frozenset[str] = frozenset({
+        "name", "description", "input_schema", "type",
+    })
+
+    def _sanitize_tool_defs(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Tool 정의 리스트를 API 화이트리스트로 정제.
+
+        - 기본은 ALLOWED_TOOL_KEYS 만 통과시키는 얕은 dict comprehension
+        - 외부 기여자 provider 는 `ALLOWED_TOOL_KEYS = base | {"my_extension"}` 로
+          확장 또는 본 메서드 override 로 완전 커스터마이즈 가능
+        - annotations / metadata / category / source 등 엔진 내부 키는 전부 제거
+
+        Note: provider 가 `tools` 를 완전히 다른 포맷(function call 등) 으로
+        바꿔 보내는 경우 본 메서드 대신 자체 변환기를 쓰면 된다.
+        """
+        if not tools:
+            return []
+        allowed = type(self).ALLOWED_TOOL_KEYS
+        return [{k: v for k, v in (t or {}).items() if k in allowed} for t in tools]
+
 
 def normalize_base_url(base_url: str, *, api_path: str, version: str = "v1") -> str:
     """LLM provider base_url 을 endpoint 까지 자동 조립.

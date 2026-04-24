@@ -5,6 +5,39 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.5] — 2026-04-24
+
+### 🧰 공용 tool sanitize — provider 하드코딩 분기 일반화
+
+v0.24.3 의 Anthropic-only 화이트리스트는 "웹 UI 는 모든 LLM provider 를 다 지원하는데
+왜 Anthropic 만 특수 처리하나" 라는 확장성 지적에 따라 **base 메서드로 일반화**.
+
+### 변경
+
+- `providers.base.LLMProvider._sanitize_tool_defs(tools)` 기본 구현 추가
+  - 클래스 상수 `ALLOWED_TOOL_KEYS = {"name", "description", "input_schema", "type"}`
+    (LLM 표준 공통 4 키) 기본 화이트리스트
+  - 얕은 dict comprehension 으로 정제
+- `AnthropicProvider` 가 `ALLOWED_TOOL_KEYS = LLMProvider.ALLOWED_TOOL_KEYS | {"cache_control"}`
+  로 확장 (prompt caching 용 Anthropic 전용 키)
+- `AnthropicProvider.chat` 의 인라인 화이트리스트 → `self._sanitize_tool_defs(tools)` 호출로 교체
+- `OpenAIProvider` 는 `_convert_tools` 가 `name/description/parameters` 만 뽑는
+  자체 변환기라 무변경. 공용 sanitize 거치지 않아도 이미 안전.
+- `LangChainAdapter` 도 `_to_langchain_tools` 자체 변환으로 안전.
+
+### 외부 provider 기여자 가이드
+
+- pip 으로 Bedrock / Gemini / vLLM 등 커스텀 provider 를 추가하면 **base 의
+  기본 sanitize 를 자동 상속**. annotations 같은 비표준 키로 400 나지 않음.
+- 자기 provider 에 확장 키가 필요하면 클래스 상수로 `ALLOWED_TOOL_KEYS = LLMProvider.ALLOWED_TOOL_KEYS | {"my_ext"}` 한 줄.
+
+### 하위호환
+
+- v0.24.4 근본 수정 (Tool.to_api_format 에서 annotations 제거, state.tool.annotations 맵 분리) 유지
+- v0.24.3 Anthropic 인라인 화이트리스트는 제거됐으나 base sanitize 가 같은 역할 수행
+
+---
+
 ## [0.24.4] — 2026-04-24
 
 ### 🧬 annotations 를 tool payload 에서 근본 분리 (provider-agnostic)

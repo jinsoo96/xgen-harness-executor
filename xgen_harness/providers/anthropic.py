@@ -23,6 +23,11 @@ ANTHROPIC_API_VERSION = "2023-06-01"
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude API 프로바이더"""
 
+    # v0.24.5 — 공용 base._sanitize_tool_defs 가 이 집합을 참조. Anthropic 은
+    # prompt caching 용 cache_control 을 tool 단위로 받을 수 있으므로 기본값 외
+    # 추가 허용. 새 Anthropic 확장 키가 생기면 여기만 바꾸면 된다.
+    ALLOWED_TOOL_KEYS = LLMProvider.ALLOWED_TOOL_KEYS | {"cache_control"}
+
     def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", base_url: Optional[str] = None):
         self._api_key = api_key
         self._model = model
@@ -71,16 +76,10 @@ class AnthropicProvider(LLMProvider):
             body["system"] = system
 
         if tools:
-            # v0.24.3 — Anthropic API 는 tool 정의에 {name, description, input_schema,
-            # type, cache_control} 만 허용. v0.23.0 에서 추가한 MCP `annotations` 블록을
-            # 엔진 내부 state.tool_definitions 에 포함해 두었더니 이 필드가 그대로 API 에
-            # 전달돼 `tools.0.custom.annotations: Extra inputs are not permitted` 400.
-            # 화이트리스트 정제로 비표준 키 (annotations, category 등) 전송 차단.
-            _ANTHROPIC_TOOL_KEYS = {"name", "description", "input_schema", "type", "cache_control"}
-            body["tools"] = [
-                {k: v for k, v in t.items() if k in _ANTHROPIC_TOOL_KEYS}
-                for t in tools
-            ]
+            # v0.24.5 — 공용 sanitize (base._sanitize_tool_defs) 로 이식. Anthropic 은
+            # cache_control 확장 키를 허용하므로 클래스 상수로 ALLOWED_TOOL_KEYS 를 확장.
+            # 모든 provider 가 동일 방어선을 공유 — 특정 provider 하드코딩 분기 제거.
+            body["tools"] = self._sanitize_tool_defs(tools)
             # v0.11.19 — Anthropic tool_choice: {"type": "auto"|"any"|"tool", "name": "..."}.
             # v0.11.20 — "none" 은 Anthropic 공식 미지원 → tools 자체를 제거해 LLM 이 tool 을 못 쓰게 함.
             if tool_choice:
