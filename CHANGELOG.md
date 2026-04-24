@@ -5,6 +5,21 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] — 2026-04-24
+
+### 🩹 s05_policy 표시 이름 누락 수정 + docstring 사용자 친화화
+
+v0.17.0 에 Policy Gate Stage 가 도입됐지만 `STAGE_DISPLAY_NAMES` / `STAGE_DISPLAY_NAMES_KO` 딕셔너리에 등록이 빠져있어서 프론트 UI 가 원시 식별자 `s05_policy` 를 그대로 카드에 노출했음. 사용자가 "이게 뭔지 모르겠다" 피드백 후 긴급 패치.
+
+### 변경
+- `xgen_harness/core/stage.py` — `STAGE_DISPLAY_NAMES["s05_policy"] = "Policy Gate"`, `STAGE_DISPLAY_NAMES_KO["s05_policy"] = "정책 게이트"` 추가
+- `xgen_harness/stages/s05_policy/stage.py` — PolicyGateStage docstring 을 사용자 친화 설명으로 재작성. `_compose_from_class_attrs` 가 이 docstring 첫 문단을 `description_ko/en` 으로 자동 노출 → UI 상세 패널에서 "이 Stage 가 무엇을 하는지" 읽을 수 있음. "Skipped (condition unmet)" 이 오류가 아닌 정상 bypass 라는 것도 본문에 명시.
+
+### Breaking 없음
+- API / 스키마 / stage_params 계약 모두 v0.25.0 그대로.
+
+---
+
 ## [0.25.0] — 2026-04-24
 
 ### ⚠️ Breaking: ToolSource 를 **유일한 도구 공급 채널** 로 승격

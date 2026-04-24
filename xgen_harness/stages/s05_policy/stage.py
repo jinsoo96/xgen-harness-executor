@@ -38,9 +38,9 @@ logger = logging.getLogger("harness.stage.policy")
 
 
 class PolicyGateStage(Stage):
-    """Policy Gate — Pipeline 이 훅 시점마다 직접 호출하는 Stage.
+    """정책 게이트 — 도구 호출·LLM 호출·응답·루프 경계 4 훅 시점에 Guard 체인을 집행하는 특수 Stage. 일반 loop 순번에는 끼지 않고 (자동 bypass), guards 파라미터가 선언됐을 때만 Pipeline 이 훅별로 개별 호출. 감사·예산·콘텐츠 정책이 필요할 때 활성화.
 
-    (이 docstring 은 인간이 코드 읽을 때 보조. 엔진/LLM 소비 경로 아님.)
+    UI 실행 요약의 "Skipped (condition unmet)" 은 "guards 가 비어있어서 훅이 아무 검사도 하지 않았다" 는 뜻 — 오류 아님. guards 를 선언하려면 s05_policy.guards stage_param 에 Guard 이름 리스트를 넘긴다.
     """
 
     # Machine meta — LLM(planner) 이 Auto 모드에서 읽는 선택 근거.

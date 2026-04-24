@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.25.0"
-description = "XGEN Harness — ToolSource 를 유일한 도구 공급 채널로 승격. s04_tool 의 mcp_sessions/custom_tools/node_tags/cli_skills 4 하드코딩 경로 제거, selected_tools + tool_source_filters 단일 맵 + /api/harness/tool-sources 엔드포인트"
+version = "0.25.1"
+description = "XGEN Harness — s05_policy display_name (Policy Gate/정책 게이트) 노출 + docstring 사용자 친화 재작성. v0.25.0 ToolSource 단일 공급 채널 + v0.24.5 공용 sanitize (annotations 400 방지) 를 그대로 수렴"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
