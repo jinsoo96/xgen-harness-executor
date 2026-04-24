@@ -5,6 +5,34 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.3] — 2026-04-24
+
+### 🔥 Anthropic tools annotations 400 핫픽스
+
+프로덕션 Auto 모드 s04_tool → s06_context 진행 중 Anthropic API 에서:
+```
+HTTP 400: tools.0.custom.annotations: Extra inputs are not permitted
+```
+
+### 원인
+
+- v0.23.0 에서 `Tool.to_api_format()` 이 MCP 표준 `annotations` 블록을 추가
+- 엔진 내부 `state.tool_definitions` 는 정상이지만 Anthropic provider 가 **그대로 API 로 전송**
+- Anthropic tools 스펙은 `{name, description, input_schema, type, cache_control}` 만 허용 → `annotations` unknown field 400
+
+### 수정
+
+- `providers/anthropic.py` 가 tools 전송 직전 **화이트리스트 정제**. `_ANTHROPIC_TOOL_KEYS = {"name", "description", "input_schema", "type", "cache_control"}` 만 통과
+- 엔진 내부 annotations 유지 (s07_act 의 readOnlyHint 우선순위 조회 경로는 그대로)
+- OpenAI provider 는 `_convert_tools` 가 name/description/parameters 만 뽑아서 무영향
+
+### 검증
+
+- Anthropic API tool 정의 스펙 일치
+- 내부 `Tool.annotations()` 호출 경로 (s07_act destructive 판별 등) 무변경
+
+---
+
 ## [0.24.2] — 2026-04-24
 
 ### 🔥 Auto 모드 s04_tool AttributeError 핫픽스

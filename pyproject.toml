@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.24.2"
-description = "XGEN Harness — s04_tool tool_index list/dict 혼용 핫픽스 (Auto 모드 builtin_tools=[] 경로 AttributeError 해소)"
+version = "0.24.3"
+description = "XGEN Harness — Anthropic tools annotations 필드 400 핫픽스 (v0.23+ MCP annotations 전송 차단, 화이트리스트 정제)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

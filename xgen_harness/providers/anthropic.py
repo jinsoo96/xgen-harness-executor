@@ -71,7 +71,16 @@ class AnthropicProvider(LLMProvider):
             body["system"] = system
 
         if tools:
-            body["tools"] = tools
+            # v0.24.3 — Anthropic API 는 tool 정의에 {name, description, input_schema,
+            # type, cache_control} 만 허용. v0.23.0 에서 추가한 MCP `annotations` 블록을
+            # 엔진 내부 state.tool_definitions 에 포함해 두었더니 이 필드가 그대로 API 에
+            # 전달돼 `tools.0.custom.annotations: Extra inputs are not permitted` 400.
+            # 화이트리스트 정제로 비표준 키 (annotations, category 등) 전송 차단.
+            _ANTHROPIC_TOOL_KEYS = {"name", "description", "input_schema", "type", "cache_control"}
+            body["tools"] = [
+                {k: v for k, v in t.items() if k in _ANTHROPIC_TOOL_KEYS}
+                for t in tools
+            ]
             # v0.11.19 — Anthropic tool_choice: {"type": "auto"|"any"|"tool", "name": "..."}.
             # v0.11.20 — "none" 은 Anthropic 공식 미지원 → tools 자체를 제거해 LLM 이 tool 을 못 쓰게 함.
             if tool_choice:
