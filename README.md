@@ -123,9 +123,12 @@ config = HarnessConfig(
 
 `✱` = `REQUIRED_STAGES` (비활성화 불가) · `◆` = 옵트인 (registry-only, role 로 호출됨) · `*` = 기본 strategy
 
-> **v0.26.0 변경 (Dead UI 정리)**: 사용자 클릭이 LLM 환경에 안 박히던 4 stage_param 제거 — `s01_input.provider` (글로벌 ConfigPanel.provider 와 중복), `s02_history.memory_source` (코드 미read), `s06_context.files` (코드 미read), `s09_decide.max_iterations` (top-level config 만 작동). Label-only 라 동일 동작이던 `s03_prompt.simple` strategy 도 제거. `s04_tool.none` / `s10_save.noop` 라벨은 분기 코드 신규 구현해 진짜 short-circuit 되게 정리.
+> **최근 변경 — 한눈에**:
 >
-> **v0.25.0 변경 (도구 채널 단일화)**: `s04_tool` 에서 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 개 stage_param 사라짐. 모든 도구는 이제 **ToolSource 한 채널** 로 (다음 섹션).
+> - **v0.26.x 패치 사이클** (production 라이브 검증 → 발견 → 즉시 fix): `s06_context.files` 부활 (v0.26.1, frontend UI 와 wiring 일치) · OpenAI strict schema 호환 (v0.26.2) · `s10_save` 컬럼명 정합 (v0.26.3) · batch transport 응답 누락 fix (v0.26.4) · Anthropic thinking max_tokens 자동 보정 (v0.26.5) · DAG orchestrator init TypeError fix (v0.26.6) · `max_iter=1` + 도구 활성 빈응답 보강 (v0.26.7).
+> - **v0.26.0 — Dead UI 정리**: 사용자 클릭이 LLM 환경에 안 박히던 stage_param 정리. `s01_input.provider` (글로벌 ConfigPanel 와 중복) · `s02_history.memory_source` (코드 미read) · `s09_decide.max_iterations` (top-level config 만 작동) 3건 제거. Label-only 라 동일 동작이던 `s03_prompt.simple` strategy 제거. `s04_tool.none` / `s10_save.noop` 는 분기 코드 신규 구현해 진짜 short-circuit. EventEmitter queue 1000→8000 + drop 카운터.
+>   - ⚠ `s06_context.files` 도 v0.26.0 에선 같이 제거됐으나, frontend UI 가 잔존해 클릭 무효화되는 문제로 **v0.26.1 에서 부활** (`metadata_filter.file_name` 자동 라우팅).
+> - **v0.25.0 — 도구 채널 단일화**: `s04_tool` 의 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 개 stage_param 사라짐. 모든 도구는 이제 **ToolSource 한 채널** 로 (다음 섹션).
 
 ---
 
@@ -682,24 +685,64 @@ from xgen_harness import (
 
 ## 진화 요약
 
+큰 흐름은 **4 페이즈** 로 정리됩니다.
+
+```
+Phase 1  REAL HARNESS  ─ 13 Stage 골조 / s00_harness 통제탑       (v0.12 ~ v0.16)
+Phase 2  발행·격리·정책 ─ MCP wheel / Sandbox / NOM / Policy Gate   (v0.17 ~ v0.21)
+Phase 3  독립성 정리   ─ xgen 특화 호스트 이관 / ToolSource 통합    (v0.22 ~ v0.25)
+Phase 4  라이브 검증 패치 ─ production 결함 일괄 fix                (v0.26.x)
+```
+
+### Phase 1 — REAL HARNESS 골조 (v0.12 ~ v0.16)
+
+캔버스를 버리고 "13 Stage = 환경 슬롯" 모델로 전환한 시기. 각 Stage 가 자기 capability·도구·리소스를 LLM 에게 progressive disclose 하고, `s00_harness` 가 본문 LLM 호출의 single owner 가 됨.
+
 | 버전 | 핵심 |
 |---|---|
 | `v0.12.0` | REAL HARNESS Phase 1 — `s00_harness` Planner + 13 Stage 디렉토리화 |
 | `v0.13.0` | Phase 2 — 단일 Provider + iterative planning |
-| `v0.14.0` | s00_harness 통제탑 승격 — 본문 LLM 호출 owner + 3 모드 |
-| `v0.15.x` | 재귀적 자율주행 — orchestrator_hint + OrchestratorRegistry + fs_scanner 자동 발견 |
+| `v0.14.0` | `s00_harness` 통제탑 승격 — 본문 LLM 호출 owner + 3 모드 (`off`/`selected`/`autonomous`) |
+| `v0.15.x` | 재귀적 자율주행 — `orchestrator_hint` + OrchestratorRegistry + fs_scanner 자동 발견 |
 | `v0.16.x` | 자가증식 골조 — Sandbox / NOM / NodePlugin / ToolSynthesis + Pipeline Role |
-| `v0.17.0` | **Policy Gate** — 선언형 Guard × 4 훅 + entry_points |
-| `v0.18.0` | **양방향 MCP** — 하네스 → wheel → MCP stdio / 마켓·Station → s04 카탈로그 |
-| `v0.20.0` | **Sandbox Verifier** — `MCPStdioVerifier` + SHA-256 재현성 해시 |
-| `v0.21.0` | **NOM IR 허브** — to_mcp_schema / to_sandbox_payload / to_wheel_snapshot 3 변환 |
-| `v0.22.0` | **엔진 독립성 완결** — xgen 특화 코드 호스트 이관 + `ExternalNodeRef` Protocol |
-| `v0.23.0` | **MCP Tool Annotations 1급화** — Tool ABC 4 힌트 1급 속성 |
-| `v0.24.0` | **HITL Guard + Agent-controlled Compact Tool** |
-| `v0.25.0` | **ToolSource 단일 공급 채널** — s04 4 하드코딩 제거 + `/tool-sources` 엔드포인트 |
-| `v0.25.3` | **HarnessConfig 헬퍼** — `is_autonomous()` / `is_selected()` / `is_off()` 도메인 캡슐화 |
-| `v0.26.0` | **Dead UI 정리 + Production-blocking fix** — 검증 보고서 14건 결함 일괄 처리. UI 노출되나 코드 미read 던 4 stage_param 제거 (s01.provider, s02.memory_source, s06.files, s09.max_iterations), label-only 라 동일 동작이던 s03.simple strategy 제거, s04.none/s10.noop 분기 코드 신규 구현, EventEmitter queue 1000→8000 + drop 카운터 |
-| **`v0.26.1`** | **s06_context.files 부활** — frontend files multi_select UI 가 진짜 작동하도록 metadata_filter.file_name 자동 라우팅 추가. v0.26.0 에서 dead 라 제거했으나 UI 잔존으로 클릭 무효화되는 문제 해결 |
+
+### Phase 2 — 발행·격리·정책 (v0.17 ~ v0.21)
+
+워크플로우를 wheel 로 컴파일해서 MCP stdio 서버로 배포하는 양방향 통합과, 발행 전 격리 검증, 선언형 Guard 정책 시스템이 자리잡은 시기. Stage / Tool / MCP / Plugin 을 단일 IR (NOMGraph) 로 통합.
+
+| 버전 | 핵심 |
+|---|---|
+| `v0.17.0` | **Policy Gate** — 선언형 Guard × 4 훅 포인트 + `entry_points` 외부 Guard 합류 |
+| `v0.18.0` | **양방향 MCP** — 하네스 → wheel → MCP stdio 발행 / 마켓·Station → s04 카탈로그 흡수 |
+| `v0.20.0` | **Sandbox Verifier** — `MCPStdioVerifier` + POSIX rlimit + SHA-256 재현성 해시 |
+| `v0.21.0` | **NOM IR 허브** — `to_mcp_schema` / `to_sandbox_payload` / `to_wheel_snapshot` 3 변환 단일 그래프로 |
+
+### Phase 3 — 독립성 정리 (v0.22 ~ v0.25)
+
+엔진이 xgen 서비스(workflow / mcp-station / documents) 와 직접 결선돼 있던 잔재를 모두 호스트(이식측)로 이관. 도구 공급 채널을 4 갈래 → ToolSource 단일 Protocol 로 통합.
+
+| 버전 | 핵심 |
+|---|---|
+| `v0.22.0` | **엔진 독립성 완결** — xgen 특화 코드 호스트 이관 + `ExternalNodeRef` Protocol + `REQUIRED_STAGES` 레지스트리 |
+| `v0.23.0` | **MCP Tool Annotations 1급화** — `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` Tool ABC 1급 속성 |
+| `v0.24.0` | **HITL Guard + Agent-controlled Compact Tool** — `destructiveHint=true` 도구 사용자 승인 모달 |
+| `v0.25.0` | **ToolSource 단일 공급 채널** — s04 의 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 하드코딩 제거 + `/tool-sources` 엔드포인트 |
+| `v0.25.3` | **HarnessConfig 헬퍼** — `is_autonomous()` / `is_selected()` / `is_off()` 도메인 캡슐화 (리터럴 `== "autonomous"` 비교 추적 불필요) |
+
+### Phase 4 — 라이브 검증 패치 사이클 (v0.26.x)
+
+production 라이브 운영에서 한 번 검증할 때마다 한두 개씩 드러나는 결함을 즉시 메우는 패치 사이클. 보고서 + 라이브 재검증 + 패치 → 다음 검증에서 또 결함 → 패치 의 빠른 루프.
+
+| 버전 | 무엇이 깨져있었나 | 어떻게 고쳤나 |
+|---|---|---|
+| `v0.26.0` | UI 클릭이 LLM 환경에 안 박히는 4 stage_param + label-only strategy 1개 + EventQueue 백프레셔 부재 | Dead UI 4건 제거 (`s01.provider` / `s02.memory_source` / `s06.files` / `s09.max_iterations`), label-only 1건 제거 (`s03.simple`) + 분기 신규 2건 (`s04.none` / `s10.noop`), queue 1000→8000 + drop 카운터 |
+| `v0.26.1` | v0.26.0 에서 dead 로 제거한 `s06_context.files` 가 frontend UI 엔 살아있어서 사용자 클릭이 무효화 | 엔진에 진짜 wiring 추가 (`metadata_filter.file_name` 자동 라우팅) → 필드 부활 |
+| `v0.26.2` | OpenAI strict schema 가 `properties` 없는 도구를 거부 → HTTP 400 (SynthesizedToolSource 자동 등록 도구 영향) | `providers/openai.py:_convert_tools` 가 `type=object` + `properties` 누락 시 `{}` 자동 보강 |
+| `v0.26.3` | `s10_save` 가 dict 컬럼 (`input_data` / `output_data`) 으로 보내지만 실 DB 는 text (`input_text` / `output_text`) — 매 실행 `inserted_id=None` 으로 graceful 종료, `/executions` 빈 채 | record 컬럼명을 실 schema 에 맞춰 직렬화 (5K / 50K 자 truncate) |
+| `v0.26.4` | OpenAI batch transport (`stream=False`) 가 STOP 이벤트 `.text` 로 응답 한 번에 yield, 엔진 STOP 핸들러는 `output_tokens` 만 처리 → 응답 텍스트 사라짐 | `core/llm_call.py:_single_call` STOP 핸들러에 `event.text` 처리 + `MessageEvent` emit 추가 |
+| `v0.26.5` | Anthropic `thinking` 켤 때 `thinking_budget > max_tokens` 이면 무조건 HTTP 400 — engine default 도 동일 함정 (`max_tokens=8192 < thinking_budget=10000`) | thinking 활성 시 자동 보정 `max_tokens = budget_tokens + 1024` (사용자 설정 무시 아니라 안전 보장) |
+| `v0.26.6` | DAG orchestrator 가 `PipelineState(tool_definitions=...)` 로 init — v0.11.22 도메인 그룹화 후 `dag.py:255` 동기화 누락 → 모든 DAG 노드 100% TypeError | init kwarg 제거, instance 생성 후 `state.tool_definitions = ...` setter 로 박음 |
+| **`v0.26.7`** | `max_iter=1` + 도구 활성 시 LLM 이 첫 iter 에서 도구만 호출, 답변 텍스트 만들 두 번째 iter 가 없어 `output_length=0` 빈 응답 (default `max_iter=10` 환경에선 안 드러남) | Phase B 후 빈 응답 + 도구 실행 ≥ 1 이면 `tool_definitions=[]` 로 1회 보강 `main_call` (직후 `tool_definitions` 원복 → 다음 iteration / 외부 코드 영향 0) |
 
 이전 변경: [CHANGELOG.md](CHANGELOG.md).
 
