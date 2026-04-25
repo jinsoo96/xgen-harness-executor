@@ -5,6 +5,72 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] — 2026-04-25
+
+### 🧹 Dead UI 정리 + Label-only strategy 보강 + EventQueue 백프레셔
+
+전수 기능 검증 보고서 (`docs/confluence/2026-04-25-harness-functional-verification.md`)
+가 발견한 14건 결함 중 엔진 권한 안의 7건 (D1~D7) + 1건 (B7) 일괄 fix.
+
+### Dead UI 4건 — UI 노출되나 코드가 한 번도 read 안 하던 stage_param 제거
+
+- **D1 `s01_input.provider` 필드 제거** (`core/stage_config.py`)
+  stage 자기 docstring 에 "s01 은 읽지도 쓰지도 않는다" 명시. provider 결정은
+  HarnessConfig top-level (ConfigPanel) 단일 진실 소스. stage_param 으로 중복
+  노출이 사용자 거짓말이었음 (UI 클릭 → 환경 무반영).
+- **D2 `s02_history.memory_source` 필드 제거**. grep 0 hit. 실 동작은 strategy
+  분기 + ServiceProvider.documents 주입 여부로만 결정.
+- **D3 `s06_context.files` 필드 제거**. grep 0 hit. 파일 단위 검색은
+  `metadata_filter` (file_name) 또는 `folders` 자동 확장 사용.
+- **D4 `s09_decide.max_iterations` stage_param 제거**. Pipeline 이 top-level
+  `state.config.max_iterations` 만 read. ConfigPanel 의 글로벌과 이중 노출되어
+  사용자가 어느 값이 박히는지 헷갈림. `max_retries` 만 보존.
+
+### Label-only strategy 3건 정리
+
+- **D5 `s03_prompt.simple` strategy 제거** (`stages/s03_prompt/stage.py:294`).
+  StrategyInfo 선언만 있고 execute() 분기 코드 없음. section_priority 와 동일
+  동작이라 라벨 거짓말. list_strategies() 에서 라벨 자체 제거.
+- **D6 `s04_tool.none` strategy 분기 신규 구현** (`stages/s04_tool/stage.py:55-61`).
+  이전엔 분기 grep 0 hit. 사용자가 도구 인덱싱을 명시적 비활성화 원할 수 있어
+  (디버깅 / 도구 무관 단발) execute() 진입 직후 short-circuit. should_bypass
+  자동 감지와 달리 도구·RAG·capability 가 *있어도* 강제 skip.
+- **D7 `s10_save.noop` strategy 분기 신규 구현** (`stages/s10_save/stage.py:29-35`).
+  동일 패턴. save_enabled=false 만이 실 wiring 이었으나 strategy=="noop" 도
+  동등하게 skip 하도록 분기 추가.
+
+### B7 — EventEmitter queue 백프레셔
+
+- **`events/emitter.py:31`** queue_size **1000 → 8000**.
+  production 라이브에 `Event queue full, dropping event: MessageEvent` 분당
+  ~75건 발생 (긴 응답 시 SSE 컨슈머가 못 따라가 message.delta drop).
+- `_drop_count` 누적 카운터 + warning 폭주 방지 (1회 + 100회마다 1회만 노출).
+
+### Breaking — 사용자 영향 (마이너)
+
+- **stage_params 에서 위 4개 키 제거됨** (`s01_input.provider`,
+  `s02_history.memory_source`, `s06_context.files`, `s09_decide.max_iterations`).
+  기존 저장된 워크플로우가 이 키를 가지고 있어도 무시됨 (이전에도 read 0회라
+  기능적 변화 없음).
+- `s03_prompt` 의 strategy 옵션에서 `simple` 사라짐. 기존 active_strategies 가
+  `simple` 이면 실질적으로 default (section_priority) 와 동일 동작이던 것이
+  유지되므로 사용자 영향 없음.
+
+### 검증
+
+- `pytest test_serialization.py test_compile.py` 31/32 PASS (1 fail = dummy
+  API key, 코드 무관).
+- 엔진 직접 검증:
+  ```python
+  from xgen_harness.core.stage_config import get_all_stage_configs
+  configs = get_all_stage_configs()
+  assert configs['s01_input']['fields'] == []   # D1
+  assert 'files' not in [f['id'] for f in configs['s06_context']['fields']]  # D3
+  assert configs['s09_decide']['fields'] == [{'id': 'max_retries', ...}]     # D4
+  from xgen_harness.events.emitter import EventEmitter
+  assert EventEmitter()._queue.maxsize == 8000  # B7
+  ```
+
 ## [0.25.3] — 2026-04-24
 
 ### ♻️ harness_mode 도메인 언어 캡슐화 (자가 감사 후속)

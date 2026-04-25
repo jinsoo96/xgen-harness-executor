@@ -95,35 +95,37 @@ config = HarnessConfig(
 
 ### 초기화 그룹 (ingress · 1 회)
 
-| # | Stage | 책임 | 주요 `stage_params` | 기본 Strategy |
+| # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 0 | **s00_harness** | LLM 핸들 owner + 본문호출 dispatcher (모드별 책임) | (config.provider/model 직결) | `streaming` / `batch` |
-| 1 | **s01_input** ✱ | 사용자 입력 정규화, multimodal 추출 | (config.user_input) | `default` |
-| 2 | **s02_history** | 같은 interaction 이전 turn 로드 | `history_limit` | `last_n` |
-| 3 | **s03_prompt** | system_prompt 주입 | `system_prompt`, `prompt_id` | `static` |
-| 4 | **s04_tool** | LLM 노출 도구 카탈로그 — **ToolSource 단일 채널** | `selected_tools`, `tool_source_filters` | `default` / `progressive` / `auto` |
+| 0 | **s00_harness** | LLM 핸들 owner + 본문호출 dispatcher (모드별 책임) | `strategy`(transport), `max_tokens`, `thinking_enabled`, `thinking_budget` | `streaming`* / `batch` |
+| 1 | **s01_input** ✱ | 사용자 입력 정규화, multimodal 추출 | (없음 — top-level config.user_input) | `default`* / `with_classification` |
+| 2 | **s02_history** | 같은 interaction 이전 turn 로드 | `max_history` | `default`* / `embedding_search` |
+| 3 | **s03_prompt** | system_prompt 주입 + citation | `system_prompt`, `prompt_id`, `include_rules`, `citation_mode`, `citation_auto_doc_tokens`, `citation_auto_prod_tokens` | `section_priority`* |
+| 4 | **s04_tool** | LLM 노출 도구 카탈로그 — **ToolSource 단일 채널** | `selected_tools`, `tool_source_filters` (UI 가 주입) | `progressive_3level`* / `eager_load` / `none` |
 
 ### 에이전트 루프 그룹 (loop · `max_iterations` 회)
 
-| # | Stage | 책임 | 주요 `stage_params` | 기본 Strategy |
+| # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 5 | **s05_strategy** | 각 Stage 의 Strategy 결정 | (`active_strategies` 파생) | `default` / `pinned_first` / `llm_decide` |
+| 5 | **s05_strategy** | 계획 모드 결정 (cot/react/capability) | `planning_mode`, `intent_rules` | `cot_planner`* / `react` / `capability` / `none` |
 | 5 | **s05_policy** ◆ | Guard 체인 × 4 훅 포인트 (옵트인) | `guards: [{name, params}]` | — (Guard 합성) |
-| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 | `rag_collections`, `rag_top_k`, `ontology_collections` | `microcompact` / `cascade` / `progressive_3level` |
-| 7 | **s07_act** | 본문 LLM 호출 + tool_use multi-turn | `max_tool_rounds`, `force_tool_use` | `default` / `react` |
-| 8 | **s08_judge** | 응답 품질 평가 (0~1) | `validation_threshold`, `judge_model` | `llm_judge` / `rule_based` / `none` |
-| 9 | **s09_decide** ✱ | judge 결과 → loop_decision | — | `default` |
+| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 | `rag_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `strategy`(compactor), cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
+| 7 | **s07_act** | 본문 LLM 호출 + tool_use multi-turn | `timeout`, `result_budget`, `tool_result_preview_threshold`, `tool_result_preview_size` | `default`* / `parallel_read` |
+| 8 | **s08_judge** | 응답 품질 평가 (0~1) | `threshold`, `criteria` | `llm_judge`* / `rule_based` / `none` |
+| 9 | **s09_decide** ✱ | judge 결과 → loop_decision | `max_retries` (max_iterations 은 top-level config) | `threshold`* / `always_pass` |
 
 ### 종료 그룹 (egress · 1 회)
 
-| # | Stage | 책임 | 주요 `stage_params` | 기본 Strategy |
+| # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 10 | **s10_save** | DB 실행 기록 (이식측 hook) | `save_metrics`, `save_full_text` | `default` |
-| 11 | **s11_finalize** ✱ | 최종 응답 + MetricsEvent | — | `default` |
+| 10 | **s10_save** | DB 실행 기록 (이식측 hook) | `save_enabled` | `default`* / `noop` |
+| 11 | **s11_finalize** ✱ | 최종 응답 + MetricsEvent | `output_format` (text/markdown/json) | `default`* / `format_json` |
 
-`✱` = `REQUIRED_STAGES` (비활성화 불가) · `◆` = 옵트인 (registry-only, role 로 호출됨)
+`✱` = `REQUIRED_STAGES` (비활성화 불가) · `◆` = 옵트인 (registry-only, role 로 호출됨) · `*` = 기본 strategy
 
-> **v0.25 변경:** `s04_tool` 에서 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 개 stage_param 이 사라졌습니다. 모든 도구는 이제 **ToolSource 한 채널** 로 들어옵니다 (다음 섹션).
+> **v0.26.0 변경 (Dead UI 정리)**: 사용자 클릭이 LLM 환경에 안 박히던 4 stage_param 제거 — `s01_input.provider` (글로벌 ConfigPanel.provider 와 중복), `s02_history.memory_source` (코드 미read), `s06_context.files` (코드 미read), `s09_decide.max_iterations` (top-level config 만 작동). Label-only 라 동일 동작이던 `s03_prompt.simple` strategy 도 제거. `s04_tool.none` / `s10_save.noop` 라벨은 분기 코드 신규 구현해 진짜 short-circuit 되게 정리.
+>
+> **v0.25.0 변경 (도구 채널 단일화)**: `s04_tool` 에서 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 개 stage_param 사라짐. 모든 도구는 이제 **ToolSource 한 채널** 로 (다음 섹션).
 
 ---
 
@@ -696,6 +698,7 @@ from xgen_harness import (
 | `v0.24.0` | **HITL Guard + Agent-controlled Compact Tool** |
 | `v0.25.0` | **ToolSource 단일 공급 채널** — s04 4 하드코딩 제거 + `/tool-sources` 엔드포인트 |
 | `v0.25.3` | **HarnessConfig 헬퍼** — `is_autonomous()` / `is_selected()` / `is_off()` 도메인 캡슐화 |
+| **`v0.26.0`** | **Dead UI 정리 + Production-blocking fix** — 검증 보고서 14건 결함 일괄 처리. UI 노출되나 코드 미read 던 4 stage_param 제거 (s01.provider, s02.memory_source, s06.files, s09.max_iterations), label-only 라 동일 동작이던 s03.simple strategy 제거, s04.none/s10.noop 분기 코드 신규 구현, EventEmitter queue 1000→8000 + drop 카운터 |
 
 이전 변경: [CHANGELOG.md](CHANGELOG.md).
 
