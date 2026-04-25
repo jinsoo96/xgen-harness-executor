@@ -269,6 +269,15 @@ async def _single_call(
                 _output_tokens_recorded = True
 
         elif event.type == ProviderEventType.STOP:
+            # v0.26.4 — batch transport (stream=False) 호환.
+            # OpenAIProvider._batch_request 는 응답 text 를 STOP 이벤트의 .text 필드
+            # 단일 chunk 로 전달. 이전엔 STOP 핸들러가 output_tokens 만 보고 text 를
+            # 무시해서 batch 모드 실행 시 result_text 가 빈 채 → state.last_assistant_text=""
+            # → state.final_output 도 빈 채로 사용자에게 도착 (라이브 검증으로 발견).
+            if event.text and not text_parts:
+                text_parts.append(event.text)
+                if state.event_emitter:
+                    await state.event_emitter.emit(MessageEvent(text=event.text))
             if event.output_tokens and not _output_tokens_recorded:
                 usage.output_tokens += event.output_tokens
                 _output_tokens_recorded = True

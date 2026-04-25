@@ -5,6 +5,27 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.4] — 2026-04-25
+
+### 🚨 batch transport (stream=False) 응답 누락 fix
+
+per-feature 라이브 검증 (saleskit JWT, 49 항목 중 1 FAIL) 으로 발견:
+`s00_harness.strategy=batch` 선택 시 LLM 응답 받았으나 (metrics output_tokens=9)
+`output_length=0` — state.final_output 빈 채.
+
+원인: `OpenAIProvider._batch_request` 는 응답 전체 text 를 STOP 이벤트의 .text
+필드에 담아 단일 yield. 그러나 `core/llm_call.py:_single_call` 의 STOP 핸들러
+(line 271-274) 는 `output_tokens` 만 처리하고 `event.text` 를 무시. 결과:
+- streaming: TEXT_DELTA 들이 누적되어 result_text 정상
+- batch: text_parts 빈 채로 result_text="" → state.last_assistant_text=""
+
+이로 인해 batch 모드는 메타데이터 (토큰/비용) 만 정상이고 사용자 응답이 사라짐.
+
+### 변경
+- `xgen_harness/core/llm_call.py` STOP 핸들러에 `event.text` 처리 추가:
+  TEXT_DELTA 가 한 번도 안 왔는데 STOP 이 text 가지고 오면 그것을 result 로.
+  MessageEvent 도 함께 emit (UI/SSE 호환).
+
 ## [0.26.3] — 2026-04-25
 
 ### 🚨 s10_save record 컬럼명 — 실 DB schema 정합
