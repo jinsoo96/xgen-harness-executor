@@ -252,11 +252,17 @@ class DAGOrchestrator:
         emitter = EventEmitter()
         pipeline = Pipeline.from_config(config, emitter)
 
+        # v0.26.6 — PipelineState 가 v0.11.22+ 에서 tool 을 ToolGroup 으로 도메인
+        # 그룹화 (tool_definitions 는 property shim). dataclass __init__ kwarg 로
+        # tool_definitions 직접 못 넘김 → TypeError. setter 로 박는다.
+        # 라이브 검증 발견: DAG 멀티 하네스 100% "PipelineState.__init__() got an
+        # unexpected keyword argument 'tool_definitions'" 에러.
         state = PipelineState(
             user_input=user_input,
             rag_context=node.rag_context,
-            tool_definitions=node.tool_definitions,
         )
+        if node.tool_definitions:
+            state.tool_definitions = node.tool_definitions
         # sub-pipeline 의 모든 Stage 가 verbose 이벤트를 발행하도록 emitter 직접 주입.
         # 이게 없으면 sub-agent 의 stage_enter / substep / metrics 가 메인 SSE 에 안 흐름.
         state.event_emitter = emitter

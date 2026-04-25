@@ -5,6 +5,32 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.6] — 2026-04-26
+
+### 🚨 DAG orchestrator — PipelineState init TypeError fix
+
+UI 헤더 버튼 라이브 검증 (Save/Deploy/Compile/Galleries/Config + DAG/Publish/MCP)
+중 발견:
+- DAG 멀티 하네스 실행 (`POST /dag/execute/stream`) 시 노드 결과:
+  `error: "PipelineState.__init__() got an unexpected keyword argument 'tool_definitions'"`
+- 모든 DAG 노드 실행이 100% 실패 (success=false, output="")
+
+원인: PipelineState 가 v0.11.22+ 에서 `tool` 을 `ToolGroup` 으로 도메인 그룹화
+하면서 `tool_definitions` 는 property shim 으로만 노출. dataclass `__init__`
+kwarg 로는 못 받음.
+
+orchestrator/dag.py:255 가 `PipelineState(tool_definitions=...)` 로 호출 →
+TypeError. v0.11.22 도메인 그룹화 시 dag.py 동기화 누락된 것으로 추정.
+
+### 변경
+- `xgen_harness/orchestrator/dag.py` — `tool_definitions` 를 init kwarg 에서
+  제거하고 instance 생성 후 setter 로 박음 (`state.tool_definitions = ...`).
+
+### 검증
+라이브 saleskit 계정 + DAG 1 node 그래프:
+- 이전: `node_results.n1.error = "PipelineState.__init__() got an unexpected..."`
+- v0.26.6: 노드 정상 실행 + 응답 생성 기대 (컨테이너 재시작 후 재검증)
+
 ## [0.26.5] — 2026-04-25
 
 ### 🚨 Anthropic thinking — max_tokens 자동 보정
