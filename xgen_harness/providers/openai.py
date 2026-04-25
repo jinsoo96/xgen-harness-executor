@@ -311,15 +311,24 @@ def _convert_messages(messages: list[dict], system: Optional[str] = None) -> lis
 
 
 def _convert_tools(tools: list[dict]) -> list[dict]:
-    """Anthropic tool 정의 → OpenAI function 정의"""
+    """Anthropic tool 정의 → OpenAI function 정의
+
+    v0.26.2 — input_schema 가 ``{"type":"object"}`` 처럼 properties 누락 시
+    OpenAI 가 ``"object schema missing properties"`` 로 400 거부함. 합성 도구
+    (SynthesizedToolSource) 등 input_schema 가 단순한 케이스를 보정.
+    """
     oai_tools = []
     for tool in tools:
+        params = dict(tool.get("input_schema") or {})
+        # OpenAI 호환 보정: type=object 인데 properties 누락이면 빈 dict 추가
+        if params.get("type") == "object" and "properties" not in params:
+            params["properties"] = {}
         oai_tools.append({
             "type": "function",
             "function": {
                 "name": tool.get("name", ""),
                 "description": tool.get("description", ""),
-                "parameters": tool.get("input_schema", {}),
+                "parameters": params,
             },
         })
     return oai_tools

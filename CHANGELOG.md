@@ -5,6 +5,24 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.2] — 2026-04-25
+
+### 🚨 OpenAI tool schema 호환성 — 400 거부 수정
+
+라이브 검증 (saleskit 계정으로 실 워크플로우 실행) 중 발견:
+- SynthesizedToolSource 가 자동 등록한 `naver_tool` 의 input_schema 가
+  `{"type": "object"}` (properties 누락) — OpenAI 호환 안 됨.
+- OpenAI 응답: `"Invalid schema for function 'naver_tool': In context=(),
+  object schema missing properties."` HTTP 400.
+- 이로 인해 OpenAI provider 사용하는 모든 실행이 SSE error event 후 종료.
+  (vllm 은 schema 검증 느슨해서 통과되어 이 결함 가시화 안 됐음.)
+
+### 변경
+- `xgen_harness/providers/openai.py:_convert_tools` — `type=object` 인데
+  `properties` 키 없으면 자동으로 `{}` 추가. OpenAI strict schema 검증 통과.
+
+### Breaking 없음
+
 ## [0.26.1] — 2026-04-25
 
 ### 🔧 s06_context.files 필드 부활 — 실 wiring 추가

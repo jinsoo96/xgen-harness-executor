@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.1"
-description = "XGEN Harness — v0.26.0 + s06_context.files 필드 부활 (metadata_filter.file_name 자동 라우팅, 진짜 wiring). frontend 의 files multi_select UI 가 의미 있게 작동."
+version = "0.26.2"
+description = "XGEN Harness — v0.26.1 + OpenAI _convert_tools 가 input_schema={type:object} 만 있으면 properties={} 자동 보정. SynthesizedToolSource 의 단순 schema 가 OpenAI 400 거부 안 당하도록."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
