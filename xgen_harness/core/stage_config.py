@@ -403,10 +403,18 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": [],
                 "description": "스토리지 폴더 선택 — 폴더 안 컬렉션 자동 확장.",
             },
-            # v0.26.0 — files 필드 제거 (D3).
-            # s06_context/stage.py 가 이 필드를 한 번도 read 하지 않음 (grep 0 hit).
-            # 파일 단위 검색이 필요하면 metadata_filter 로 file_name 지정하거나
-            # folders 의 자동 확장 메커니즘 사용. UI 거짓말 제거.
+            # v0.26.1 — files 필드 부활 (실 wiring 추가).
+            # v0.26.0 에선 dead 라 제거했었음. 이제 stage.py 가 이 필드를 read 해서
+            # metadata_filter 의 `file_name` 키로 자동 라우팅 (union with 사용자 textarea).
+            # frontend 의 files multi_select UI 가 진짜 검색 범위 좁히기로 작동.
+            {
+                "id": "files",
+                "label": "Files (업로드 파일)",
+                "type": "multi_select",
+                "options_source": "files",
+                "default": [],
+                "description": "업로드된 파일 개별 선택 — metadata_filter.file_name 으로 자동 라우팅되어 검색 범위 제한.",
+            },
             {
                 "id": "db_connections",
                 "label": "DB Connections",

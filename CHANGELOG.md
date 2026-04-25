@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] — 2026-04-25
+
+### 🔧 s06_context.files 필드 부활 — 실 wiring 추가
+
+v0.26.0 에서 D3 (`s06_context.files`) 를 dead UI 로 판정하고 제거했으나, frontend
+ResourceSelector 가 여전히 files multi_select UI 를 갖고 있어 사용자 클릭이
+무효화되는 문제. 엔진 측에서 진짜로 작동하도록 wiring 추가하고 필드 부활.
+
+### 변경
+- `xgen_harness/stages/s06_context/stage.py` — execute() 가 `files` stage_param
+  을 read 해서 `metadata_filter` 의 `file_name` 키로 자동 라우팅 (union with
+  사용자 textarea 입력). xgen-documents `DocumentSearchRequest.filter` 가 그대로
+  처리하므로 검색 범위가 실제로 좁혀짐.
+- `xgen_harness/core/stage_config.py` — `files` 필드 다시 등록 (description 에
+  "metadata_filter.file_name 자동 라우팅" 명시).
+
+### Breaking 없음
+v0.26.0 의 다른 변경 (D1/D2/D4 + D5/D6/D7 + B7) 은 그대로.
+
 ## [0.26.0] — 2026-04-25
 
 ### 🧹 Dead UI 정리 + Label-only strategy 보강 + EventQueue 백프레셔

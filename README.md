@@ -109,7 +109,7 @@ config = HarnessConfig(
 |---|---|---|---|---|
 | 5 | **s05_strategy** | 계획 모드 결정 (cot/react/capability) | `planning_mode`, `intent_rules` | `cot_planner`* / `react` / `capability` / `none` |
 | 5 | **s05_policy** ◆ | Guard 체인 × 4 훅 포인트 (옵트인) | `guards: [{name, params}]` | — (Guard 합성) |
-| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 | `rag_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `strategy`(compactor), cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
+| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 | `rag_collections`, `folders`, `files`, `db_connections`, `ontology_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `strategy`(compactor), cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
 | 7 | **s07_act** | 본문 LLM 호출 + tool_use multi-turn | `timeout`, `result_budget`, `tool_result_preview_threshold`, `tool_result_preview_size` | `default`* / `parallel_read` |
 | 8 | **s08_judge** | 응답 품질 평가 (0~1) | `threshold`, `criteria` | `llm_judge`* / `rule_based` / `none` |
 | 9 | **s09_decide** ✱ | judge 결과 → loop_decision | `max_retries` (max_iterations 은 top-level config) | `threshold`* / `always_pass` |
@@ -698,7 +698,8 @@ from xgen_harness import (
 | `v0.24.0` | **HITL Guard + Agent-controlled Compact Tool** |
 | `v0.25.0` | **ToolSource 단일 공급 채널** — s04 4 하드코딩 제거 + `/tool-sources` 엔드포인트 |
 | `v0.25.3` | **HarnessConfig 헬퍼** — `is_autonomous()` / `is_selected()` / `is_off()` 도메인 캡슐화 |
-| **`v0.26.0`** | **Dead UI 정리 + Production-blocking fix** — 검증 보고서 14건 결함 일괄 처리. UI 노출되나 코드 미read 던 4 stage_param 제거 (s01.provider, s02.memory_source, s06.files, s09.max_iterations), label-only 라 동일 동작이던 s03.simple strategy 제거, s04.none/s10.noop 분기 코드 신규 구현, EventEmitter queue 1000→8000 + drop 카운터 |
+| `v0.26.0` | **Dead UI 정리 + Production-blocking fix** — 검증 보고서 14건 결함 일괄 처리. UI 노출되나 코드 미read 던 4 stage_param 제거 (s01.provider, s02.memory_source, s06.files, s09.max_iterations), label-only 라 동일 동작이던 s03.simple strategy 제거, s04.none/s10.noop 분기 코드 신규 구현, EventEmitter queue 1000→8000 + drop 카운터 |
+| **`v0.26.1`** | **s06_context.files 부활** — frontend files multi_select UI 가 진짜 작동하도록 metadata_filter.file_name 자동 라우팅 추가. v0.26.0 에서 dead 라 제거했으나 UI 잔존으로 클릭 무효화되는 문제 해결 |
 
 이전 변경: [CHANGELOG.md](CHANGELOG.md).
 

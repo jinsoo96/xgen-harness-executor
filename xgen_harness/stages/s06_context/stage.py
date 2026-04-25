@@ -112,6 +112,21 @@ class ContextStage(Stage):
                     if isinstance(auto, dict) and auto:
                         metadata_filter = auto
                         logger.info("[Context] using auto_metadata_filter from intent routing: %s", auto)
+                # v0.26.1 — `files` stage_param 자동 라우팅 (frontend 의 files multi_select UI 가
+                # 의미 있게 동작하도록). 사용자가 selected_files 에 file_name 들을 박으면
+                # metadata_filter 의 `file_name` 키로 합쳐서 검색 범위를 자동 좁힘.
+                # 이전엔 files 필드가 dead 였음 (엔진이 read 안 함) — 이제 진짜 wiring.
+                files_selected = self.get_param("files", state, []) or []
+                if isinstance(files_selected, list) and files_selected:
+                    if metadata_filter is None:
+                        metadata_filter = {}
+                    elif not isinstance(metadata_filter, dict):
+                        metadata_filter = {}
+                    # 기존 file_name 키와 union (사용자가 textarea 로 직접 박은 것 보존)
+                    existing = metadata_filter.get("file_name", []) if isinstance(metadata_filter.get("file_name"), list) else []
+                    merged = list({*existing, *files_selected})
+                    metadata_filter["file_name"] = merged
+                    logger.info("[Context] files routed to metadata_filter.file_name: %d items", len(merged))
                 # 서버 단 rerank — 요청 단위로 활성 가능 (xgen-documents 지원).
                 # reranker 파라미터가 truthy 이면 서버 rerank 를 켜고, rerank_top_k 도 전달.
                 reranker_enabled = bool(str(self.get_param("reranker", state, "") or "").strip())

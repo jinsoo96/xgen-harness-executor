@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.0"
-description = "XGEN Harness — Dead UI 정리 (s01.provider/s02.memory_source/s06.files/s09.max_iterations stage_param 제거) + Label-only strategy 보강 (s03.simple 제거, s04.none/s10.noop 분기 구현) + EventQueue 1000→8000 + drop 카운터"
+version = "0.26.1"
+description = "XGEN Harness — v0.26.0 + s06_context.files 필드 부활 (metadata_filter.file_name 자동 라우팅, 진짜 wiring). frontend 의 files multi_select UI 가 의미 있게 작동."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
