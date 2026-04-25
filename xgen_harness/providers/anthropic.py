@@ -68,6 +68,14 @@ class AnthropicProvider(LLMProvider):
 
         # thinking 모드에서는 temperature 설정 불가 (Anthropic 제약)
         if thinking and thinking.get("type") == "enabled":
+            # v0.26.5 — Anthropic 제약: max_tokens > thinking.budget_tokens 필수.
+            # 라이브 검증으로 발견 (HTTP 400: "max_tokens must be greater than
+            # thinking.budget_tokens"). 사용자가 max_tokens 작게 두고 thinking 켜면
+            # 무조건 400. 자동 보정 — max_tokens 가 budget 보다 작거나 같으면
+            # budget + 1024 buffer 로 끌어올려 안전 보장.
+            budget = int(thinking.get("budget_tokens", 0) or 0)
+            if budget > 0 and body["max_tokens"] <= budget:
+                body["max_tokens"] = budget + 1024
             body["thinking"] = thinking
         else:
             body["temperature"] = temperature

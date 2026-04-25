@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.5] — 2026-04-25
+
+### 🚨 Anthropic thinking — max_tokens 자동 보정
+
+PARTIAL/N/A 재검증 (88 항목 검증의 후속) 으로 발견:
+
+- 사용자가 `thinking_enabled=true` + `thinking_budget=5000`, `max_tokens=200` 으로
+  설정하면 Anthropic API 가 무조건 HTTP 400 거부:
+  > `max_tokens` must be greater than `thinking.budget_tokens`.
+- engine stage_config 의 default 값도 동일 함정: `max_tokens=8192` < `thinking_budget=10000`.
+  사용자가 thinking 토글만 켜고 default 그대로 두면 즉시 400.
+- 결과: thinking 기능 자체가 production 0 fire 였던 가능성 높음.
+
+### 변경
+- `xgen_harness/providers/anthropic.py:chat()` — thinking enabled 시 자동 보정:
+  `max_tokens <= budget_tokens` 이면 `max_tokens = budget_tokens + 1024` (buffer).
+  사용자 설정 무시 아니라 안전 보장 — 답변용 토큰 0개로 떨어지지 않게.
+
+### 검증
+- 라이브 saleskit 계정 + claude-haiku-4-5-20251001 + thinking_budget=5000:
+  이전: HTTP 400 즉시 실패
+  v0.26.5: 자동 max_tokens=6024 로 보정되어 정상 응답
+
 ## [0.26.4] — 2026-04-25
 
 ### 🚨 batch transport (stream=False) 응답 누락 fix
