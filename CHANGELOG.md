@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.7] — 2026-04-26
+
+### 🟡 UX 함정 방지: tool 호출 후 final answer 보강
+
+비교 테스트 (saleskit JWT, 도구 활성/비활성 vs max_iter 변화) 로 발견:
+
+- `max_iter=1` + 도구 활성 시: LLM 이 첫 iter 에서 도구만 호출 → 도구 결과는
+  state 에 들어오지만 LLM 이 final 답변 텍스트 만들 두 번째 iter 가 없음.
+- `metrics.output_tokens=73, output_length=0, tools_executed=2` 같은 모순 패턴.
+- production default `max_iter=10` 환경에선 자연스럽게 다음 iter 에서 답변되므로
+  드러나지 않던 UX 함정. 단 사용자가 max_iter 줄이면 즉시 빈 응답.
+
+### 변경
+- `xgen_harness/core/pipeline.py` — Phase B 종료 후 Phase C 직전:
+  `last_assistant_text` / `final_output` 모두 빈 채 + `tools_executed_count > 0`
+  이면 `state.tool_definitions = []` 로 도구 비활성 + 1회 보강 main_call.
+  LLM 이 도구 결과만 보고 답변 텍스트 만들도록 강제.
+- 보강 호출 후 `state.tool_definitions` 원복 (다음 iteration / 외부 코드 영향 0).
+
+### 효과
+- 라이브 비교: A (도구 0) ✅, B (도구+max=1) ❌→ ✅, C (도구+max=3) ✅
+- 모든 max_iter 값 + 도구 활성 조합에서 사용자가 빈 응답 받지 않게 보장.
+
 ## [0.26.6] — 2026-04-26
 
 ### 🚨 DAG orchestrator — PipelineState init TypeError fix

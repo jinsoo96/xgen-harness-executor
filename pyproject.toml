@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.6"
-description = "XGEN Harness — v0.26.5 + DAG orchestrator PipelineState init 결함 fix (tool_definitions kwarg → setter). 이전엔 멀티 하네스 DAG 실행 100% TypeError."
+version = "0.26.7"
+description = "XGEN Harness — v0.26.6 + UX 함정 방지: max_iter + tool 활성 후 final answer 미생성 시 tool 비활성으로 1회 보강 호출 (라이브 비교 검증으로 발견)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

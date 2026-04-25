@@ -246,6 +246,27 @@ class Pipeline:
                             max_attempts=self.config.max_retries,
                         ))
 
+            # v0.26.7 — UX 함정 방지: max_iter 도달 + tool 호출 후 final answer 미생성 케이스.
+            # 라이브 검증으로 발견 (max_iter=1 + 도구 활성 시 LLM 이 도구 호출만 하고 끝나
+            # state.last_assistant_text 빈 채로 사용자에게 도착, output_length=0).
+            # Phase B 루프가 도구 결과만 남기고 final answer 못 만든 경우, tool 비활성으로
+            # 1회 더 호출해서 LLM 이 도구 결과 보고 답변 텍스트 만들게 함.
+            if (
+                not state.last_assistant_text
+                and not state.final_output
+                and state.tools_executed_count > 0
+                and s00_stage is not None
+            ):
+                logger.info("[Pipeline] tool-only iter 종료, final answer 보강 호출 (도구 비활성)")
+                saved_tools = state.tool_definitions
+                state.tool_definitions = []  # 도구 비활성으로 final answer 강제
+                try:
+                    await self._invoke_main_call(state, s00_stage)
+                except Exception as e:
+                    logger.warning("[Pipeline] final 보강 호출 실패: %s", e)
+                finally:
+                    state.tool_definitions = saved_tools
+
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))
             for stage in self.egress_stages:
