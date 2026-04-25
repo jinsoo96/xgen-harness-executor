@@ -28,12 +28,18 @@ class EventEmitter:
         unsubscribe()   # 또는 emitter.unsubscribe(unsubscribe)
     """
 
-    def __init__(self, queue_size: int = 1000):
+    def __init__(self, queue_size: int = 8000):
+        # v0.26.0 — queue_size 1000 → 8000 (B7 fix).
+        # 라이브 production 에서 `Event queue full, dropping event: MessageEvent` 가
+        # 분당 ~75건 발생 (긴 응답 시 SSE 컨슈머가 못 따라가 message.delta drop).
+        # 8K 로 올리면 일반 SSE 흐름은 문제 없음. 그래도 leak 가능성은 _drop_count 로 추적.
         self._queue: asyncio.Queue[HarnessEvent] = asyncio.Queue(maxsize=queue_size)
         self._subscribers: dict[int, Callable[[HarnessEvent], Awaitable[None]]] = {}
         self._next_sub_id: int = 0
         self._closed = False
         self._last_event: Optional[HarnessEvent] = None
+        # v0.26.0 — drop 누적 카운터. 운영 진단/SSE 백프레셔 알림 용.
+        self._drop_count: int = 0
 
     async def emit(self, event: HarnessEvent) -> None:
         if self._closed:
@@ -41,7 +47,13 @@ class EventEmitter:
         try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.warning("Event queue full, dropping event: %s", type(event).__name__)
+            self._drop_count += 1
+            # 매번 warning 찍으면 로그 폭주 → 첫 1회 + 100회마다 1회만 노출.
+            if self._drop_count == 1 or self._drop_count % 100 == 0:
+                logger.warning(
+                    "Event queue full, dropping event: %s (cumulative=%d, queue_size=%d)",
+                    type(event).__name__, self._drop_count, self._queue.maxsize,
+                )
             return
         self._last_event = event
 

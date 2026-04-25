@@ -27,6 +27,14 @@ class SaveStage(Stage):
         return 10
 
     async def execute(self, state: PipelineState) -> dict:
+        # v0.26.0 — strategy="noop" 분기 추가 (D7 fix).
+        # 이전엔 save_enabled toggle 만이 실 wiring 이고 noop 라벨은 분기 코드 없어
+        # 사용자 거짓말이었음. 이제 strategy=="noop" 도 동일하게 skip.
+        strategy_name = (self.get_param("strategy", state, None) or "").strip().lower()
+        if strategy_name == "noop":
+            logger.info("[Save] strategy=noop, skipping")
+            return {"saved": False, "reason": "strategy=noop"}
+
         # save_enabled가 False이면 저장 건너뛰기
         if not self.get_param("save_enabled", state, True):
             logger.info("[Save] save_enabled=False, skipping")

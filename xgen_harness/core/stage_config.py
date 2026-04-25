@@ -124,20 +124,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         "when_to_skip": "불가 (REQUIRED_STAGES).",
         "cost_hint": "low",
         "icon": "📥",
-        "fields": [
-            # v0.11.23 — provider/model 선택을 엔진 stage_config 에 공식 선언.
-            # 이전에는 이식 `harness_options_registry.py` 가 stage_id="s01_input",
-            # stage_param_key="provider" 를 수동 매핑했다. 이제 엔진 options_source 를
-            # 통해 자동 역매핑된다.
-            {
-                "id": "provider",
-                "label": "LLM Provider / Model",
-                "type": "select",
-                "options_source": "providers",
-                "default": "",
-                "description": "사용할 LLM 프로바이더 + 모델. 옵션은 runtime 등록된 provider 레지스트리에서 자동 로드.",
-            },
-        ],
+        # v0.26.0 — provider 필드 제거 (D1).
+        # 이전엔 stage_param 으로 노출했으나 stage.py 자기 docstring 에 "s01 은 읽지도
+        # 쓰지도 않는다" 라고 명시. provider 결정은 HarnessConfig top-level (ConfigPanel)
+        # 가 단일 진실 소스. 두 곳 노출은 사용자 거짓말 (UI 클릭 → 환경 무반영).
+        "fields": [],
         "behavior": [
             "빈 입력 거부",
             "파일 첨부: base64 이미지 · 텍스트 블록 변환",
@@ -160,14 +151,10 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 20,
                 "default": 5,
             },
-            {
-                "id": "memory_source",
-                "label": "기억 소스",
-                "type": "multi_select",
-                "options": ["execution_log", "chat_history", "documents"],
-                "default": ["execution_log"],
-                "description": "어디서 기억을 가져올지 선택",
-            },
+            # v0.26.0 — memory_source 필드 제거 (D2).
+            # stage.py 가 이 필드를 한 번도 read 하지 않음 (grep 0 hit). 실제 동작은
+            # strategy 분기 (default vs embedding_search) 와 ServiceProvider.documents
+            # 주입 여부로만 결정. 빈 multi_select 가 사용자 거짓말이었음.
         ],
         "behavior": [
             "DB에서 최근 N개 실행 결과 조회",
@@ -416,14 +403,10 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": [],
                 "description": "스토리지 폴더 선택 — 폴더 안 컬렉션 자동 확장.",
             },
-            {
-                "id": "files",
-                "label": "Files (업로드 파일)",
-                "type": "multi_select",
-                "options_source": "files",
-                "default": [],
-                "description": "업로드된 파일 개별 선택.",
-            },
+            # v0.26.0 — files 필드 제거 (D3).
+            # s06_context/stage.py 가 이 필드를 한 번도 read 하지 않음 (grep 0 hit).
+            # 파일 단위 검색이 필요하면 metadata_filter 로 file_name 지정하거나
+            # folders 의 자동 확장 메커니즘 사용. UI 거짓말 제거.
             {
                 "id": "db_connections",
                 "label": "DB Connections",
@@ -687,15 +670,12 @@ STAGE_CONFIGS: dict[str, dict] = {
         "cost_hint": "low",
         "description_en": "Decides whether to continue, complete, or retry.",
         "icon": "🔀",
+        # v0.26.0 — max_iterations stage_param 제거 (D4).
+        # Pipeline 은 top-level `state.config.max_iterations` 만 read. s09 의 stage_param
+        # 으로 노출하면 ConfigPanel 의 글로벌 max_iterations 와 이중 노출되어
+        # 사용자가 어느 값이 박히는지 헷갈림. 단일 진실 소스 = HarnessConfig top-level.
+        # max_retries 는 그대로 유지 (s09 가 직접 read).
         "fields": [
-            {
-                "id": "max_iterations",
-                "label": "최대 반복 횟수",
-                "type": "number",
-                "min": 1,
-                "max": 50,
-                "default": 10,
-            },
             {
                 "id": "max_retries",
                 "label": "최대 재시도 횟수",

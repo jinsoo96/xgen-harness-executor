@@ -289,7 +289,9 @@ class SystemPromptStage(Stage):
         return "\n".join(lines)
 
     def list_strategies(self) -> list[StrategyInfo]:
+        # v0.26.0 — `simple` 라벨 제거 (D5).
+        # execute() 에 strategy_name="simple" 분기 코드가 한 번도 없었음 → label-only
+        # dead. section_priority 단일 동작이 실제 wiring 이므로 라벨 1개로 정리.
         return [
             StrategyInfo("section_priority", "우선순위 기반 섹션 조립", is_default=True),
-            StrategyInfo("simple", "단순 문자열 연결"),
         ]

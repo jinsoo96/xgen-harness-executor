@@ -53,6 +53,14 @@ class ToolIndexStage(Stage):
         return 4
 
     async def execute(self, state: PipelineState) -> dict:
+        # v0.26.0 — strategy="none" 분기 (D6 fix).
+        # 사용자가 도구 인덱싱을 명시적으로 비활성. should_bypass 의 자동 감지와 달리
+        # 도구·RAG·capability 가 *있어도* 강제 skip. 디버깅·도구 무관 단발 답변에 유용.
+        strategy_name = (self.get_param("strategy", state, None) or "").strip().lower()
+        if strategy_name == "none":
+            logger.info("[Tool Index] strategy=none, discovery skipped")
+            return {"strategy": "none", "tools_indexed": 0, "definitions_bound": 0}
+
         # ─── stage_params ──────────────────────────────────────────────
         selected_tools_by_source: dict[str, list[str]] = (
             self.get_param("selected_tools", state, {}) or {}

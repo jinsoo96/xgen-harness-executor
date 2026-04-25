@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.25.3"
-description = "XGEN Harness — HarnessConfig.is_autonomous()/is_selected()/is_off() 헬퍼로 harness_mode 리터럴 비교 캡슐화. v0.25.2 RAG 폴백 autonomous-only + v0.25.1 Policy Gate display_name + v0.25.0 ToolSource 단일 공급 채널 수렴"
+version = "0.26.0"
+description = "XGEN Harness — Dead UI 정리 (s01.provider/s02.memory_source/s06.files/s09.max_iterations stage_param 제거) + Label-only strategy 보강 (s03.simple 제거, s04.none/s10.noop 분기 구현) + EventQueue 1000→8000 + drop 카운터"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
