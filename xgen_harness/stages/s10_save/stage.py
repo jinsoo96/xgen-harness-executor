@@ -43,6 +43,11 @@ class SaveStage(Stage):
         # DB 저장은 xgen-workflow의 execution_io와 호환
         # 여기서는 실행 결과를 metadata에 정리
         table_name = self.get_param("table_name", state, "harness_execution_log")
+        # v0.26.3 — 실 DB schema 와 컬럼명 정합:
+        # harness_execution_log 테이블은 input_text / output_text 컬럼이고
+        # input_data / output_data 컬럼이 없음. 라이브 검증으로 발견:
+        #   PostgreSQL: column "input_data" of relation "harness_execution_log" does not exist
+        # 이전엔 dict 로 넣었지만 column 이 text 타입이라 평문 텍스트로 변경.
         record = {
             "execution_id": state.execution_id,
             "workflow_id": state.workflow_id,
@@ -50,13 +55,8 @@ class SaveStage(Stage):
             "user_id": state.user_id,
             "interaction_id": state.interaction_id,
             "status": "completed",
-            "input_data": {
-                "text": state.user_input[:5000],
-                "files_count": len(state.attached_files),
-            },
-            "output_data": {
-                "content": state.final_output or state.last_assistant_text,
-            },
+            "input_text": (state.user_input or "")[:5000],
+            "output_text": (state.final_output or state.last_assistant_text or "")[:50000],
             "metrics": {
                 "duration_ms": state.elapsed_ms,
                 "input_tokens": state.token_usage.input_tokens,

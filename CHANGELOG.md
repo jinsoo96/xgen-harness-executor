@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.3] — 2026-04-25
+
+### 🚨 s10_save record 컬럼명 — 실 DB schema 정합
+
+라이브 검증 (saleskit 계정 + OpenAI gpt-4o-mini, s04_tool 비활성으로
+SynthesizedToolSource 우회) 중 발견:
+
+- 실행 자체는 13 Stage 완주, judge 1.00 pass 정상.
+- BUT s10_save 에서 PostgreSQL 에러:
+  `column "input_data" of relation "harness_execution_log" does not exist`
+- 실 DB schema 컬럼: `input_text`, `output_text` (text 타입).
+- 엔진 record 는 `input_data` (dict) / `output_data` (dict) 로 보냄 → 미스매치.
+- 결과: 매 실행 graceful 하게 inserted_id=None 으로 끝나서 사용자에겐 안 보임.
+  `/executions` 리스트에 row 0개. 멀티턴 chat 도 thread 빈 채로.
+
+이는 **B2 (insert vs insert_record 시그니처)** 와는 별개의 결함. 시그니처 fix
+한 직후에도 컬럼명 미스매치로 여전히 실패. 라이브 검증으로만 발견 가능했음.
+
+### 변경
+- `xgen_harness/stages/s10_save/stage.py` — record 의 `input_data` (dict) →
+  `input_text` (str, 5000자 truncate), `output_data` (dict) → `output_text`
+  (str, 50000자 truncate). DB 컬럼이 text 타입이라 평문 직렬화.
+
 ## [0.26.2] — 2026-04-25
 
 ### 🚨 OpenAI tool schema 호환성 — 400 거부 수정
