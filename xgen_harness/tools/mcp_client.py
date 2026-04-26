@@ -22,6 +22,35 @@ from ..core.service_registry import get_service_url
 logger = logging.getLogger("harness.tools.mcp")
 
 
+# v0.26.8 — 자가호출 시 user/auth 헤더 누락으로 station 이 401/빈응답 → tools=0
+# 회귀가 라이브 검증으로 발견됐다. CustomAPIToolSource 가 이미 같은 패턴으로
+# 헤더를 forward 한다 — 여기도 동일한 화이트리스트로 통일.
+_AUTH_HEADER_ALLOW = frozenset({
+    "authorization", "cookie",
+    "x-user-id", "x-user-email", "x-user-name",
+    "x-user-roles", "x-user-groups", "x-workspace-id",
+})
+
+
+def _forward_request_headers() -> dict[str, str]:
+    """현재 실행 컨텍스트(contextvar)의 요청 헤더에서 인증 관련만 추려 반환.
+
+    엔진 ``/api/harness/tool-sources`` 핸들러가 ``use_request_headers`` 컨텍스트
+    매니저로 헤더를 실어두면, downstream MCPClient 호출이 같은 user 컨텍스트로
+    station 을 친다. SDK 직접 사용(엔진 API 바깥)에서는 빈 dict.
+    """
+    try:
+        # 순환 import 방지를 위해 lazy.
+        from . import get_request_headers
+    except Exception:
+        return {}
+    try:
+        hdr = get_request_headers() or {}
+    except Exception:
+        return {}
+    return {k: v for k, v in hdr.items() if k.lower() in _AUTH_HEADER_ALLOW and v}
+
+
 @dataclass
 class MCPCallResult:
     """MCP 도구 호출 구조화 결과 (v0.11.24).
@@ -50,9 +79,10 @@ class MCPClient:
     async def list_tools(self, session_id: str) -> list[dict]:
         """세션의 MCP 도구 목록 조회"""
         url = f"{self._base_url}/api/mcp/sessions/{session_id}/tools"
+        headers = _forward_request_headers()
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     tools = data.get("tools", data.get("data", {}).get("tools", []))
@@ -77,9 +107,10 @@ class MCPClient:
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments},
         }
+        headers = _forward_request_headers()
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     result_data = data.get("data", data.get("result", {}))
@@ -124,9 +155,10 @@ class MCPClient:
     async def check_session(self, session_id: str) -> bool:
         """세션 존재 여부 확인"""
         url = f"{self._base_url}/api/mcp/sessions/{session_id}"
+        headers = _forward_request_headers()
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
                 return resp.status_code == 200
         except Exception as e:
             logger.debug("check_session(%s) failed: %s", session_id, e)

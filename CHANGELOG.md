@@ -5,6 +5,37 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.9] — 2026-04-26
+
+### 🐛 MCPClient header forward — production tools=0 회귀 수정
+
+라이브 검증 (saleskit JWT 로 production 직접 호출) 결과:
+- `/api/mcp/sessions/{id}/tools` 직접 호출 → tools=1 (Time Server) ✅
+- `/api/agentflow/harness/tool-sources` 의 mcp-sessions source → tools=0 ❌
+
+원인: `xgen_harness/tools/mcp_client.py` 의 `list_tools` / `call_tool_raw` /
+`check_session` 가 `httpx` 호출 시 헤더를 0개 보냈다. self-loopback 호출이라
+컨테이너 안에서 user 컨텍스트가 손실되고 station 이 401/빈응답 → silent
+`except: return []` → Stage 4 의 MCP Sessions Box 가 영구 비어있음 → LLM 이
+MCP 도구를 호출 못 함. CustomAPIToolSource 는 이미 동일 패턴으로 헤더를
+forward 하고 있어, 이 회귀는 mcp_client.py 단독 누락이었다.
+
+### 변경
+- `xgen_harness/tools/mcp_client.py` 상단에 `_forward_request_headers()` 헬퍼
+  추가 — `xgen_harness.tools.use_request_headers` contextvar 에서 헤더를
+  끌어와 Authorization / Cookie / x-user-* / x-workspace-id 화이트리스트로
+  필터.
+- `MCPClient.list_tools(session_id)` — `httpx.get` 에 `headers=` 전달.
+- `MCPClient.call_tool_raw(session_id, ...)` — `httpx.post` 에 `headers=`
+  전달.
+- `MCPClient.check_session(session_id)` — `httpx.get` 에 `headers=` 전달.
+
+### 효과
+- 인증된 사용자가 Stage 4 펼치면 자기 MCP 세션의 도구가 실제로 노출.
+- LLM 이 tool_use 로 MCP 도구 호출 가능 (이전엔 도구 정의 자체가 없어서
+  call 도 못 했음).
+- SDK 직접 사용(엔진 API 바깥)은 contextvar 비어있어 빈 dict — 무영향.
+
 ## [0.26.8] — 2026-04-26
 
 ### 🐛 i18n fix: description_en in EN locale leaked Korean text
