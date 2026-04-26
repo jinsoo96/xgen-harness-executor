@@ -5,6 +5,31 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.8] — 2026-04-26
+
+### 🐛 i18n fix: description_en in EN locale leaked Korean text
+
+production /api/agentflow/harness/stages 응답에서 s04_tool / s05_policy 두
+stage 가 영문 locale 에서도 description 이 한국어로 노출되는 회귀 발견.
+
+**원인**: `_resolve_stage_self_describe()` 가 `_compose_from_class_attrs()` 를
+먼저 시도. 이 함수는 docstring 첫 단락을 description_ko / description_en 양쪽
+에 그대로 박는다 ("i18n 없음. 추후 gettext" TODO). class attr `when_to_use`
+가 set 된 stage 는 STAGE_CONFIGS dict 의 명시 영문 description 이 가려졌다.
+
+### 변경
+- `xgen_harness/core/stage_config.py::_resolve_stage_self_describe()` 우선순위
+  변경:
+    1. **explicit `describe_config()` override** (Stage 베이스 기본은 None)
+    2. **STAGE_CONFIGS dict 항목** 우선 (명시 ko / en 분리)
+    3. auto-compose from class attrs (외부 Stage 폴백 only)
+- `xgen_harness/stages/s05_policy/stage.py::PolicyGateStage.describe_config()`
+  override 추가 — 명시 ko / en 분리, machine meta 명시.
+
+### 효과
+- 13 stage 모두 영문 locale 에서 영문 description 노출.
+- s04_tool, s05_policy 회귀 동시 해결 (같은 root cause).
+
 ## [0.26.7] — 2026-04-26
 
 ### 🟡 UX 함정 방지: tool 호출 후 final answer 보강

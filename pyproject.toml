@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.7"
-description = "XGEN Harness — v0.26.6 + UX 함정 방지: max_iter + tool 활성 후 final answer 미생성 시 tool 비활성으로 1회 보강 호출 (라이브 비교 검증으로 발견)."
+version = "0.26.8"
+description = "XGEN Harness — v0.26.7 + i18n fix: description_en in EN locale leaked Korean for stages with class-attribute machine meta (s04_tool / s05_policy). Resolver priority flipped, PolicyGateStage.describe_config() override added."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
