@@ -271,6 +271,12 @@ class DAGOrchestrator:
         async def _forward_events():
             try:
                 async for event in emitter.stream():
+                    # sub Pipeline 의 DoneEvent 는 *그 노드 종료* 신호일 뿐 DAG 전체 종료가 아니다.
+                    # forward 하면 외부 stream() 이 첫 노드 DoneEvent 에서 자동 break (emitter.py
+                    # line 102) — 두 번째 노드 이벤트가 외부 클라이언트에 도달 못 함.
+                    # DAG 전체 DoneEvent 는 run() 마지막에 별도로 emit 한다.
+                    if isinstance(event, DoneEvent):
+                        continue
                     if hasattr(event, "stage_name"):
                         event.stage_name = f"[{node.name}] {event.stage_name}"
                     await self._event_emitter.emit(event)
