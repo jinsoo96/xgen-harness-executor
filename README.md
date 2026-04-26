@@ -160,7 +160,7 @@ config = HarnessConfig(
 
 > **최근 변경 — 한눈에**:
 >
-> - **v0.26.x 패치 사이클** (production 라이브 검증 → 발견 → 즉시 fix): `s06_context.files` 부활 (v0.26.1, frontend UI 와 wiring 일치) · OpenAI strict schema 호환 (v0.26.2) · `s10_save` 컬럼명 정합 (v0.26.3) · batch transport 응답 누락 fix (v0.26.4) · Anthropic thinking max_tokens 자동 보정 (v0.26.5) · DAG orchestrator init TypeError fix (v0.26.6) · `max_iter=1` + 도구 활성 빈응답 보강 (v0.26.7).
+> - **v0.26.x 패치 사이클** (production 라이브 검증 → 발견 → 즉시 fix): `s06_context.files` 부활 (v0.26.1, frontend UI 와 wiring 일치) · OpenAI strict schema 호환 (v0.26.2) · `s10_save` 컬럼명 정합 (v0.26.3) · batch transport 응답 누락 fix (v0.26.4) · Anthropic thinking max_tokens 자동 보정 (v0.26.5) · DAG orchestrator init TypeError fix (v0.26.6) · `max_iter=1` + 도구 활성 빈응답 보강 (v0.26.7) · DAG sub-Pipeline `DoneEvent` forward 누수 fix (v0.26.10, 후속 노드 이벤트 누락 차단).
 > - **v0.26.0 — Dead UI 정리**: 사용자 클릭이 LLM 환경에 안 박히던 stage_param 정리. `s01_input.provider` (글로벌 ConfigPanel 와 중복) · `s02_history.memory_source` (코드 미read) · `s09_decide.max_iterations` (top-level config 만 작동) 3건 제거. Label-only 라 동일 동작이던 `s03_prompt.simple` strategy 제거. `s04_tool.none` / `s10_save.noop` 는 분기 코드 신규 구현해 진짜 short-circuit. EventEmitter queue 1000→8000 + drop 카운터.
 >   - ⚠ `s06_context.files` 도 v0.26.0 에선 같이 제거됐으나, frontend UI 가 잔존해 클릭 무효화되는 문제로 **v0.26.1 에서 부활** (`metadata_filter.file_name` 자동 라우팅).
 > - **v0.25.0 — 도구 채널 단일화**: `s04_tool` 의 `mcp_sessions` / `custom_tools` / `node_tags` / `cli_skills` 4 개 stage_param 사라짐. 모든 도구는 이제 **ToolSource 한 채널** 로 (다음 섹션).
@@ -768,28 +768,28 @@ from xgen_harness import (
 
 ---
 
-## 진화 요약
+## 버전 흐름
 
-큰 흐름을 네 페이즈로 정리했습니다.
+크게 네 단계로 정리됩니다.
 
 ```
-Phase 1  REAL HARNESS  ─ 13 Stage 골조 / s00_harness 통제탑       (v0.12 ~ v0.16)
-Phase 2  발행·격리·정책 ─ MCP wheel / Sandbox / NOM / Policy Gate   (v0.17 ~ v0.21)
-Phase 3  독립성 정리   ─ xgen 특화 호스트 이관 / ToolSource 통합    (v0.22 ~ v0.25)
-Phase 4  라이브 검증 패치 ─ production 결함 일괄 fix                (v0.26.x)
+Phase 1  13 Stage 구조      ─ Stage 디렉토리화 / s00_harness 통제탑       (v0.12 ~ v0.16)
+Phase 2  발행·격리·정책      ─ MCP wheel / Sandbox / NOM / Policy Gate    (v0.17 ~ v0.21)
+Phase 3  독립성 정리         ─ xgen 특화 호스트 이관 / ToolSource 통합     (v0.22 ~ v0.25)
+Phase 4  라이브 검증 패치    ─ production 결함 일괄 fix                   (v0.26.x)
 ```
 
-### Phase 1 — REAL HARNESS 골조 (v0.12 ~ v0.16)
+### Phase 1 — 13 Stage 구조 (v0.12 ~ v0.16)
 
 캔버스 모델을 걷어내고 "13 Stage = 담당 영역" 구조로 전환한 시기입니다. 각 Stage 가 자기 capability·도구·리소스를 LLM 에게 점진적으로 노출하고, `s00_harness` 가 본문 LLM 호출의 단일 책임자가 되었습니다.
 
 | 버전 | 핵심 |
 |---|---|
-| `v0.12.0` | REAL HARNESS Phase 1 — `s00_harness` Planner + 13 Stage 디렉토리화 |
-| `v0.13.0` | Phase 2 — 단일 Provider + iterative planning |
-| `v0.14.0` | `s00_harness` 통제탑 승격 — 본문 LLM 호출 owner + 3 모드 (`off`/`selected`/`autonomous`) |
-| `v0.15.x` | 재귀적 자율주행 — `orchestrator_hint` + OrchestratorRegistry + fs_scanner 자동 발견 |
-| `v0.16.x` | 자가증식 골조 — Sandbox / NOM / NodePlugin / ToolSynthesis + Pipeline Role |
+| `v0.12.0` | 13 Stage 디렉토리화 + `s00_harness` Planner |
+| `v0.13.0` | 단일 Provider + iterative planning |
+| `v0.14.0` | `s00_harness` 본문 LLM 호출 owner + 3 모드 (`off`/`selected`/`autonomous`) |
+| `v0.15.x` | `orchestrator_hint` + OrchestratorRegistry + fs_scanner 자동 발견 |
+| `v0.16.x` | Sandbox / NOM / NodePlugin / ToolSynthesis + Pipeline Role |
 
 ### Phase 2 — 발행·격리·정책 (v0.17 ~ v0.21)
 
@@ -827,7 +827,8 @@ Phase 4  라이브 검증 패치 ─ production 결함 일괄 fix               
 | `v0.26.4` | OpenAI batch transport (`stream=False`) 가 STOP 이벤트 `.text` 로 응답 한 번에 yield, 엔진 STOP 핸들러는 `output_tokens` 만 처리 → 응답 텍스트 사라짐 | `core/llm_call.py:_single_call` STOP 핸들러에 `event.text` 처리 + `MessageEvent` emit 추가 |
 | `v0.26.5` | Anthropic `thinking` 켤 때 `thinking_budget > max_tokens` 이면 무조건 HTTP 400 — engine default 도 동일 함정 (`max_tokens=8192 < thinking_budget=10000`) | thinking 활성 시 자동 보정 `max_tokens = budget_tokens + 1024` (사용자 설정 무시 아니라 안전 보장) |
 | `v0.26.6` | DAG orchestrator 가 `PipelineState(tool_definitions=...)` 로 init — v0.11.22 도메인 그룹화 후 `dag.py:255` 동기화 누락 → 모든 DAG 노드 100% TypeError | init kwarg 제거, instance 생성 후 `state.tool_definitions = ...` setter 로 박음 |
-| **`v0.26.7`** | `max_iter=1` + 도구 활성 시 LLM 이 첫 iter 에서 도구만 호출, 답변 텍스트 만들 두 번째 iter 가 없어 `output_length=0` 빈 응답 (default `max_iter=10` 환경에선 안 드러남) | Phase B 후 빈 응답 + 도구 실행 ≥ 1 이면 `tool_definitions=[]` 로 1회 보강 `main_call` (직후 `tool_definitions` 원복 → 다음 iteration / 외부 코드 영향 0) |
+| `v0.26.7` | `max_iter=1` + 도구 활성 시 LLM 이 첫 iter 에서 도구만 호출, 답변 텍스트 만들 두 번째 iter 가 없어 `output_length=0` 빈 응답 (default `max_iter=10` 환경에선 안 드러남) | Phase B 후 빈 응답 + 도구 실행 ≥ 1 이면 `tool_definitions=[]` 로 1회 보강 `main_call` (직후 `tool_definitions` 원복 → 다음 iteration / 외부 코드 영향 0) |
+| **`v0.26.10`** | DAG orchestrator 가 sub-Pipeline 의 `DoneEvent` 도 그대로 외부 emitter 로 forward → `EventEmitter.stream()` 의 자동 break (events/emitter.py:102) 가 첫 노드 끝에서 발화 → 두 번째 노드 이벤트가 외부 클라이언트에 도달 못 함 + "DAG 실행 타임아웃" 으로 끊김 | `_forward_events()` 가 sub Pipeline 의 `DoneEvent` 만 skip. DAG 전체 `DoneEvent` 는 `run()` 마지막에 별도 emit (line 229) 하므로 정상 종료 신호 유지. 다른 이벤트 (Stage / Metrics / ToolCall / Error / …) 는 그대로 forward |
 
 이전 변경: [CHANGELOG.md](CHANGELOG.md).
 
