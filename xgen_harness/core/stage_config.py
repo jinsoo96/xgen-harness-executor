@@ -822,13 +822,19 @@ def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
 
 
 def _resolve_stage_self_describe(stage_id: str) -> Optional[dict]:
-    """Stage 클래스의 self-describing 설정 조회 (v0.17.0 machine-only 우선).
+    """Stage 클래스의 self-describing 설정 조회.
 
     조회 순서:
-      1. Stage 의 class attribute (when_to_use/when_to_skip/cost_hint) 와
-         param_schema() 로 자동 조립. 이게 **새 표준 모델** — LLM 이 읽는 것만 코드에.
-      2. 레거시 describe_config() dict 반환 (하위호환, 곧 제거 예정).
+      1. **Stage 가 `describe_config()` 를 override 했으면 그 결과 사용** —
+         명시적 i18n(description_ko/en) 분리, machine meta 명시 등 세밀 제어가
+         필요할 때 (예: s05_policy). auto-compose 보다 우선.
+      2. class attribute (when_to_use/when_to_skip/cost_hint) + param_schema()
+         자동 조립 — docstring 첫 단락을 description_ko/en 양쪽에 박는 폴백.
       3. None — 중앙 STAGE_CONFIGS dict 폴백.
+
+    1 번이 2 번보다 우선이어야 하는 이유: auto-compose 는 docstring 을 영문/한글
+    구분 없이 그대로 박는다 → override 가 있어도 가려져서 영문 locale 에서 한글이
+    노출되는 회귀가 있었다 (s05_policy v0.17.0).
     """
     try:
         from .registry import _get_default_registry
@@ -837,17 +843,22 @@ def _resolve_stage_self_describe(stage_id: str) -> Optional[dict]:
     except Exception:
         return None
 
-    # 1. Machine-only 모델 — class attribute + param_schema() 자동 조립
-    cfg = _compose_from_class_attrs(cls)
-    if cfg is not None:
-        return cfg
-
-    # 2. 레거시 describe_config() (하위호환)
+    # 1. 명시적 describe_config() override 우선 — Stage 베이스의 기본 구현은 None 반환.
     try:
-        legacy = cls.describe_config() if hasattr(cls, "describe_config") else None
+        explicit = cls.describe_config() if hasattr(cls, "describe_config") else None
     except Exception:
-        legacy = None
-    return legacy if isinstance(legacy, dict) else None
+        explicit = None
+    if isinstance(explicit, dict):
+        return explicit
+
+    # 2. STAGE_CONFIGS dict 에 항목이 있으면 그쪽 우선 (description_ko/en 명시 분리됨).
+    #    class attr (when_to_use 등) 가 있어도 dict 의 설명문이 영문 locale 에서 정확.
+    #    auto-compose 는 dict 항목이 없는 외부 Stage 용 폴백.
+    if stage_id in STAGE_CONFIGS:
+        return None  # 호출자가 STAGE_CONFIGS 폴백을 쓴다 (or 패턴).
+
+    # 3. class attribute 자동 조립 (docstring 폴백 — 외부 Stage 용)
+    return _compose_from_class_attrs(cls)
 
 
 def _compose_from_class_attrs(cls) -> Optional[dict]:

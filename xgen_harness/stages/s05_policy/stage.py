@@ -80,6 +80,31 @@ class PolicyGateStage(Stage):
             ),
         ]
 
+    @classmethod
+    def describe_config(cls) -> dict:
+        # _compose_from_class_attrs 폴백은 description_en 에 한국어 docstring 을 그대로
+        # 박는다 (stage_config.py:898-899 의 "i18n 없음. 추후 gettext" TODO). 다른 11
+        # Stage 는 STAGE_CONFIGS dict 에 영문 별도 보유 — 이 Stage 만 self-describing
+        # 으로 위임됐는데 override 가 비어있어서 영문 locale 에서도 한국어가 노출됐다.
+        # 명시적 영문/한글 분리로 i18n 일관성 회복.
+        return {
+            "description_ko": (
+                "정책 게이트 — 4 훅 시점(PRE_MAIN / PRE_TOOL / POST_RESPONSE / "
+                "LOOP_BOUNDARY)에 Guard 체인을 집행하는 특수 Stage. "
+                "guards 가 비어있으면 자동 bypass."
+            ),
+            "description_en": (
+                "Policy Gate — runs a guard chain at 4 hook points "
+                "(PRE_MAIN / PRE_TOOL / POST_RESPONSE / LOOP_BOUNDARY). "
+                "Bypassed automatically when guards is empty."
+            ),
+            "when_to_use": cls.when_to_use,
+            "when_to_skip": cls.when_to_skip,
+            "cost_hint": cls.cost_hint,
+            "fields": [f.to_dict() if hasattr(f, "to_dict") else f for f in cls.param_schema()],
+            "behavior": [],
+        }
+
     def should_bypass(self, state: PipelineState) -> bool:
         # 일반 loop 순서에서는 항상 bypass — Pipeline 이 role 로 3 훅에 별도 호출.
         return True
