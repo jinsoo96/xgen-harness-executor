@@ -5,6 +5,15 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.12] — 2026-04-27
+
+### 🐛 `HarnessConfig.from_workflow` 가 `aux_max_tokens` 안 받던 누수 (v0.26.11 라이브 적발)
+
+`harness_config.aux_max_tokens` 박아도 `from_workflow` 변환 시 dict 키를 읽지 않아 default 500 으로 덮였음.
+1줄 fix: `aux_max_tokens=int(harness_config.get("aux_max_tokens", 500))`.
+
+이제 워크플로우 단에서 `HarnessConfig(aux_max_tokens=300)` 또는 dict `{"aux_max_tokens": 300}` 박으면 즉시 반영.
+
 ## [0.26.11] — 2026-04-27
 
 ### ✨ 외부 확장 6 결함 일괄 정리 (확장성·연동성·하드코딩 4축 자가감사 후속)

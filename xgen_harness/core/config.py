@@ -313,6 +313,7 @@ class HarnessConfig:
             model=harness_config.get("model") or agent_config.get("model", ""),
             temperature=float(harness_config.get("temperature", agent_config.get("temperature", 0.7))),
             max_tokens=int(harness_config.get("max_tokens", 8192)),
+            aux_max_tokens=int(harness_config.get("aux_max_tokens", 500)),
             # provider 별 폴백은 런타임 PROVIDER_DEFAULT_MODEL 에서 해석. 여기선 명시값만 전달.
             openai_model=harness_config.get("openai_model") or agent_config.get("openai_model", ""),
             anthropic_model=harness_config.get("anthropic_model") or agent_config.get("anthropic_model", ""),

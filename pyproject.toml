@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.26.11"
+version = "0.26.12"
 description = "XGEN Harness — v0.26.8 + MCPClient header forward fix: list_tools/call_tool_raw/check_session now forward Authorization+x-user-* via the use_request_headers contextvar so self-loopback to the MCP station preserves user context (Stage 4 mcp-sessions tools were silently empty in production)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
