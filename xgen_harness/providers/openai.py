@@ -310,16 +310,66 @@ def _convert_messages(messages: list[dict], system: Optional[str] = None) -> lis
     return oai_msgs
 
 
+def _normalize_for_openai(schema: Any) -> Any:
+    """JSON Schema → OpenAI Function calling 호환 정규화.
+
+    v0.26.13 — Tavily / 일부 MCP 서버가 보내는 풍부한 schema 가 OpenAI 의
+    ``invalid_function_parameters`` 400 을 유발하던 결함. Anthropic 은 관대하게
+    수용하지만 OpenAI 는 type 배열 / anyOf-null / ``$ref`` 등을 거부한다.
+    엔진 측에서 단방향 평탄화로 안전망을 얹는다.
+
+    - ``"type": ["string", "null"]`` 같은 type 배열 → null 제거 후 단일 type
+    - ``anyOf`` / ``oneOf`` 안에 null branch 만 빼면 단일 schema 가 되는 경우 평탄화
+    - ``$ref`` 는 인라인 못 풀므로 drop (속성 자리 차지하지 않게)
+    - 재귀적으로 dict / list 항목을 모두 처리
+
+    의미 손실은 nullable 표현 → "필수 아닌 단일 type" 으로 약화되는 정도. OpenAI
+    Function calling 은 어차피 nullable 을 수용 안 하므로 이 약화가 정상 통로.
+    """
+    if isinstance(schema, dict):
+        out: dict[str, Any] = {}
+        for k, v in schema.items():
+            # 1) type 배열 → 단일 type (null 제거)
+            if k == "type" and isinstance(v, list):
+                non_null = [t for t in v if t != "null"]
+                out[k] = non_null[0] if len(non_null) == 1 else (non_null[0] if non_null else "string")
+                continue
+            # 2) anyOf / oneOf — null branch 만 빼면 단일이 되는 경우 평탄화
+            if k in ("anyOf", "oneOf") and isinstance(v, list):
+                non_null = [s for s in v if not (isinstance(s, dict) and s.get("type") == "null")]
+                if len(non_null) == 1 and isinstance(non_null[0], dict):
+                    # 단일 schema 의 키들을 부모로 끌어올림 (단, 같은 키가 이미 있으면 부모 우선)
+                    flat = _normalize_for_openai(non_null[0])
+                    if isinstance(flat, dict):
+                        for fk, fv in flat.items():
+                            out.setdefault(fk, fv)
+                        continue
+                out[k] = [_normalize_for_openai(s) for s in v]
+                continue
+            # 3) $ref 는 OpenAI 가 못 풂 → drop
+            if k == "$ref":
+                continue
+            # 재귀
+            out[k] = _normalize_for_openai(v)
+        return out
+    if isinstance(schema, list):
+        return [_normalize_for_openai(s) for s in schema]
+    return schema
+
+
 def _convert_tools(tools: list[dict]) -> list[dict]:
     """Anthropic tool 정의 → OpenAI function 정의
 
     v0.26.2 — input_schema 가 ``{"type":"object"}`` 처럼 properties 누락 시
     OpenAI 가 ``"object schema missing properties"`` 로 400 거부함. 합성 도구
     (SynthesizedToolSource) 등 input_schema 가 단순한 케이스를 보정.
+    v0.26.13 — Tavily 같은 MCP 도구의 type 배열 / anyOf-null / $ref 패턴 정규화.
     """
     oai_tools = []
     for tool in tools:
         params = dict(tool.get("input_schema") or {})
+        # v0.26.13 — 정규화 (배열 type / nullable anyOf / $ref) 를 첫 단계에서.
+        params = _normalize_for_openai(params)
         # OpenAI 호환 보정: type=object 인데 properties 누락이면 빈 dict 추가
         if params.get("type") == "object" and "properties" not in params:
             params["properties"] = {}

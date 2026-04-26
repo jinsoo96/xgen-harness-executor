@@ -5,6 +5,69 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.13] — 2026-04-27
+
+### 🐛 OpenAI tool schema 정규화 — Tavily 류 MCP 도구 400 수정
+
+운영 SSE 에서 `mcp_tavily_search_mcp` 호출 시 OpenAI 가:
+
+```
+HTTP 400: Invalid schema for function 'mcp_tavily_search_mcp'.
+Please ensure it is a valid JSON Schema.
+param: tools[1].function.parameters
+code: invalid_function_parameters
+```
+
+원인: v0.26.2 의 `_convert_tools` 는 `{"type":"object"}` 빈 properties 케이스만
+patch 하고, MCP 서버가 보내는 풍부한 schema 는 그대로 OpenAI 로 흘렸다. Anthropic
+은 관대하게 수용했지만 OpenAI Function calling 은 다음 패턴들을 거부:
+
+1. `"type": ["string", "null"]` 배열 타입 (Tavily 의 nullable 표현)
+2. `"anyOf": [{"type": "string"}, {"type": "null"}]` (1번의 다른 표현)
+3. `"$ref": "#/definitions/..."` (외부 ref — OpenAI 가 인라인 풀어주지 않음)
+
+vLLM / Anthropic 검증 환경에서는 통과되어 회귀로 잡히지 않다가, OpenAI provider
+사용 워크플로우에서만 첫 호출에서 SSE 끊김으로 노출됨.
+
+### 변경
+
+- `xgen_harness/providers/openai.py` 에 `_normalize_for_openai(schema)` 헬퍼 신설.
+  단방향 평탄화 — 의미 손실은 nullable 표현이 "필수 아닌 단일 type" 으로 약화되는
+  정도. OpenAI Function calling 은 어차피 nullable 을 수용 안 하므로 정상 통로.
+    - type 배열 → null 제거 후 단일 type
+    - anyOf / oneOf 안에 null branch 만 빼면 단일이 되는 경우 부모로 평탄화 (enum 등 키 끌어올림)
+    - `$ref` 는 drop (빈 dict 자리만 유지)
+    - dict / list 모두 재귀 처리
+- `_convert_tools` 가 v0.26.2 의 빈 properties 보정 **이전 단계** 에서 호출.
+
+### 적용 범위
+
+- OpenAI provider 만 영향. Anthropic / LangChainAdapter 무변경 (각자 자체 변환기).
+- 외부 provider (Bedrock / Gemini 등 entry_points 기여자) 는 base `_sanitize_tool_defs`
+  + 자기 변환기를 쓰므로 영향 없음. 이 정규화가 base 로 올라가면 자동 상속 가능
+  (별도 PR — 본 릴리즈는 OpenAI 한정 안전망).
+
+### 자가검증
+
+7/7 PASS — Tavily 류 6 패턴 (type 배열 / anyOf-null / $ref / 중첩 type 배열 / 정상
+필드 보존 / enum 끌어올림) + v0.26.2 빈 properties 회귀.
+
+```python
+from xgen_harness.providers.openai import _convert_tools
+out = _convert_tools([{
+    'name': 'tavily_search',
+    'input_schema': {'type': 'object', 'properties': {
+        'time_range': {'type': ['string', 'null']},
+        'topic': {'anyOf': [{'type': 'string', 'enum': ['general', 'news']}, {'type': 'null'}]},
+        'extra': {'$ref': '#/definitions/Extra'},
+    }},
+}])
+# out[0].function.parameters.properties:
+#   time_range: {type: 'string'}                          ← 배열 평탄화
+#   topic:      {type: 'string', enum: [general, news]}   ← anyOf-null 평탄화 + enum 끌어올림
+#   extra:      {}                                        ← $ref drop
+```
+
 ## [0.26.12] — 2026-04-27
 
 ### 🐛 `HarnessConfig.from_workflow` 가 `aux_max_tokens` 안 받던 누수 (v0.26.11 라이브 적발)
