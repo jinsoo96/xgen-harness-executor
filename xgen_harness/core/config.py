@@ -74,6 +74,10 @@ class HarnessConfig:
     model: str = ""
     temperature: float = 0.7
     max_tokens: int = 8192
+    # 보조 LLM 호출 (s06 compaction / s08 judge / evaluation strategy 등) 용 max_tokens.
+    # 본문(s07_act) 호출 max_tokens 와 분리 — 보조 호출은 짧은 판정/요약이라 작은 값으로
+    # 비용 / 지연 관리. v0.26.11 — 매직넘버 500 4건 통합 (auxiliary_max_tokens 필드화).
+    aux_max_tokens: int = 500
 
     # --- 폴백 모델 (provider 별) — PROVIDER_DEFAULT_MODEL 레지스트리가 단일 진실 소스.
     # "" 로 두면 런타임에 레지스트리 lookup. 새 provider 추가 시 레지스트리만 갱신.

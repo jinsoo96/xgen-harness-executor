@@ -58,13 +58,25 @@ class LLMJudgeEvaluation(EvaluationStrategy):
             assistant_response=assistant_response[:2000],
         )
 
+        # v0.26.11 — context.state 로 _aux_call 통합 (max_tokens 단일 진실 소스).
+        # state 가 있으면 token/cost 누적 + verbose substep emit. 없으면 폴백으로 직접 호출.
+        state = (context or {}).get("state")
+        if state is not None:
+            try:
+                from ...core.llm_call import aux_call
+                eval_text = await aux_call(state, stage_id="evaluation.llm_judge", prompt=eval_prompt)
+                return self._parse(eval_text)
+            except Exception as e:
+                logger.warning("[LLMJudge] Evaluation failed: %s", e)
+                return EvaluationResult(passed=True, score=0.7, feedback=f"Evaluation failed: {e}", verdict="pass")
+
+        # state 없는 standalone 사용 — provider.chat 폴백 (token tracking 없음 — best-effort).
         from ...providers.base import ProviderEventType
         eval_text = ""
         try:
             async for event in self._provider.chat(
                 messages=[{"role": "user", "content": eval_prompt}],
                 temperature=0.0,
-                max_tokens=500,
                 stream=False,
             ):
                 if event.type == ProviderEventType.STOP:

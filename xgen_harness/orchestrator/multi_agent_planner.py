@@ -227,6 +227,52 @@ def register_fan_out_strategy(
     _FAN_OUT_STRATEGIES_META[name] = {"desc": description, "default": is_default}
 
 
+_FAN_OUT_DISCOVERED = False
+
+
+def _discover_fan_out_from_entry_points() -> None:
+    """entry_points 그룹 ``xgen_harness.fan_out_strategies`` 자동 발견. idempotent.
+
+    외부 패키지가 노출:
+      [project.entry-points."xgen_harness.fan_out_strategies"]
+      per_intent = "my_pkg.orchestrator:per_intent_builder"
+
+    entry_point 가 builder callable 을 직접 반환하거나
+    {"name?", "builder", "description?", "is_default?"} dict 반환 모두 허용.
+    """
+    global _FAN_OUT_DISCOVERED
+    if _FAN_OUT_DISCOVERED:
+        return
+    _FAN_OUT_DISCOVERED = True
+    try:
+        from importlib.metadata import entry_points
+    except Exception:
+        return
+    try:
+        eps = entry_points()
+        group = "xgen_harness.fan_out_strategies"
+        items = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])  # type: ignore[arg-type]
+        for ep in items:
+            try:
+                produced = ep.load()
+                if callable(produced) and not isinstance(produced, dict):
+                    register_fan_out_strategy(ep.name, produced, description=f"(entry_points: {ep.value})")
+                elif isinstance(produced, dict) and produced.get("builder"):
+                    register_fan_out_strategy(
+                        produced.get("name", ep.name),
+                        produced["builder"],
+                        description=produced.get("description", ""),
+                        is_default=bool(produced.get("is_default", False)),
+                    )
+            except Exception as e:
+                logger.warning("[fan_out] entry_point %s 로드 실패: %s", ep.name, e)
+    except Exception as e:
+        logger.debug("[fan_out] entry_points discovery 실패: %s", e)
+
+
+_discover_fan_out_from_entry_points()
+
+
 def _clone_config_for_sub(
     base_config: HarnessConfig,
     *,

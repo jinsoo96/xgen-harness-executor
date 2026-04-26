@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.26.10"
+version = "0.26.11"
 description = "XGEN Harness — v0.26.8 + MCPClient header forward fix: list_tools/call_tool_raw/check_session now forward Authorization+x-user-* via the use_request_headers contextvar so self-loopback to the MCP station preserves user context (Stage 4 mcp-sessions tools were silently empty in production)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -67,6 +67,25 @@ Repository = "https://github.com/jinsoo96/xgen-harness-executor"
 
 [project.entry-points."xgen_harness.evaluation_criteria"]
 # 예: korean_quality = "my_pkg.criteria:get_spec"
+
+[project.entry-points."xgen_harness.orchestrators"]
+# 예: swarm_v2 = "my_pkg.orchestrator:swarm_v2_factory"
+
+[project.entry-points."xgen_harness.sandbox_verifiers"]
+# 예: my_verifier = "my_pkg.sandbox:MyVerifier"
+
+[project.entry-points."xgen_harness.tools"]
+# 갤러리 자동 발견 — wheel 컴파일 후 `pip install xgen-gallery-…` 시 자동 합류.
+# 예: my_gallery = "my_pkg.tools:get_gallery"
+
+[project.entry-points."xgen_harness.phases"]
+# 예: post_egress = "my_pkg.phases:get_phase_spec"   # () -> {name, upper_order, description}
+
+[project.entry-points."xgen_harness.node_plugins"]
+# 예: my_node = "my_pkg.node:get_manifest"   # () -> NodePluginManifest
+
+[project.entry-points."xgen_harness.model_pricing"]
+# 예: my_model = "my_pkg.pricing:get_pricing"   # () -> {input, output, cache_read?, cache_write?}
 
 # Policy Gate (v0.17.0) — 도구 호출/입력/출력/루프 경계 Guard.
 # 내장 5종을 이 그룹에 등록 — 외부 기여자도 같은 경로로 추가하면 자동 합류.

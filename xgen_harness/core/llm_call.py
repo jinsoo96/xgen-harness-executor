@@ -366,3 +366,135 @@ def _estimate_cost(usage: TokenUsage, model: str) -> float:
     cache_read_rate = pricing.get("cache_read", pricing["input"] * 0.1)
     cache_savings = usage.cache_read_tokens * (pricing["input"] - cache_read_rate) / 1_000_000
     return input_cost + output_cost - cache_savings
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Auxiliary LLM call — 보조 호출 통합 헬퍼 (v0.26.11)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# s06 compaction (L5 autocompact) / s08 judge / strategies/evaluation 등의 *보조*
+# LLM 호출을 한 곳으로 모은다. 본문 호출 (_single_call) 과 분리한 이유:
+#   - 보조 호출은 짧은 판정/요약이라 max_tokens 작음 (`config.aux_max_tokens`)
+#   - tool_choice / 컨텍스트 truncation 회로 차단 같은 본문 정책 안 적용
+#   - 단일 텍스트 응답만 필요 (tool_use 루프 없음)
+#
+# 일관성 보장:
+#   - state.config.aux_max_tokens 단일 진실 소스 (코드에 박힌 매직넘버 0)
+#   - state.llm_call_count += 1 자동 누적
+#   - state.token_usage 누적 자동
+#   - StageSubstepEvent (verbose) 자동 emit
+#   - ensure_provider(state) 단일 lookup 경로
+#
+# 외부에서 행동 차이 필요 시 kwargs override:
+#   max_tokens / temperature / system / response_format / model 모두 override 가능.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+async def aux_call(
+    state: PipelineState,
+    *,
+    stage_id: str,
+    prompt: str,
+    system: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.0,
+    model: Optional[str] = None,
+) -> str:
+    """보조 LLM 호출 — 짧은 판정/요약용. 응답 텍스트 반환.
+
+    Parameters
+    ----------
+    state : PipelineState
+    stage_id : str
+        호출자 식별 (verbose 이벤트 + 로그 추적용). 예: "s08_judge", "s06_context.l5", "evaluation.llm_judge".
+    prompt : str
+        사용자 메시지. system 따로 받음.
+    system : Optional[str]
+        system_prompt override. None 이면 provider default.
+    max_tokens : Optional[int]
+        None 이면 ``state.config.aux_max_tokens`` 사용 (단일 진실 소스).
+    temperature : float
+        보조 호출은 결정성 우선이라 default 0.0.
+    model : Optional[str]
+        provider 기본 모델 override. None 이면 provider 의 model_name.
+    """
+    from .provider_bootstrap import ensure_provider
+    from ..events.types import StageSubstepEvent
+
+    await ensure_provider(state, stage_id=stage_id)
+    provider = state.provider
+    if not provider:
+        raise PipelineAbortError("LLM provider not initialized", stage_id)
+
+    config = state.config
+    effective_max_tokens = (
+        int(max_tokens) if max_tokens is not None
+        else int(getattr(config, "aux_max_tokens", 500) if config else 500)
+    )
+
+    await state.emit_verbose(StageSubstepEvent(
+        stage_id=stage_id, substep="aux_llm_request_start",
+        meta={
+            "provider": provider.provider_name,
+            "model": model or provider.model_name,
+            "max_tokens": effective_max_tokens,
+            "temperature": temperature,
+        },
+    ))
+
+    text_parts: list[str] = []
+    usage = TokenUsage()
+
+    chat_kwargs: dict = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": effective_max_tokens,
+        "stream": False,
+        "tools": None,
+    }
+    if system:
+        chat_kwargs["system"] = system
+    if model:
+        chat_kwargs["model"] = model
+
+    try:
+        async for event in provider.chat(**chat_kwargs):
+            if event.type == ProviderEventType.TEXT_DELTA and getattr(event, "text", None):
+                text_parts.append(event.text)
+            elif event.type == ProviderEventType.STOP:
+                if getattr(event, "text", None):
+                    text_parts.append(event.text)
+                event_usage = getattr(event, "usage", None)
+                if event_usage:
+                    usage.input_tokens += int(event_usage.get("input_tokens", 0))
+                    usage.output_tokens += int(event_usage.get("output_tokens", 0))
+                    usage.cache_creation_tokens += int(event_usage.get("cache_creation_input_tokens", 0))
+                    usage.cache_read_tokens += int(event_usage.get("cache_read_input_tokens", 0))
+    except Exception as e:
+        logger.warning("[aux_call] %s 실패: %s", stage_id, e)
+        await state.emit_verbose(StageSubstepEvent(
+            stage_id=stage_id, substep="aux_llm_request_failed",
+            meta={"error": str(e)[:200]},
+        ))
+        raise
+
+    # 누적 — 본문 호출과 같은 카운터 (예산·비용 정합)
+    state.llm_call_count += 1
+    if state.token_usage:
+        state.token_usage.input_tokens += usage.input_tokens
+        state.token_usage.output_tokens += usage.output_tokens
+        state.token_usage.cache_creation_tokens += usage.cache_creation_tokens
+        state.token_usage.cache_read_tokens += usage.cache_read_tokens
+    if usage.output_tokens or usage.input_tokens:
+        state.cost_usd += _estimate_cost(usage, provider.model_name)
+
+    await state.emit_verbose(StageSubstepEvent(
+        stage_id=stage_id, substep="aux_llm_request_end",
+        meta={
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "text_length": sum(len(t) for t in text_parts),
+        },
+    ))
+
+    return "".join(text_parts).strip()

@@ -682,26 +682,19 @@ class ContextStage(Stage):
                 "## Note\nprovider 초기화 안 된 상태에서 L5 발동. 정확한 요약은 재실행 권장."
             )
 
+        # v0.26.11 — _aux_call 통합 (max_tokens 단일 진실 소스 = config.aux_max_tokens).
+        # token tracking + cost 누적 + StageSubstepEvent emit 일관 보장.
         try:
-            # 간단 chat 호출 — stream 없이 non-blocking
-            if hasattr(provider, "chat_once"):
-                return await provider.chat_once(prompt, max_tokens=500, temperature=0.0)
-            # chat_once 없으면 chat() stream 을 수집
-            if hasattr(provider, "chat"):
-                from ...providers.base import MessageBlock
-                result_chunks = []
-                async for event in provider.chat(
-                    messages=[{"role": "user", "content": prompt}],
-                    system="You are a precise summarization agent.",
-                    tools=[], model=None, max_tokens=500, temperature=0.0,
-                ):
-                    if hasattr(event, "text") and event.text:
-                        result_chunks.append(event.text)
-                return "".join(result_chunks).strip()
+            from ...core.llm_call import aux_call
+            return await aux_call(
+                state,
+                stage_id="s06_context.l5_autocompact",
+                prompt=prompt,
+                system="You are a precise summarization agent.",
+            )
         except Exception as e:
             logger.warning("[Context] L5 summarize LLM 호출 실패: %s", e)
             return ""
-        return ""
 
     def list_strategies(self) -> list[StrategyInfo]:
         # v0.11.20 — dispatcher 와 완전 동기. stage_config.options 와 이 목록은 단일 진실 원본이어야 함.

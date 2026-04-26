@@ -35,6 +35,59 @@ def register_evaluation_criterion(name: str, description: str, weight: float = 0
     """
     ALL_CRITERIA[name] = {"description": description, "weight": float(weight)}
 
+
+_EVAL_CRITERIA_DISCOVERED = False
+
+
+def _discover_evaluation_criteria_from_entry_points() -> None:
+    """entry_points 그룹 ``xgen_harness.evaluation_criteria`` 자동 발견. idempotent.
+
+    외부 패키지 등록 예:
+      [project.entry-points."xgen_harness.evaluation_criteria"]
+      korean_quality = "my_pkg.criteria:get_spec"   # () -> {description, weight}
+
+    entry_point 가 dict 반환 또는 dict list 반환 모두 허용.
+    """
+    global _EVAL_CRITERIA_DISCOVERED
+    if _EVAL_CRITERIA_DISCOVERED:
+        return
+    _EVAL_CRITERIA_DISCOVERED = True
+    try:
+        from importlib.metadata import entry_points
+    except Exception:
+        return
+    try:
+        eps = entry_points()
+        group = "xgen_harness.evaluation_criteria"
+        items = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])  # type: ignore[arg-type]
+        for ep in items:
+            try:
+                produced = ep.load()
+                if callable(produced):
+                    produced = produced()
+                if isinstance(produced, dict):
+                    name = produced.get("name", ep.name)
+                    register_evaluation_criterion(
+                        name,
+                        produced.get("description", ""),
+                        weight=float(produced.get("weight", 0.1)),
+                    )
+                elif isinstance(produced, list):
+                    for item in produced:
+                        if isinstance(item, dict) and item.get("name"):
+                            register_evaluation_criterion(
+                                item["name"],
+                                item.get("description", ""),
+                                weight=float(item.get("weight", 0.1)),
+                            )
+            except Exception as e:
+                logger.warning("[evaluation_criteria] entry_point %s 로드 실패: %s", ep.name, e)
+    except Exception as e:
+        logger.debug("[evaluation_criteria] entry_points discovery 실패: %s", e)
+
+
+_discover_evaluation_criteria_from_entry_points()
+
 EVALUATION_PROMPT_TEMPLATE = """You are an AI response evaluator. Evaluate the assistant's response based on these criteria:
 
 {criteria_block}
@@ -132,23 +185,12 @@ class ValidateStage(Stage):
         return prompt, list(selected.keys())
 
     async def _execute_llm_judge(self, state: PipelineState) -> dict:
-        """기존 LLM Judge 로직 (폴백용)"""
+        """기존 LLM Judge 로직 (폴백용) — v0.26.11 _aux_call 통합."""
         eval_prompt, selected_criteria = self._build_evaluation_prompt(state)
 
-        eval_text = ""
         try:
-            async for event in state.provider.chat(
-                messages=[{"role": "user", "content": eval_prompt}],
-                temperature=0.0,
-                max_tokens=500,
-                stream=False,
-            ):
-                if event.type == ProviderEventType.STOP:
-                    eval_text = event.text
-                elif event.type == ProviderEventType.TEXT_DELTA:
-                    eval_text += event.text
-
-            state.llm_call_count += 1
+            from ...core.llm_call import aux_call
+            eval_text = await aux_call(state, stage_id="s08_judge", prompt=eval_prompt)
         except Exception as e:
             logger.warning("[Validate] Evaluation LLM call failed: %s", e)
             return {"bypassed": True, "reason": f"evaluation failed: {e}"}

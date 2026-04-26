@@ -5,6 +5,37 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.11] — 2026-04-27
+
+### ✨ 외부 확장 6 결함 일괄 정리 (확장성·연동성·하드코딩 4축 자가감사 후속)
+
+**#1+#5 — `pyproject.toml` 외부 lock-in 빈 본 6 그룹 추가**
+- `orchestrators` / `sandbox_verifiers` / `tools` (gallery) / `phases` / `node_plugins` / `model_pricing`
+- 외부 작업자가 어떤 그룹 이름이 valid 인지 한눈에 확인. 데이터 추가만 — break change 0.
+
+**#2 — silent contract 결판 (entry_points discovery 추가)**
+- `fan_out_strategies` (`orchestrator/multi_agent_planner.py`): pyproject 빈 본은 있는데 discovery 코드 0 → `_discover_fan_out_from_entry_points()` 추가. callable / dict 모두 허용.
+- `evaluation_criteria` (`stages/s08_judge/stage.py`): 동일 누수 → `_discover_evaluation_criteria_from_entry_points()` 추가. dict / list 모두 허용.
+- `option_sources` 는 이식측 owns (`harness_options_registry.py:683`) — 이미 discovery 있어 silent contract 아님.
+
+**#3 — `register_model_pricing()` API + entry_points 자동 발견**
+- `stages/strategies/token_tracker.py`: PRICING dict 가 외부에서 추가 못 하는 closed table 이었음.
+- `register_model_pricing(name, input, output, cache_read=None, cache_write=None)` API 신설.
+- entry_points 그룹 `xgen_harness.model_pricing` 자동 스캔 — 사내 vLLM / 자체 호스팅 모델 가격을 외부 패키지 한 줄로 등록.
+
+**#4 — auxiliary LLM 호출 통합 헬퍼 `aux_call()`**
+- `core/llm_call.py`: 본문 호출(`_single_call`) 과 분리한 보조 호출 표준 헬퍼.
+- max_tokens 단일 진실 소스 = `state.config.aux_max_tokens`.
+- `state.llm_call_count` 자동 누적 + `state.token_usage` 누적 + `_estimate_cost` 합산 + `StageSubstepEvent` 자동 emit (verbose 가시성 일관).
+- 적용 3 곳: `s08_judge._execute_llm_judge` / `strategies/evaluation.LLMJudgeEvaluation` / `s06_context.l5_autocompact`.
+- `xgen_harness.aux_call` 로 export — 외부 strategy 도 같은 헬퍼로 보조 호출 통합 가능.
+
+**#6 — `HarnessConfig.aux_max_tokens` 필드화 (매직넘버 500 박힌 4 건 제거)**
+- 4 호출부 모두 `aux_call` 경유 → 코드 grep `max_tokens=500` 0 건.
+- 사용자 워크플로우 단에서 `HarnessConfig(aux_max_tokens=...)` 로 override 가능.
+
+검증: 자가검증 4축 (확장성 / 연동성 / 하드코딩 / 무침범) 통과. `feedback_no_hardcoding_extensibility` 정합.
+
 ## [0.26.10] — 2026-04-27
 
 ### 🐛 DAG orchestrator — sub-Pipeline DoneEvent forward 누수

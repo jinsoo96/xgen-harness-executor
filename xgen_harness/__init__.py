@@ -46,6 +46,7 @@ from .events.types import (
 from .core.catalog import get_catalog
 from .core.planner import HarnessPlanner, HarnessPlan
 from .core.provider_bootstrap import ensure_provider
+from .core.llm_call import aux_call
 from .errors import (
     HarnessError,
     ConfigError,
@@ -216,6 +217,7 @@ __all__ = [
     "HarnessPlanner",
     "HarnessPlan",
     "ensure_provider",
+    "aux_call",
     # Errors
     "HarnessError",
     "ConfigError",

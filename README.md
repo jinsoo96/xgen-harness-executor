@@ -629,7 +629,7 @@ config = HarnessConfig(
 
 ---
 
-## 외부 패키지가 끼워넣는 11 지점
+## 외부 패키지가 끼워넣는 16 지점
 
 엔진 코드를 건드리지 않고 외부 패키지의 `pyproject.toml` 에 entry_points 항목을 추가하는 방식으로 합류시킬 수 있습니다.
 
@@ -643,9 +643,16 @@ config = HarnessConfig(
 | 6 | **Capability** | `xgen_harness.capabilities` | `CapabilityRegistry.register()` |
 | 7 | **Guard** | `xgen_harness.guards` | `register_guard()` |
 | 8 | **NodeAdapter** | `xgen_harness.node_adapters` | (이식측 wiring) |
-| 9 | **OptionSource** | `xgen_harness.option_sources` | (이식측 OptionRegistry) |
+| 9 | **OptionSource** | `xgen_harness.option_sources` (이식측) | `register_option_source()` |
 | 10 | **SandboxVerifier** | `xgen_harness.sandbox_verifiers` | `register_sandbox_verifier()` |
-| 11 | **PublishTarget** | `xgen_harness.publish_targets` (이식측) | mcp-station / gallery / 사내 PyPI |
+| 11 | **PublishTarget** | `xgen_harness.publish_targets` (이식측) | `register_publish_target()` |
+| 12 | **Phase** | `xgen_harness.phases` | `register_phase()` |
+| 13 | **NodePlugin** | `xgen_harness.node_plugins` | `register_node_plugin()` |
+| 14 | **Gallery / Tools** | `xgen_harness.tools` | wheel install 시 자동 발견 |
+| 15 | **FanOutStrategy** | `xgen_harness.fan_out_strategies` | `register_fan_out_strategy()` |
+| 16 | **EvaluationCriterion** | `xgen_harness.evaluation_criteria` | `register_evaluation_criterion()` |
+
+추가로 *모델 가격 등록* 도 같은 패턴: `xgen_harness.model_pricing` 그룹 + `register_model_pricing()` (사내 vLLM 모델 등 비용 추적용).
 
 각 그룹별 빈 본 섹션이 [pyproject.toml](pyproject.toml) 에 미리 마련되어 있어, 외부 기여자가 어떤 그룹 이름이 유효한지 한눈에 확인할 수 있습니다.
 
