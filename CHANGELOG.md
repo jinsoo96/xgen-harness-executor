@@ -5,6 +5,18 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.10] — 2026-04-27
+
+### 🐛 DAG orchestrator — sub-Pipeline DoneEvent forward 누수
+
+**증상**: DAG 자율 테스트에서 첫 노드만 응답 출력되고 두 번째 노드 이벤트가 클라이언트에 도달 못 함. 외부에서 "DAG 실행 타임아웃" 으로 끊김.
+
+**원인**: `orchestrator/dag.py:_forward_events()` 가 sub Pipeline 의 DoneEvent 도 그대로 외부 emitter 로 forward. DoneEvent 가 external_emitter 로 들어가는 즉시 `EventEmitter.stream()` 의 `if isinstance(event, DoneEvent): break` (events/emitter.py:102) 가 외부 stream 을 종료 — 후속 노드 이벤트 전체 누락.
+
+**fix**: `_forward_events()` 가 sub Pipeline 의 DoneEvent 만 skip. DAG 전체 DoneEvent 는 `run()` 마지막에 별도 emit (line 229) 하므로 정상 종료 신호 유지. 다른 이벤트 (Stage / Metrics / ToolCall / Error / …) 는 그대로 forward.
+
+검증: 두 노드 모두 final_output 정상 도달 + DAG-level DoneEvent 마지막에 한 번만 emit → 외부 stream 깔끔 종료.
+
 ## [0.26.9] — 2026-04-26
 
 ### 🐛 MCPClient header forward — production tools=0 회귀 수정
