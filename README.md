@@ -33,34 +33,57 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 
 ---
 
-## 5분 안에 돌려보기
+## 어떻게 돌아가는가
 
-```python
-import asyncio
-from xgen_harness import Pipeline, PipelineState, HarnessConfig
+요청 한 건은 **세 그룹의 13 Stage** 를 순차적으로 통과한다. 각 Stage 는 자기가 담당하는 환경(도구·정책·컨텍스트·예산) 만 LLM 에 펼쳐 보여주고 다음 Stage 로 `PipelineState` 를 넘긴다.
 
-async def main():
-    config = HarnessConfig(
-        provider="anthropic",                       # 미지정 시 환경변수로 자동 해석
-        model="claude-sonnet-4-20250514",           # 미지정 시 provider 기본값
-        system_prompt="너는 친절한 한국어 비서야.",
-        harness_mode="off",                         # 단발 Q&A
-    )
-    pipeline = Pipeline.from_config(config)
-    state = PipelineState(user_input="하네스가 뭐야?")
-    await pipeline.run(state)
-    print(state.final_output)
+```
+[ ingress · 1회 ]                       [ agent loop · max_iterations 회 ]              [ egress · 1회 ]
 
-asyncio.run(main())
+  s00 ─ s01 ─ s02 ─ s03 ─ s04   ─▶   s05 ─ s06 ─ s07 ─ s08 ─ s09  ─┐   ─▶   s10 ─ s11
+  ──────────────────────────────         ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
+  LLM 핸들 owner / 입력 / 히스토리 /        계획 / 컨텍스트 / 본문호출 /     │       DB 기록 / 최종 응답
+  프롬프트·citation / 도구 카탈로그         judge / 루프 결정                │
+                                       ◀─── orchestrator hint 분기 ─────┘
+                                            (linear · iterative · plan_execute · react · dag)
 ```
 
-**환경변수만으로도 돌아갑니다.** 코드는 그대로 두고:
+### 핵심 동작 4 가지
 
-```bash
-export ANTHROPIC_API_KEY=...
-export XGEN_HARNESS_DEFAULT_PROVIDER=anthropic
-export XGEN_HARNESS_ANTHROPIC_DEFAULT_MODEL=claude-sonnet-4-20250514
+1. **Stage = 환경 슬롯, 단계 아님.** 각 Stage 는 자기 capability·도구·리소스를 progressive disclose 하고, Auto 모드의 Planner LLM 이 그 안에서 자율 선택. 사용자는 **무엇** 을 선언하면 하네스가 **어떻게** 자동 조립.
+2. **도구는 한 채널로 들어온다.** MCP 세션 · 캔버스 노드 · 로컬 함수 · LLM 합성 도구 모두 `ToolSource` Protocol 한 갈래로 통합돼 s04 에서 LLM 카탈로그로 합쳐짐.
+3. **본문 LLM 호출은 single owner.** `s00_harness` 가 모든 모델 호출의 owner — provider · model · max_tokens · streaming/batch transport 결정이 한 곳에 모이고, 다른 Stage 는 dispatcher 를 통해서만 호출.
+4. **워크플로우는 wheel 로 발행된다.** 같은 `HarnessConfig` 를 `compile_workflow()` 한 번 호출이면 `pip install` 가능한 wheel + MCP stdio 서버 + 격리 검증 페이로드(NOMGraph) 가 동시에 산출.
+
+### 한 사이클의 데이터 흐름
+
 ```
+HarnessConfig + user_input
+    │
+    ▼
+PipelineState  ◀──────────  EventEmitter (17 이벤트, SSE 스트림)
+    │
+    │   ── ingress ──
+    ├─ s00  LLM 핸들 owner / transport(streaming|batch) 선정
+    ├─ s01  사용자 입력 정규화 · multimodal 추출
+    ├─ s02  같은 interaction 의 이전 turn 로드
+    ├─ s03  system_prompt 주입 + citation
+    ├─ s04  ToolSource → tool_definitions 합성 (UI 가 selected_tools 로 필터)
+    │
+    │   ── agent loop (orchestrator_hint 가 결정한 횟수만큼) ──
+    ├─ s05_strategy   CoT / ReAct / Capability 계획
+    ├─ s05_policy     (옵션) Guard 체인 — pre_main / pre_tool / post_response / loop_boundary
+    ├─ s06            RAG · 온톨로지 · DB → 컨텍스트 주입 + 압축 (microcompact / cascade / …)
+    ├─ s07            본문 LLM 호출 + tool_use multi-turn   (s00 dispatcher 경유)
+    ├─ s08            응답 품질 judge (llm_judge | rule_based | none)
+    ├─ s09            judge 결과 → loop_decision (continue / complete)
+    │
+    │   ── egress ──
+    ├─ s10  DB 실행 기록 (이식측 hook)
+    └─ s11  최종 응답 + MetricsEvent  →  state.final_output
+```
+
+`HarnessConfig.harness_mode` 가 이 사이클의 자율도를 결정한다 (`off` / `selected` / `autonomous`) — 다음 섹션.
 
 ---
 
@@ -201,6 +224,57 @@ config = HarnessConfig(
 ---
 
 ## 🔌 MCP — 양방향, 처음부터 끝까지
+
+하네스 워크플로우는 **닫힌 루프** 를 그린다 — UI 에서 설정한 워크플로우가 도구로 말려서 발행되고, 다시 (같은 또는 다른) 하네스의 s04 카탈로그로 흡수돼 LLM 이 호출 가능한 도구가 된다.
+
+```
+   ┌────────────────────────────────────────────────────────────────────────────┐
+   │                                                                            │
+   │    하네스 UI · HarnessConfig                                               │
+   │           │                                                                │
+   │           │  ① compile_workflow()  — 워크플로우를 도구로 "말기"           │
+   │           ▼                                                                │
+   │    WheelBuildResult                                                        │
+   │     · xgen_gallery_<name>-<ver>-py3-none-any.whl                           │
+   │     · CLI 3종 (run / info / serve-mcp)                                     │
+   │     · NOMGraph 단일 IR                                                     │
+   │           │                                                                │
+   │           │  ② MCPStdioVerifier — 격리 핸드셰이크 + SHA-256 지문            │
+   │           ▼                                                                │
+   │    POST /api/harness/compile/publish    ─────────►   PublishTargetRegistry│
+   │                                                       ├─ mcp-station       │
+   │                                                       ├─ xgen-gallery      │
+   │                                                       ├─ 사내 PyPI / 폐쇄망  │
+   │                                                       └─ Claude Desktop    │
+   │                                                              │             │
+   │                                                              ▼             │
+   │                                                       ③ 발행처에서        │
+   │                                                       wheel install +      │
+   │                                                       MCP stdio 기동       │
+   │                                                              │             │
+   │           ┌─────────── ④ 다시 받아오기 (re-ingest) ──────────┘             │
+   │           │                                                                │
+   │           ▼                                                                │
+   │    ToolSource 로 흡수                                                      │
+   │     ├─ MCPSessionToolSource(station_url)   — mcp-station 세션              │
+   │     ├─ discover_galleries()                — entry_points 자동 스캔        │
+   │     └─ Claude Desktop / Cursor             — 외부 호스트가 직접 호출       │
+   │           │                                                                │
+   │           ▼                                                                │
+   │    ⑤ s04_tool 카탈로그 합류 → Auto 모드 LLM 이 호출                        │
+   │                                                                            │
+   └────────────────────────────────────────────────────────────────────────────┘
+```
+
+| 단계 | 무엇이 | 어디서 | 핵심 산출 |
+|---|---|---|---|
+| ① 말기 (wrap) | `HarnessConfig` + 캔버스 스냅샷 → wheel | 엔진 `compile_workflow()` | `WheelBuildResult` (wheel/sdist/dist_name/package_name + NOMGraph) |
+| ② 검증 (verify) | wheel 격리 기동 → `initialize`/`tools/list` 왕복 | 엔진 `MCPStdioVerifier` | `VerifyResult` (`payload_hash` 발행 감사용 지문) |
+| ③ 올리기 (publish) | wheel + 메타 → 발행처 등록 | 이식측 `POST /api/harness/compile/publish` | PublishTargetRegistry 항목 (mcp-station / gallery / Claude Desktop / 사내 PyPI) |
+| ④ 받아오기 (ingest) | 발행된 도구를 다시 카탈로그로 흡수 | `MCPSessionToolSource` / `discover_galleries()` | `tool_definitions` 추가 |
+| ⑤ 호출 (call) | LLM 이 도구로 사용 | `s04_tool` → `s07_act` (s00 dispatcher 경유) | `ToolCallEvent` / `ToolResultEvent` |
+
+각 단계를 자세히:
 
 ### A. 다른 MCP 서버를 하네스 안에서 쓰기
 
