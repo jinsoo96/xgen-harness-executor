@@ -17,3 +17,5 @@ docs/
 bench_*.json
 smoke_report.json
 .pytest_cache/
+tests/
+test_*.py
