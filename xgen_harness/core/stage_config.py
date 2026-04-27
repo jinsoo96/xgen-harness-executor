@@ -58,8 +58,8 @@ def canonical_stage_id_map(d: dict) -> dict:
 
 STAGE_CONFIGS: dict[str, dict] = {
     "s00_harness": {
-        "description_ko": "Harness 통제탑 — Provider 초기화 + Planner + 본문 LLM 호출(streaming/batch) + iterative replan 을 모두 소유합니다 (v0.14.0 재귀적 자율주행).",
-        "description_en": "Harness control tower — owns provider init + planner + main LLM call (streaming/batch) + iterative replan.",
+        "description_ko": "전체 흐름을 지휘합니다. 어떤 Stage 를 어떤 순서로 돌릴지 LLM 이 직접 정하고 본문 응답까지 책임집니다.",
+        "description_en": "Conducts the whole pipeline. The LLM itself decides which stages run in what order and produces the main response.",
         "when_to_use": "기본 활성. LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립.",
         "when_to_skip": "harness_mode='off' 일 때 skip (단순 파이프라인 모드).",
         "cost_hint": "medium",
@@ -225,11 +225,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s04_tool": {
-        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / synthesized / 외부 entry_points).",
+        "description_ko": "에이전트가 사용할 도구를 고릅니다. MCP · Custom API · xgen 노드 등 모든 도구가 한 경로로 합류합니다.",
         "when_to_use": "외부 도구·RAG 컬렉션·capability 중 하나 이상 필요. 도구 공급 = ToolSource 단일 채널.",
         "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
         "cost_hint": "low",
-        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / synthesized / external entry_points).",
+        "description_en": "Picks the tools the agent will use. MCP, Custom API, xgen nodes, etc. all join through a single channel.",
         "icon": "🔧",
         "fields": [
             # v0.25.0 — 단일 도구 공급 경로. source_id → 허용 도구 이름 리스트.
@@ -305,11 +305,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s05_strategy": {
-        "description_ko": "Chain-of-Thought 계획을 수립합니다. LLM이 단계별로 생각하도록 유도합니다.",
+        "description_ko": "응답 전략을 수립합니다. CoT · ReAct · capability planner 중 한 가지로 LLM 이 단계별 추론하도록 유도합니다.",
         "when_to_use": "복잡한 추론 · 멀티에이전트 DAG · 단계별 계획이 이득이 될 때.",
         "when_to_skip": "단일 패스 직답형 요청 (인사·짧은 QA·단순 조회).",
         "cost_hint": "low",
-        "description_en": "Chain-of-Thought planning before execution.",
+        "description_en": "Sets the response strategy. Picks one of CoT / ReAct / capability planner so the LLM reasons step-by-step.",
         "icon": "📋",
         "fields": [
             {
@@ -335,11 +335,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s06_context": {
-        "description_ko": "문서 · 지식 리소스 기반 컨텍스트 주입 + 토큰 예산 초과 시 자동 압축.",
+        "description_ko": "RAG · DB · 문서 · GraphRAG 같은 지식 리소스를 검색해 답변 직전 컨텍스트로 주입합니다. 토큰 예산을 넘으면 자동으로 압축합니다.",
         "when_to_use": "RAG 컨텍스트 주입 · 긴 대화 압축 · Progressive Disclosure (5-Level cascade) 가 필요할 때. s04_tool 이 RAG/문서 리소스를 고르면 거의 필수.",
         "when_to_skip": "짧은 단일 메시지 + 컨텍스트 자료 없음.",
         "cost_hint": "medium",
-        "description_en": "Document/knowledge-resource context injection + auto-compact on token budget overflow.",
+        "description_en": "Searches knowledge resources (RAG, DB, documents, GraphRAG) and injects them as context before the answer. Auto-compacts when over the token budget.",
         "icon": "📊",
         "fields": [
             {
