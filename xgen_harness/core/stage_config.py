@@ -335,11 +335,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s06_context": {
-        "description_ko": "RAG 컬렉션 · DB · 폴더 · 파일 · GraphRAG 같은 문서/지식 리소스를 검색해 LLM 답변 직전 컨텍스트로 주입합니다. 컨텍스트가 토큰 예산을 넘으면 자동으로 압축(Cascade L3~L5)합니다.",
+        "description_ko": "문서 · 지식 리소스 기반 컨텍스트 주입 + 토큰 예산 초과 시 자동 압축.",
         "when_to_use": "RAG 컨텍스트 주입 · 긴 대화 압축 · Progressive Disclosure (5-Level cascade) 가 필요할 때. s04_tool 이 RAG/문서 리소스를 고르면 거의 필수.",
         "when_to_skip": "짧은 단일 메시지 + 컨텍스트 자료 없음.",
         "cost_hint": "medium",
-        "description_en": "Searches knowledge resources (RAG collections, DB, folders, files, GraphRAG) and injects them as context before the LLM answers. Auto-compacts (Cascade L3~L5) when over the token budget.",
+        "description_en": "Document/knowledge-resource context injection + auto-compact on token budget overflow.",
         "icon": "📊",
         "fields": [
             {

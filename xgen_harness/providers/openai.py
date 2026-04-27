@@ -349,6 +349,21 @@ def _normalize_for_openai(schema: Any) -> Any:
             # 3) $ref 는 OpenAI 가 못 풂 → drop
             if k == "$ref":
                 continue
+            # 4) enum 이 dict 배열 (예: xgen-nodes 의 [{"value":"a","label":"A"}, ...])
+            #    이면 primitive 만 추출. OpenAI 는 enum 항목으로 dict 거부.
+            if k == "enum" and isinstance(v, list):
+                flat_enum: list[Any] = []
+                for item in v:
+                    if isinstance(item, dict):
+                        val = item.get("value")
+                        if val is None:
+                            val = item.get("id") or item.get("label")
+                        if val is not None:
+                            flat_enum.append(val)
+                    else:
+                        flat_enum.append(item)
+                out[k] = flat_enum
+                continue
             # 재귀
             out[k] = _normalize_for_openai(v)
         return out

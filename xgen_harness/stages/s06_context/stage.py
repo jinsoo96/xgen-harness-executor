@@ -127,9 +127,10 @@ class ContextStage(Stage):
                     merged = list({*existing, *files_selected})
                     metadata_filter["file_name"] = merged
                     logger.info("[Context] files routed to metadata_filter.file_name: %d items", len(merged))
-                # 서버 단 rerank — 요청 단위로 활성 가능 (xgen-documents 지원).
-                # reranker 파라미터가 truthy 이면 서버 rerank 를 켜고, rerank_top_k 도 전달.
-                reranker_enabled = bool(str(self.get_param("reranker", state, "") or "").strip())
+                # 서버 단 rerank — toggle 파라미터. bool(False)=False / bool(True)=True.
+                # 단, 과거 저장된 워크플로우가 문자열 "False" 로 들어올 수 있어 명시 비교.
+                _v = self.get_param("reranker", state, False)
+                reranker_enabled = (_v is True) or (isinstance(_v, str) and _v.strip().lower() == "true")
                 rerank_top_k_param = self.get_param("rerank_top_k", state, None)
                 try:
                     rerank_top_k_int = int(rerank_top_k_param) if rerank_top_k_param is not None else None
@@ -201,7 +202,8 @@ class ContextStage(Stage):
             # Protocol: rerank(query, documents: list[str], top_k, user_id) -> [{"index", "score"}, ...]
             # xgen-documents 의 reranker provider 는 서버 기동 시 설정되므로, 본 Stage 는
             # reranker 파라미터를 "rerank 활성 토글" 로만 사용합니다 (truthy 면 호출).
-            reranker_enabled: str = str(self.get_param("reranker", state, "") or "").strip()
+            _v = self.get_param("reranker", state, False)
+            reranker_enabled = (_v is True) or (isinstance(_v, str) and _v.strip().lower() == "true")
             if reranker_enabled and rag_context:
                 services = state.metadata.get("services")
                 doc_service = getattr(services, "documents", None) if services else None
