@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.16"
-description = "XGEN Harness — Stage description 톤·길이 일관화. s00·s04·s05_strategy·s05_policy·s06 모두 존댓말 + 1~2 문장 + 자연어 (기술 용어 최소). 'XX 합니다' 종결로 통일."
+version = "0.26.17"
+description = "XGEN Harness — UI 텍스트 (description_ko/en) 엔진 박제 원복. v0.26.15 의 s06 축약 + v0.26.16 의 5건 톤 통일 모두 revert. 인간 가독 설명문은 프론트 i18n 소유 (확장성/연동성 원칙). 기능 수정 (RetryEvent emit / OpenAI enum 정규화 / xgen-nodes options dict 평탄화 / s06 reranker bool 함정) 은 유지."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
