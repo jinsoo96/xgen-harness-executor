@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 
 from .state import PipelineState, TokenUsage
-from ..events.types import MessageEvent, ToolCallEvent, ThinkingEvent
+from ..events.types import MessageEvent, ToolCallEvent, ThinkingEvent, RetryEvent
 from ..errors import ProviderError, RateLimitError, OverloadError, PipelineAbortError
 from ..providers.base import ProviderEventType
 
@@ -154,17 +154,35 @@ async def _call_with_retry(
             last_error = e
             delay = _pick("rate_limit", attempt)
             logger.warning("[LLM] Rate limited, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+            await state.emit_verbose(RetryEvent(
+                stage_id=stage_id,
+                reason=f"RateLimitError → sleep {delay}s · {str(e)[:120]}",
+                attempt=attempt + 1,
+                max_attempts=max_retries,
+            ))
             await asyncio.sleep(delay)
         except OverloadError as e:
             last_error = e
             delay = _pick("overload", attempt)
             logger.warning("[LLM] Overloaded, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+            await state.emit_verbose(RetryEvent(
+                stage_id=stage_id,
+                reason=f"OverloadError → sleep {delay}s · {str(e)[:120]}",
+                attempt=attempt + 1,
+                max_attempts=max_retries,
+            ))
             await asyncio.sleep(delay)
         except ProviderError as e:
             if e.recoverable and attempt < max_retries:
                 last_error = e
                 delay = _pick("server", attempt)
                 logger.warning("[LLM] Provider error, retry %d/%d after %ds", attempt + 1, max_retries, delay)
+                await state.emit_verbose(RetryEvent(
+                    stage_id=stage_id,
+                    reason=f"ProviderError → sleep {delay}s · {str(e)[:120]}",
+                    attempt=attempt + 1,
+                    max_attempts=max_retries,
+                ))
                 await asyncio.sleep(delay)
             else:
                 raise
