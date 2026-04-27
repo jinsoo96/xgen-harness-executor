@@ -247,17 +247,25 @@ class Pipeline:
                         ))
 
             # v0.26.7 — UX 함정 방지: max_iter 도달 + tool 호출 후 final answer 미생성 케이스.
-            # 라이브 검증으로 발견 (max_iter=1 + 도구 활성 시 LLM 이 도구 호출만 하고 끝나
-            # state.last_assistant_text 빈 채로 사용자에게 도착, output_length=0).
-            # Phase B 루프가 도구 결과만 남기고 final answer 못 만든 경우, tool 비활성으로
-            # 1회 더 호출해서 LLM 이 도구 결과 보고 답변 텍스트 만들게 함.
-            if (
-                not state.last_assistant_text
+            # v0.26.18 — 짧은 intro + tool_use 종료 케이스도 같은 safeguard 로 흡수.
+            # 라이브 적발 사례: max_iter=1 + 도구 활성 시 LLM 이 "분석해드리겠습니다."(37자)
+            # 만 흘리고 도구 호출, 도구 결과는 들어왔는데 합성 답변 못 만들고 끝나
+            # 사용자에게 37자만 도달. tool_use 가 일어났고 (의도적으로) max_iter 가 닫혀
+            # 자연 follow-up 이 없으면, 짧은 intro 길이도 "synthesize 못함" 신호로 간주.
+            # 200자는 'I will...' 류 단순 intro 와 실 답변의 경험적 경계.
+            _SHORT_INTRO_THRESHOLD = 200
+            _intro_len = len(state.last_assistant_text or "")
+            _needs_synthesis_kick = (
+                state.tools_executed_count > 0
                 and not state.final_output
-                and state.tools_executed_count > 0
+                and _intro_len < _SHORT_INTRO_THRESHOLD
                 and s00_stage is not None
-            ):
-                logger.info("[Pipeline] tool-only iter 종료, final answer 보강 호출 (도구 비활성)")
+            )
+            if _needs_synthesis_kick:
+                logger.info(
+                    "[Pipeline] tool 후 합성 답변 보강 호출 (intro=%d자 < %d, 도구 비활성)",
+                    _intro_len, _SHORT_INTRO_THRESHOLD,
+                )
                 saved_tools = state.tool_definitions
                 state.tool_definitions = []  # 도구 비활성으로 final answer 강제
                 try:
