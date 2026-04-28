@@ -14,6 +14,84 @@ import re
 from .base import Tool, ToolResult
 
 
+# v0.26.19 — 한국어 query ↔ 영문 도구명/description 의 cross-language 매칭
+# 라이브 결함: 사용자가 "네이버 뉴스" 검색 → search_tools 가 영문 도구명
+# (mcp_naver_news_mcp 등) 4개 후보 다 매치 실패 → "No tools matched" → LLM 포기.
+# 한국어 일반 도메인 단어를 영문 alias 로 보강해 추가 매칭 라운드 제공.
+# 외부 기여자가 도메인 alias 추가 가능하도록 dict 노출 — 신규 키 등록 = 한 줄.
+_BUILTIN_KO_EN_ALIASES: dict[str, list[str]] = {
+    "네이버": ["naver"],
+    "다음": ["daum"],
+    "구글": ["google"],
+    "유튜브": ["youtube", "yt"],
+    "뉴스": ["news"],
+    "검색": ["search"],
+    "쇼핑": ["shopping", "shop"],
+    "지도": ["map", "maps"],
+    "메일": ["mail", "email", "gmail"],
+    "캘린더": ["calendar"],
+    "달력": ["calendar"],
+    "날씨": ["weather"],
+    "시간": ["time", "clock"],
+    "번역": ["translate", "translation"],
+    "이미지": ["image", "img"],
+    "사진": ["image", "photo"],
+    "동영상": ["video"],
+    "비디오": ["video"],
+    "음성": ["audio", "voice", "speech"],
+    "파일": ["file", "files"],
+    "폴더": ["folder", "dir", "directory"],
+    "데이터": ["data"],
+    "데이터베이스": ["db", "database"],
+    "디비": ["db", "database"],
+    "주문": ["order"],
+    "결제": ["payment", "pay"],
+    "고객": ["customer", "client"],
+    "회원": ["user", "member"],
+    "재고": ["inventory", "stock"],
+    "분석": ["analysis", "analytics", "analyze"],
+    "통계": ["stats", "statistics"],
+    "보고서": ["report"],
+    "리포트": ["report"],
+    "차트": ["chart"],
+    "그래프": ["graph"],
+    "트렌드": ["trend", "trends"],
+    "알림": ["notify", "notification", "alert"],
+    "메시지": ["message", "msg"],
+    "채팅": ["chat"],
+    "대화": ["chat", "conversation"],
+}
+
+
+def register_search_alias(ko: str, en_terms: list[str]) -> None:
+    """search_tools 한국어→영문 alias 외부 등록 (확장 지점).
+
+    예: 도메인 특화 단어 추가 — register_search_alias("물류", ["logistics", "shipping"]).
+    이미 등록된 ko 키는 덮어씀. 외부 패키지 / 호스트 코드에서 사용.
+    """
+    _BUILTIN_KO_EN_ALIASES[ko] = list(en_terms)
+
+
+def _expand_query_terms(terms: list[str]) -> list[str]:
+    """한국어 term 을 영문 alias 로 확장. 영문 term 은 그대로.
+
+    "네이버" → ["네이버", "naver"]
+    "naver" → ["naver"]
+    """
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for t in terms:
+        if t in seen:
+            continue
+        expanded.append(t)
+        seen.add(t)
+        for alias in _BUILTIN_KO_EN_ALIASES.get(t, []):
+            if alias not in seen:
+                expanded.append(alias)
+                seen.add(alias)
+    return expanded
+
+
 class DiscoverToolsTool(Tool):
     """에이전트가 도구의 상세 스키마를 조회하는 빌트인 도구.
 
@@ -147,7 +225,32 @@ class SearchToolsTool(Tool):
         if not q:
             return ToolResult.error("'query' is required.")
 
-        terms = [t for t in re.split(r"\s+", q) if t]
+        # v0.26.19 — 한국어 query 가 영문 도구명/description 과 매칭 안 되던 결함 fix.
+        # raw terms 1차 매칭 후 0건이면 한국어→영문 alias 로 expand 후 2차 매칭.
+        # 그래도 0건이면 LLM 이 "도구 없음" 결론 안 내도록 카테고리 hint + 전체
+        # discover 안내. 라이브 사례: "네이버 뉴스" → mcp_naver_news_mcp 매치 실패.
+        raw_terms = [t for t in re.split(r"\s+", q) if t]
+        expanded_terms = _expand_query_terms(raw_terms)
+        scored = self._score_terms(expanded_terms, category_filter)
+
+        scored.sort(key=lambda x: -x[0])
+        top = scored[:limit]
+        if not top:
+            return ToolResult.success(self._empty_match_hint(q, category_filter, limit))
+
+        used_aliases = [t for t in expanded_terms if t not in raw_terms]
+        header = f"Matched {len(top)} of {len(scored)} tools"
+        if used_aliases:
+            header += f" (expanded with: {', '.join(used_aliases)})"
+        lines = [f"{header}:"]
+        for s, td in top:
+            n = td.get("name", "?")
+            d = (td.get("description") or "")[:120]
+            lines.append(f"- {n} (score={s}): {d}")
+        lines.append("\nNext: discover_tools(tool_name=...) for full schema.")
+        return ToolResult.success("\n".join(lines))
+
+    def _score_terms(self, terms: list[str], category_filter: str) -> list[tuple[int, dict]]:
         scored: list[tuple[int, dict]] = []
         for td in self._tools:
             name = (td.get("name") or "").lower()
@@ -165,19 +268,43 @@ class SearchToolsTool(Tool):
                     score += 5
             if score > 0:
                 scored.append((score, td))
+        return scored
 
-        scored.sort(key=lambda x: -x[0])
-        top = scored[:limit]
-        if not top:
-            return ToolResult.success(f"No tools matched '{q}'. Try discover_tools() to see all.")
+    def _empty_match_hint(self, q: str, category_filter: str, limit: int) -> str:
+        """매칭 0건일 때 LLM 이 즉시 포기하지 않도록 카테고리 후보 + 권유.
 
-        lines = [f"Matched {len(top)} of {len(scored)} tools:"]
-        for s, td in top:
-            n = td.get("name", "?")
-            d = (td.get("description") or "")[:120]
-            lines.append(f"- {n} (score={s}): {d}")
-        lines.append("\nNext: discover_tools(tool_name=...) for full schema.")
-        return ToolResult.success("\n".join(lines))
+        총 도구 수 적으면 (≤ 20) 그냥 전체 목록 제공. 많으면 카테고리별 top 몇 개씩
+        샘플링. 마지막에 명확한 다음 액션 (discover_tools / 다른 query) 안내.
+        """
+        if not self._tools:
+            return f"No tools available."
+
+        from collections import defaultdict
+        by_cat: dict[str, list[dict]] = defaultdict(list)
+        for td in self._tools:
+            cat = (td.get("category") or td.get("metadata", {}).get("category") or "uncategorized").lower()
+            by_cat[cat].append(td)
+
+        lines = [f"No exact match for '{q}'. Showing available tools by category:"]
+        # 카테고리당 limit/카테고리수 정도로 sample (최소 1, 최대 limit)
+        per_cat = max(1, min(limit, 5))
+        for cat in sorted(by_cat.keys()):
+            if category_filter and category_filter not in cat:
+                continue
+            samples = by_cat[cat][:per_cat]
+            lines.append(f"\n[{cat}] ({len(by_cat[cat])} tools)")
+            for td in samples:
+                n = td.get("name", "?")
+                d = (td.get("description") or "")[:80]
+                lines.append(f"- {n}: {d}")
+            if len(by_cat[cat]) > per_cat:
+                lines.append(f"  ... +{len(by_cat[cat]) - per_cat} more")
+        lines.append(
+            "\nNext: search_tools with English keyword (e.g. 'naver', 'news', 'search') "
+            "or discover_tools() for full list, or pick a tool above and call discover_tools(tool_name=...) "
+            "for schema."
+        )
+        return "\n".join(lines)
 
 
 class FetchPDTool(Tool):
