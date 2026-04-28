@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "0.26.19"
+version = "0.26.20"
 description = "XGEN Harness — tool 후 합성 답변 safeguard 임계값 도입. max_iter=1 + 도구 활성 환경에서 LLM 이 짧은 intro (예: '분석해드리겠습니다' 37자) 흘리고 tool_use 로 끝나면 도구 결과만 남고 합성 답변이 안 나와 사용자에게 37자만 도달하던 결함. 기존 'last_assistant_text 빈 경우' safeguard 를 'intro<200자' 로 일반화 — tool_use 가 일어난 흔적 + max_iter 닫힘 + 짧은 텍스트 셋이면 도구 비활성 1회 추가 호출로 합성 강제."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -86,6 +86,12 @@ Repository = "https://github.com/jinsoo96/xgen-harness-executor"
 
 [project.entry-points."xgen_harness.model_pricing"]
 # 예: my_model = "my_pkg.pricing:get_pricing"   # () -> {input, output, cache_read?, cache_write?}
+
+[project.entry-points."xgen_harness.term_expanders"]
+# search_tools 의 query 확장 expander (v0.26.20+).
+# 한국어/일본어/도메인 특화 alias 같은 데이터는 엔진 본체에 박지 않고 plug 로 합류.
+# 예: ko_locale = "xgen_harness_locale_ko:KoreanAliasExpander"
+#     - .expand(terms: list[str]) -> list[str] 메서드 갖는 객체 (TermExpander Protocol)
 
 # Policy Gate (v0.17.0) — 도구 호출/입력/출력/루프 경계 Guard.
 # 내장 5종을 이 그룹에 등록 — 외부 기여자도 같은 경로로 추가하면 자동 합류.

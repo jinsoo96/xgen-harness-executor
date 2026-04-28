@@ -321,3 +321,17 @@ def _preload_manifest_once() -> None:
             logger.info("[tools] preload manifest %s: %d tools", p, len(restored))
         except Exception as e:
             logger.warning("[tools] preload %s failed: %s", p, e)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Term Expander re-exports (v0.26.20+) — search_tools query 확장 메커니즘.
+# 엔진은 빈 dict + Protocol + entry_points 만. 도메인 alias (한국어 등) 는
+# 외부 plug 가 ``register_search_alias`` 또는 ``register_term_expander`` 로 주입.
+# ──────────────────────────────────────────────────────────────────────
+from .builtin import (
+    TermExpander,
+    register_term_expander,
+    register_search_alias,
+    list_term_expanders,
+    list_search_aliases,
+)

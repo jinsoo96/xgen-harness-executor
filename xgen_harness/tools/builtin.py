@@ -10,86 +10,170 @@ Built-in Tools — 하네스 기본 제공 도구
 도구 카탈로그가 작으면 Level 1 만으로 충분, 100+ 개면 search_tools 부터 시작.
 """
 
+import logging
 import re
+from typing import Callable, Protocol, runtime_checkable
+
 from .base import Tool, ToolResult
 
-
-# v0.26.19 — 한국어 query ↔ 영문 도구명/description 의 cross-language 매칭
-# 라이브 결함: 사용자가 "네이버 뉴스" 검색 → search_tools 가 영문 도구명
-# (mcp_naver_news_mcp 등) 4개 후보 다 매치 실패 → "No tools matched" → LLM 포기.
-# 한국어 일반 도메인 단어를 영문 alias 로 보강해 추가 매칭 라운드 제공.
-# 외부 기여자가 도메인 alias 추가 가능하도록 dict 노출 — 신규 키 등록 = 한 줄.
-_BUILTIN_KO_EN_ALIASES: dict[str, list[str]] = {
-    "네이버": ["naver"],
-    "다음": ["daum"],
-    "구글": ["google"],
-    "유튜브": ["youtube", "yt"],
-    "뉴스": ["news"],
-    "검색": ["search"],
-    "쇼핑": ["shopping", "shop"],
-    "지도": ["map", "maps"],
-    "메일": ["mail", "email", "gmail"],
-    "캘린더": ["calendar"],
-    "달력": ["calendar"],
-    "날씨": ["weather"],
-    "시간": ["time", "clock"],
-    "번역": ["translate", "translation"],
-    "이미지": ["image", "img"],
-    "사진": ["image", "photo"],
-    "동영상": ["video"],
-    "비디오": ["video"],
-    "음성": ["audio", "voice", "speech"],
-    "파일": ["file", "files"],
-    "폴더": ["folder", "dir", "directory"],
-    "데이터": ["data"],
-    "데이터베이스": ["db", "database"],
-    "디비": ["db", "database"],
-    "주문": ["order"],
-    "결제": ["payment", "pay"],
-    "고객": ["customer", "client"],
-    "회원": ["user", "member"],
-    "재고": ["inventory", "stock"],
-    "분석": ["analysis", "analytics", "analyze"],
-    "통계": ["stats", "statistics"],
-    "보고서": ["report"],
-    "리포트": ["report"],
-    "차트": ["chart"],
-    "그래프": ["graph"],
-    "트렌드": ["trend", "trends"],
-    "알림": ["notify", "notification", "alert"],
-    "메시지": ["message", "msg"],
-    "채팅": ["chat"],
-    "대화": ["chat", "conversation"],
-}
+logger = logging.getLogger("harness.tools.search")
 
 
-def register_search_alias(ko: str, en_terms: list[str]) -> None:
-    """search_tools 한국어→영문 alias 외부 등록 (확장 지점).
+# ──────────────────────────────────────────────────────────────────────
+# Term Expander — search_tools 매칭 전 query 확장 메커니즘 (v0.26.20+)
+#
+# 엔진은 메커니즘만 가진다. 한국어/특정 도메인 alias 같은 데이터는 외부 plug
+# (호스트 / 별도 패키지) 가 register/entry_points 로 주입한다.
+#
+# 엔진 본체에 도메인 단어 박지 않는 이유: 확장성·연동성·하드코딩X 원칙.
+# locale-ko / locale-ja 같은 언어별 alias 는 그 언어 사용자가 plug 로 합류.
+# ──────────────────────────────────────────────────────────────────────
 
-    예: 도메인 특화 단어 추가 — register_search_alias("물류", ["logistics", "shipping"]).
-    이미 등록된 ko 키는 덮어씀. 외부 패키지 / 호스트 코드에서 사용.
+
+@runtime_checkable
+class TermExpander(Protocol):
+    """query term 확장 Protocol.
+
+    구현체는 raw terms (사용자 query 의 토큰 리스트) 를 받아 확장된 terms 리스트
+    반환. 한 term 을 다중 term 으로 펼치거나 (한국어→영문 alias), 변형 추가
+    (어간 추출, transliteration 등) 가능. 빈 리스트 반환 = 확장 없음.
+
+    구현은 stateless 권장 (Pipeline 마다 호출됨). 무거운 모델 로딩이 필요한
+    경우 lazy init.
     """
-    _BUILTIN_KO_EN_ALIASES[ko] = list(en_terms)
+
+    def expand(self, terms: list[str]) -> list[str]:
+        """terms 를 확장. 입력 term 들도 결과에 포함시킬지는 구현 책임.
+
+        통상 패턴:
+            return list(terms) + [추가 alias / 변형 ...]
+        """
+        ...
 
 
-def _expand_query_terms(terms: list[str]) -> list[str]:
-    """한국어 term 을 영문 alias 로 확장. 영문 term 은 그대로.
+# 외부에서 register 한 expander 들. dict 자체는 비어있고, plug 가 채운다.
+_REGISTERED_EXPANDERS: list[TermExpander] = []
+# raw term → 추가 term 들. register_search_alias 의 simple alias 등록용.
+_SIMPLE_ALIASES: dict[str, list[str]] = {}
+_ENTRY_POINTS_LOADED = False
 
-    "네이버" → ["네이버", "naver"]
-    "naver" → ["naver"]
+
+def register_term_expander(expander: TermExpander) -> None:
+    """search_tools 의 query 확장 expander 등록.
+
+    예 (호스트 측 startup 에서):
+        from xgen_harness.tools import register_term_expander
+        class KoreanAliasExpander:
+            def expand(self, terms): ...  # 한국어 단어 → 영문 alias
+        register_term_expander(KoreanAliasExpander())
     """
-    expanded: list[str] = []
+    if not isinstance(expander, TermExpander):
+        raise TypeError(f"expander must satisfy TermExpander Protocol: {type(expander).__name__}")
+    _REGISTERED_EXPANDERS.append(expander)
+
+
+def register_search_alias(term: str, aliases: list[str]) -> None:
+    """단순 1:N alias 등록 (TermExpander 없이 빠른 사용).
+
+    내부적으로 _SIMPLE_ALIASES dict 를 채우고, 단일 SimpleAliasExpander 가
+    이를 사용. 호스트가 도메인 특화 매핑 한 줄로 추가하는 용도.
+
+    예 (이식 측 — 한국어 alias):
+        register_search_alias("네이버", ["naver"])
+        register_search_alias("쇼핑", ["shopping", "shop"])
+    """
+    _SIMPLE_ALIASES[term] = list(aliases)
+
+
+def list_term_expanders() -> list[TermExpander]:
+    """등록된 expander 목록 (디버그/감사용)."""
+    return list(_REGISTERED_EXPANDERS)
+
+
+def list_search_aliases() -> dict[str, list[str]]:
+    """등록된 simple alias 목록 (디버그/감사용)."""
+    return dict(_SIMPLE_ALIASES)
+
+
+def _load_entry_points_once() -> None:
+    """``xgen_harness.term_expanders`` entry_points 자동 발견.
+
+    1 회만 실행. 외부 패키지가 setup.py / pyproject.toml 에:
+        [project.entry-points."xgen_harness.term_expanders"]
+        ko_locale = "xgen_harness_locale_ko:KoreanAliasExpander"
+
+    로 선언하면 첫 search_tools 호출 시 자동 등록.
+    """
+    global _ENTRY_POINTS_LOADED
+    if _ENTRY_POINTS_LOADED:
+        return
+    _ENTRY_POINTS_LOADED = True
+    try:
+        from importlib.metadata import entry_points
+        try:
+            eps = entry_points(group="xgen_harness.term_expanders")
+        except TypeError:
+            # Python < 3.10 fallback
+            eps = entry_points().get("xgen_harness.term_expanders", [])
+        for ep in eps:
+            try:
+                obj = ep.load()
+                expander = obj() if isinstance(obj, type) else obj
+                register_term_expander(expander)
+                logger.info("[search_tools] loaded term_expander from entry_points: %s", ep.name)
+            except Exception as e:
+                logger.warning("[search_tools] entry_point %s load failed: %s", ep.name, e)
+    except Exception as e:
+        logger.debug("[search_tools] entry_points scan skipped: %s", e)
+
+
+def _simple_alias_expand(terms: list[str]) -> list[str]:
+    """_SIMPLE_ALIASES 기반 1:N 확장 — register_search_alias 의 데이터 사용."""
+    out: list[str] = []
     seen: set[str] = set()
     for t in terms:
         if t in seen:
             continue
-        expanded.append(t)
+        out.append(t)
         seen.add(t)
-        for alias in _BUILTIN_KO_EN_ALIASES.get(t, []):
+        for alias in _SIMPLE_ALIASES.get(t, []):
             if alias not in seen:
-                expanded.append(alias)
+                out.append(alias)
                 seen.add(alias)
-    return expanded
+    return out
+
+
+def _expand_query_terms(terms: list[str]) -> list[str]:
+    """등록된 모든 expander + simple alias 를 거쳐 최종 확장된 term 리스트.
+
+    엔진은 호출만 하고 결과 합집합. 데이터/도메인 지식 0 — 전부 외부 register
+    또는 entry_points 에서 옴.
+    """
+    _load_entry_points_once()
+    seen: set[str] = set()
+    result: list[str] = []
+    # 1) raw terms 보존
+    for t in terms:
+        if t not in seen:
+            result.append(t)
+            seen.add(t)
+    # 2) simple alias 확장
+    for t in _simple_alias_expand(terms):
+        if t not in seen:
+            result.append(t)
+            seen.add(t)
+    # 3) 외부 등록 expander 들
+    for exp in _REGISTERED_EXPANDERS:
+        try:
+            extra = exp.expand(list(terms))
+        except Exception as e:
+            logger.warning("[search_tools] expander %s failed: %s", type(exp).__name__, e)
+            continue
+        for t in extra or []:
+            if t not in seen:
+                result.append(t)
+                seen.add(t)
+    return result
 
 
 class DiscoverToolsTool(Tool):
