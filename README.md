@@ -836,8 +836,180 @@ Phase 4  라이브 검증 패치    ─ production 결함 일괄 fix            
 | `v0.26.6` | DAG orchestrator 가 `PipelineState(tool_definitions=...)` 로 init — v0.11.22 도메인 그룹화 후 `dag.py:255` 동기화 누락 → 모든 DAG 노드 100% TypeError | init kwarg 제거, instance 생성 후 `state.tool_definitions = ...` setter 로 박음 |
 | `v0.26.7` | `max_iter=1` + 도구 활성 시 LLM 이 첫 iter 에서 도구만 호출, 답변 텍스트 만들 두 번째 iter 가 없어 `output_length=0` 빈 응답 (default `max_iter=10` 환경에선 안 드러남) | Phase B 후 빈 응답 + 도구 실행 ≥ 1 이면 `tool_definitions=[]` 로 1회 보강 `main_call` (직후 `tool_definitions` 원복 → 다음 iteration / 외부 코드 영향 0) |
 | **`v0.26.10`** | DAG orchestrator 가 sub-Pipeline 의 `DoneEvent` 도 그대로 외부 emitter 로 forward → `EventEmitter.stream()` 의 자동 break (events/emitter.py:102) 가 첫 노드 끝에서 발화 → 두 번째 노드 이벤트가 외부 클라이언트에 도달 못 함 + "DAG 실행 타임아웃" 으로 끊김 | `_forward_events()` 가 sub Pipeline 의 `DoneEvent` 만 skip. DAG 전체 `DoneEvent` 는 `run()` 마지막에 별도 emit (line 229) 하므로 정상 종료 신호 유지. 다른 이벤트 (Stage / Metrics / ToolCall / Error / …) 는 그대로 forward |
+| **`v0.26.11`** | 외부 확장 6 결함 일괄 — `pyproject.toml` 의 6 그룹 lock-in 빈본 / `fan_out_strategies`·`evaluation_criteria` 의 silent contract / `model_pricing` 이 closed table / 보조 LLM 호출이 `state.token_usage` 에 누적 안 됨 / `aux_max_tokens=500` 매직넘버 4 곳 박제 | `entry_points` 6 그룹 (`orchestrators`·`sandbox_verifiers`·`tools(gallery)`·`phases`·`node_plugins`·`model_pricing`) 빈본 신설 + `register_model_pricing()` API + `aux_call()` 통합 헬퍼 (state.llm_call_count + cost 일관 누적) + `HarnessConfig.aux_max_tokens` 필드 |
+| **`v0.26.12`** | `HarnessConfig.from_workflow` 에 `aux_max_tokens` 추출 누락 → 사용자가 `hc.aux_max_tokens=300` 박아도 default 500 그대로 적용 | `from_workflow` 에 `aux_max_tokens` 추출 1줄 추가 |
+| **`v0.26.13`** | OpenAI provider 가 MCP 도구 schema 의 `type=["string","null"]` (배열 타입) / `anyOf+null` / `$ref` 패턴을 그대로 forward → `invalid_function_parameters` HTTP 400 (Tavily 류 MCP 도구 첫 호출에서 SSE 끊김). vLLM/Anthropic 은 관대해 회귀로 안 잡힘 | `providers/openai.py:_normalize_for_openai` 헬퍼 — type 배열에서 null 제거 + anyOf/oneOf null branch 평탄화 + $ref drop |
+| **`v0.26.14`** | `_call_with_retry` (RateLimit / Overload / Provider 5xx) 가 SSE 로 retry 발생 안 알리고 `logger.warning` 만 → 클라이언트는 응답 지연만 보고 retry 사실 모름. 별개로 `s06_context` description 이 "토큰 윈도우 관리" 로 잘못 안내 | 세 분기에 `RetryEvent` SSE emit 추가 (attempt N/M + delay + 에러 첫 120 자 reason) + `s06_context` description 을 "RAG · DB · 폴더 · 파일 · GraphRAG → 답변 직전 컨텍스트 주입, 초과 시 Cascade L3~L5 압축" 으로 정정 |
+| **`v0.26.15`** | OpenAI 가 enum 항목이 `[{value, label}]` dict 면 거부 (xgen-nodes options 가 dict). 별개로 `s06_context` reranker toggle 이 `bool(str(False))=True` 함정에 빠져 default `False` 인데 항상 rerank 발동 | `_normalize_for_openai` 가 enum dict → `.value` 평탄화. reranker toggle 은 `value is True` 또는 문자열 `'true'` 만 활성 (저장된 `'False'` 문자열 호환 유지) |
+| **`v0.26.16` / `v0.26.17`** | v0.26.16 에서 Stage 코드에 한국어 description / 톤 통일을 박았는데 메모리 `feedback_stage_machine_only` (UI 자연어는 docstring 또는 프론트 i18n) 위반 | v0.26.17 에서 자가 원복 — UI 텍스트는 v0.26.15 직전 상태로. functional fix (Retry SSE / OpenAI enum / s06 reranker) 는 유지 |
+| **`v0.26.18`** | v0.26.7 의 safeguard 가 `last_assistant_text` 비어있을 때만 추가 호출 → 짧은 intro (`"분석해드리겠습니다."` 37 자) + tool_use 패턴에선 truthy 라 skip → 도구 결과 들어왔지만 합성 답변 못 만들어 사용자 화면에 37 자만 도착 | safeguard 임계 일반화 — `len(last_assistant_text) < 200` + `tools_executed_count > 0` + `final_output 미설정` (tool_use 후 LLM follow-up 부재 케이스 전반 포섭) |
 
 이전 변경: [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## 작동 기능 일람 (production 검증)
+
+`xgen.x2bee.com/harness` 라이브 + 로컬 docker `saleskit` 인증으로 단계별 실 호출 검증된 기능 (2026-04-28 기준 v0.26.18 + 이식측 commit `7726c8b`).
+
+### 1. 13 Stage 파이프라인 — 모두 실행
+
+| Stage | 역할 | strategies | 검증 |
+|---|---|---|---|
+| `s00_harness` | 통제탑 — 본문 LLM 호출 + iterative replan | `streaming` / `batch` (`TransportStrategy`) | ✅ |
+| `s01_input` | 사용자 입력 분류·정리 | `default` / `with_classification` | ✅ |
+| `s02_history` | 메모리 검색 (embedding) | `default` / `embedding_search` | ✅ |
+| `s03_prompt` | 섹션 우선순위 조립 | `section_priority` | ✅ |
+| `s04_tool` | 도구 게이팅 (3-level / eager / none) | `progressive_3level` / `eager_load` / `none` | ✅ `tools_count=42, tools_bound=43, sources_used=[mcp-sessions, xgen-nodes]` |
+| `s05_strategy` | 응답 전략 (CoT / ReAct / capability planner / none) | 4 종 | ✅ |
+| `s05_policy` | Guard 체인 검사 (4 훅 포인트) | hook-based | ✅ Skipped/Active 양쪽 |
+| `s06_context` | RAG · DB · 폴더 · 파일 · GraphRAG 검색 + Cascade 압축 | `token_budget` / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` (6 종) | ✅ |
+| `s07_act` | 도구 실행 (병렬 read / 직렬 write) | `default` / `parallel_read` | ✅ `tools_executed=1, success_count=1` |
+| `s08_judge` | LLMJudge / rule_based scorer | `llm_judge` / `rule_based` / `none` | ✅ `score=0.25 verdict=retry` |
+| `s09_decide` | loop 결정 (threshold / always_pass) | 2 종 | ✅ |
+| `s10_save` | `harness_execution_log` 저장 | `default` / `noop` | ✅ |
+| `s11_finalize` | 출력 포맷 + metrics emit | `default` / `format_json` | ✅ `10139ms · 13123tok · $0.0423` |
+
+### 2. ToolSource 단일 채널 (v0.25.0+) — 4 소스 합류
+
+| source_id | 카테고리 | production 검증 |
+|---|---|---|
+| `mcp-sessions` | MCP stdio 서버 — 세션별 도구 자동 디스커버리 | ✅ `current_time` 호출 → "2026-04-28 13:10:21 UTC" 반환 |
+| `custom-api` | 사용자 저장 HTTP API 도구 | ✅ user-scoped (`x-user-*` forward) |
+| `xgen-nodes` | 캔버스 노드 → 도구 변환 (mcp/tool/api/agent 카테고리) | ✅ 39 도구 / 노드 wrapping. langchain Tool factory 자동 invoke (BUG-10 fix) |
+| `SynthesizedToolSource` | LLM 합성 도구 (`/auto-synthesize` → wheel 빌드 → publish) | ✅ `compile_nom_graph` + sandbox gate |
+
+외부 확장: `register_tool_source(name, impl)` 또는 `entry_points("xgen_harness.tool_sources")`.
+
+### 3. Provider — 빌트인 5종 + entry_points 외부 추가
+
+| provider | streaming | batch | tool_use | thinking |
+|---|:-:|:-:|:-:|:-:|
+| `anthropic` | ✅ | ✅ | ✅ | ✅ (auto `max_tokens=budget+1024`) |
+| `openai` | ✅ | ✅ | ✅ (Tavily 류 schema 정규화 — v0.26.13/15) | — |
+| `google` (Gemini) | ✅ | ✅ | ✅ | — |
+| `bedrock` | ✅ | ✅ | ✅ | — |
+| `vllm` (OpenAI 호환) | ✅ | ✅ | 모델별 | — |
+
+신규 모델 가격: `register_model_pricing()` 또는 `entry_points("xgen_harness.model_pricing")` (v0.26.11+).
+
+### 4. Orchestrator — 5 패턴
+
+| name | 동작 | 사용 예 |
+|---|---|---|
+| `linear` | 13 Stage 1 회 직선 | 짧은 질의 응답 |
+| `iterative` | Phase B 루프 (`max_iterations`) | tool_use → judge → retry |
+| `react` | Reasoning + Acting 인터리브 | 복합 추론 |
+| `plan_execute` | Plan 작성 후 Stage 별 실행 | DAG 조립 단계 |
+| `dag` | 다중 하네스 노드 토폴로지 (병렬 / 순차) | 멀티 에이전트 — `/dag/execute/stream` 검증 (`110 SSE lines, 15 stage enter/exit`) |
+
+확장: `register_orchestrator()` 또는 `entry_points("xgen_harness.orchestrators")`.
+
+### 5. Policy Gate — 6 Guard × 4 훅 포인트 (v0.17.0+)
+
+```
+Guards (6) × Hook points (4) = 24 조합
+─────────────────────────────────────────
+content                 │ post_response · pre_main
+cost_budget             │ loop_boundary
+hitl                    │ pre_tool
+iteration               │ loop_boundary
+token_budget            │ loop_boundary
+tool_precondition       │ pre_tool
+```
+
+- `register_guard(name, factory)` 또는 `entry_points("xgen_harness.guards")`.
+- 정책 비어있으면 자동 skip — 코드 분기 X.
+
+### 6. RAG / Context — 다중 리소스 검색
+
+| 리소스 | 옵션 소스 | 검증 |
+|---|---|---|
+| RAG collections (Qdrant) | `rag-collections` (16 production) | ✅ `chunks=N, top_k=4, rerank=optional` |
+| Files (storage flatten) | `files` | ✅ `metadata_filter.file_name` 자동 라우팅 |
+| Folders (collection group) | `folders` | ✅ |
+| DB connections | `db-connections` | ✅ |
+| Ontology collections | `ontology-collections` | ✅ |
+| GraphRAG | (외부 등록) | ✅ |
+
+자동 압축 Cascade L3 → L4 → L5 (microcompact / context_collapse_overlay / autocompact_llm) — `s06_context` 단에서 토큰 예산 초과 자동 감지.
+
+### 7. Wheel Compile · Sandbox · Publish — 폐쇄 루프 (v0.10.0+)
+
+```
+HarnessConfig
+    ↓ compile_workflow()
+xgen-gallery-<name>-<ver>.whl    (entry_points 자동 주입)
+    ↓ /install/verify  (격리 venv + MCPStdioVerifier + payload_hash)
+검증 통과 → SHA-256 재현 해시
+    ↓ /install/register or /compile/publish
+mcp-station 세션 생성  (server_command='-c' inline pip install + serve)
+    ↓ verifier 5 분 cron
+harness_published_wheels.status = 'running' / 'error'
+```
+
+- **샌드박스 정책 3 단** (`HARNESS_SANDBOX_POLICY` env 또는 publish body): `strict` (실패 시 등록 중단) / `advisory` (리포트만) / `off` (스킵).
+- **Verify-only 분리** (`/install/verify`) — 결과 카드 (payload_hash + tools 미리보기) 보고 수동 register 결정.
+- **Auto-synthesize** (`/auto-synthesize`) — LLM 합성 도구 → NOMGraph → wheel → sandbox → publish 한 번에.
+
+### 8. NOM IR 허브 (v0.21.0+)
+
+`NOMGraph` 단일 그래프에서 3 변환:
+- `to_mcp_schema()` — MCP stdio Tool 정의
+- `to_sandbox_payload()` — 격리 검증 입력
+- `to_wheel_snapshot()` — entry_points 메타
+
+### 9. HITL — Agent-controlled Compact + Approval Modal (v0.24.0+)
+
+- `destructiveHint=true` 도구 호출 직전 → `ApprovalRequired` SSE 이벤트
+- 사용자 승인 모달 → `POST /approvals/{id}` decision (`accept` / `reject` / `edit_input`)
+- 거부 시 LLM 다른 도구 시도 / 수정 시 인자 교체 후 재호출
+
+### 10. SSE 스트리밍 — 14 종 이벤트 (v0.8.21+)
+
+| 이벤트 종류 | 발생 시점 |
+|---|---|
+| `stage.enter` / `stage.exit` | 13 stage 입출 |
+| `text.delta` | LLM 토큰 단위 스트림 |
+| `tool.call` / `tool.result` | s07_act 단계 |
+| `pipeline.complete` / `pipeline.error` / `pipeline.metrics` | 종료 |
+| `evaluation` | s08_judge verdict + score |
+| `verbose.service_lookup` / `verbose.capability_bind` | 자동 wiring 추적 |
+| `verbose.stage_substep` | 14+ 종 substep (tool_call_start/complete, rag_fetch_*, llm_request_*, sources_discover_*, capability_*, service_lookup, aux_llm_*, ...) |
+| `verbose.retry` | RateLimit / Overload / 5xx 재시도 (v0.26.14+) |
+| `planning` | `s05_strategy` Plan 카드 (chosen / skipped / params / reasoning) |
+| `log` | 호스트 logger tap → SSE 브리지 (이식측 책임) |
+
+### 11. 16 확장 지점 — `entry_points` + Protocol
+
+| group | 무엇이 추가되나 |
+|---|---|
+| `xgen_harness.stages` | Stage swap (외부 작업자 `STAGE4-LOTTE` 같은) |
+| `xgen_harness.strategies` | Stage 별 전략 변형 |
+| `xgen_harness.strategy_variants` | 디폴트 복사 v2 (v0.10.4+) |
+| `xgen_harness.orchestrators` | 새 실행 패턴 (v0.26.11+) |
+| `xgen_harness.tool_sources` | 새 도구 공급 채널 |
+| `xgen_harness.option_sources` | 동적 드롭다운 옵션 |
+| `xgen_harness.publish_targets` | wheel 발행 대상 (mcp-station / gallery / 외부) |
+| `xgen_harness.galleries` | 설치된 갤러리 자동 발견 |
+| `xgen_harness.guards` | Policy Gate 외부 Guard |
+| `xgen_harness.fan_out_strategies` | multi-agent 분기 (v0.26.11+) |
+| `xgen_harness.evaluation_criteria` | s08_judge 평가 기준 (v0.26.11+) |
+| `xgen_harness.sandbox_verifiers` | wheel 검증 변형 (v0.26.11+) |
+| `xgen_harness.tools` | 단일 도구 (gallery 패키지) (v0.26.11+) |
+| `xgen_harness.phases` | Phase A/B/C 사이클 변형 (v0.26.11+) |
+| `xgen_harness.node_plugins` | 노드 플러그인 (v0.26.11+) |
+| `xgen_harness.model_pricing` | 사내 vLLM / 자체 호스팅 모델 가격 (v0.26.11+) |
+
+### 12. 3 모드 — 자유도 vs 안정성
+
+| `harness_mode` | 의미 | LLM 자유도 |
+|---|---|---|
+| `off` | 코드가 직접 도구·orchestrator·strategy 다 박음. LLM 은 본문만 | 0 |
+| `selected` | 일부만 핀 (`active_strategies={...}`), 나머지는 LLM | 부분 |
+| `autonomous` | 거의 다 LLM 결정 — Stage 별 capability 점진 노출 | 최대 |
+
+`HarnessConfig.is_autonomous() / is_selected() / is_off()` 헬퍼로 비교 (v0.25.3+).
 
 ---
 
