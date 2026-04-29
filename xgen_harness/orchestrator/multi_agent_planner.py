@@ -1,4 +1,4 @@
-"""MultiAgentPlannerStage — 's05_strategy' 슬롯의 'multi_agent' artifact.
+"""MultiAgentPlannerStage — 's00_harness' 슬롯의 'multi_agent' strategy (v1.0).
 
 흐름:
 1. ComplexityDetector 가 escalate 판정.
@@ -7,6 +7,9 @@
    기존 DAGOrchestrator 로 병렬 실행.
 4. 각 sub-agent 출력을 한 system_prompt 부록으로 묶어서 state 에 주입.
    → 본 파이프라인의 s00_harness.main_call 이 자연스럽게 종합 답변을 만든다.
+
+v1.0 — 슬롯 이전: 구 's05_strategy' (삭제됨) → 's00_harness' 의 multi_agent strategy.
+       Planner 가 multi-agent 가 필요하다고 판단하면 s00 의 strategy 카드 픽으로 활성.
 
 캔버스 데이터 의존 0. harness_config + state 만으로 동작.
 """
@@ -32,7 +35,7 @@ DEFAULT_SUB_PROMPT_TEMPLATE = (
 )
 
 # 하위 슬롯 stage_id 상수 — 문자열 리터럴 반복 제거.
-PLAN_SLOT = "s05_strategy"
+PLAN_SLOT = "s00_harness"  # v1.0 — 구 "s05_strategy" 슬롯 삭제됨, multi_agent strategy 가 s00 의 한 변형
 TOOL_INDEX_SLOT = "s04_tool"
 CONTEXT_SLOT = "s06_context"
 
@@ -40,7 +43,7 @@ logger = logging.getLogger("harness.orchestrator.planner")
 
 
 class MultiAgentPlannerStage(Stage):
-    """s05_strategy 슬롯의 multi_agent artifact — 자동 분기 + 종합."""
+    """s00_harness 슬롯의 multi_agent strategy (v1.0) — 자동 분기 + 종합."""
 
     @property
     def stage_id(self) -> str:
@@ -48,7 +51,7 @@ class MultiAgentPlannerStage(Stage):
 
     @property
     def order(self) -> int:
-        return 5
+        return 0
 
     def should_bypass(self, state: PipelineState) -> bool:
         return state.loop_iteration > 1
@@ -281,7 +284,7 @@ def _clone_config_for_sub(
 ) -> HarnessConfig:
     """base_config 의 모든 필드를 복제 + sub-agent 용으로 일부만 override.
 
-    재진입 방지: artifacts[s05_strategy] = 'default' 강제.
+    재진입 방지: artifacts[s00_harness] = 'default' 강제 (multi_agent 카드 무한 재귀 차단).
     """
     base_dict = dataclasses.asdict(base_config)
     # disabled_stages 는 set 인데 asdict 가 list 로 변환 → 다시 set 화 필요

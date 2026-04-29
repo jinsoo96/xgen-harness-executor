@@ -62,6 +62,9 @@ class ToolCallEvent(HarnessEvent):
     tool_use_id: str = ""
     tool_name: str = ""
     tool_input: dict = field(default_factory=dict)
+    # v1.0 — 도구 출처 정보 (UI 가시성). state.metadata['tool_source_of'] 에 저장된 값.
+    # 예: "mcp" | "builtin" | "xgen_node" | "rag" | "synthesized" | <외부 source_id>
+    tool_source: str = ""
 
 
 @dataclass
@@ -71,6 +74,8 @@ class ToolResultEvent(HarnessEvent):
     tool_name: str = ""
     result: str = ""
     is_error: bool = False
+    # v1.0 — ToolCallEvent 와 같은 source 식별자 (UI 가 어떤 채널에서 온 결과인지 표시)
+    tool_source: str = ""
 
 
 @dataclass

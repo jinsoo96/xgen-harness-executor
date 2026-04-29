@@ -62,7 +62,7 @@ class StageOutput:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  11개 스테이지 I/O 계약 레지스트리 (v0.14.0 — s07_llm 삭제 후)
+#  10개 스테이지 I/O 계약 레지스트리 (v1.0)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
@@ -108,14 +108,14 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    "s05_strategy": {
+    "s05_policy": {
         "input": StageInput(
-            requires=["user_input"],
-            optional=["tool_index"],
+            requires=[],
+            optional=["pending_tool_calls", "messages", "last_assistant_text"],
         ),
         "output": StageOutput(
-            modifies=["system_prompt"],
-            events=["StageEnterEvent", "StageExitEvent"],
+            produces=["loop_decision"],
+            events=["StageEnterEvent", "StageExitEvent", "PolicyBlockEvent"],
         ),
     },
     "s06_context": {
@@ -128,7 +128,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent"],
         ),
     },
-    # v0.14.0: s07_llm 삭제. 본문 LLM 호출은 s00_harness.main_call 이 담당.
+    # 본문 LLM 호출은 s00_harness.main_call 이 담당. 도구 호출만 s07.
     "s07_act": {
         "input": StageInput(
             requires=["pending_tool_calls"],
@@ -140,36 +140,19 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "ToolCallEvent", "ToolResultEvent"],
         ),
     },
-    "s08_judge": {
+    # v1.0 — s08_judge → s08_decide 의 judge_then_loop strategy 로 격하 (stage 통합).
+    "s08_decide": {
         "input": StageInput(
-            requires=["last_assistant_text"],
-            optional=["provider", "user_input"],
+            requires=[],
+            optional=["pending_tool_calls", "last_assistant_text", "provider", "user_input"],
         ),
         "output": StageOutput(
-            produces=["validation_score", "validation_feedback"],
+            produces=["loop_decision", "validation_score", "validation_feedback"],
             events=["StageEnterEvent", "StageExitEvent", "EvaluationEvent"],
         ),
     },
-    "s09_decide": {
-        "input": StageInput(
-            requires=[],
-            optional=["pending_tool_calls", "validation_score", "last_assistant_text"],
-        ),
-        "output": StageOutput(
-            produces=["loop_decision"],
-            events=["StageEnterEvent", "StageExitEvent"],
-        ),
-    },
-    "s10_save": {
-        "input": StageInput(
-            requires=[],
-            optional=["final_output", "token_usage"],
-        ),
-        "output": StageOutput(
-            events=["StageEnterEvent", "StageExitEvent"],
-        ),
-    },
-    "s11_finalize": {
+    # v1.0 — s10_save → s09_finalize 의 persist strategy 로 격하 (stage 통합).
+    "s09_finalize": {
         "input": StageInput(
             requires=[],
             optional=["final_output", "token_usage", "cost_usd"],

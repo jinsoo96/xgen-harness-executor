@@ -61,7 +61,7 @@ class NOMNode:
     Attributes
     ----------
     id : str
-        전역 식별자. 예: "xgen.stages.s08_judge", "xgen.tools.rag_search",
+        전역 식별자. 예: "xgen.stages.s08_decide", "xgen.tools.rag_search",
         "plugin.bedrock.provider", "lotte.stages.s04_tool_lotte".
     kind : NOMKind
         실체 구분.

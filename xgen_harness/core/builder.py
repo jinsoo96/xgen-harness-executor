@@ -10,7 +10,7 @@ PipelineBuilder — Fluent API로 파이프라인 구성
         .with_mcp_sessions(["session-abc"])
         .with_rag(collection="docs", top_k=5)
         .with_validate(threshold=0.8)
-        .disable("s05_strategy")
+        .disable("s05_policy")
         .with_artifact("s00_harness", "streaming")
         .build())
 """
@@ -39,6 +39,8 @@ class PipelineBuilder:
         self._system_prompt = ""
         self._disabled: set[str] = set()
         self._artifacts: dict[str, str] = {}
+        self._active_strategies: dict[str, str] = {}  # v1.0 — Strategy 카드 픽
+        self._stage_params: dict[str, dict] = {}      # v1.0 — stage_params 누적
         self._tools: list[Tool] = []
         self._tool_definitions: list[dict] = []
         self._mcp_sessions: list[str] = []
@@ -127,13 +129,19 @@ class PipelineBuilder:
     # --- Validation ---
 
     def with_validate(self, threshold: float = 0.7) -> "PipelineBuilder":
-        """검증 스테이지 활성화 + threshold 설정"""
-        self.enable("s08_judge")
+        """검증 활성화 — v1.0 에선 s08_decide 의 judge_then_loop strategy 픽 + threshold 설정.
+
+        구 s08_judge stage 가 격하됨 → s08_decide 에 strategy 로 흡수.
+        """
+        self._active_strategies["s08_decide"] = "judge_then_loop"
+        self._stage_params.setdefault("s08_decide", {})["judge_threshold"] = threshold
         self._validation_threshold = threshold
         return self
 
     def without_validate(self) -> "PipelineBuilder":
-        self.disable("s08_judge")
+        # active_strategies 에서 judge_then_loop 떼기 (다른 strategy 로 복귀)
+        if self._active_strategies.get("s08_decide") == "judge_then_loop":
+            self._active_strategies["s08_decide"] = "threshold"
         return self
 
     # --- Loop ---
@@ -181,6 +189,8 @@ class PipelineBuilder:
             validation_threshold=self._validation_threshold,
             thinking_enabled=self._thinking_enabled,
             thinking_budget_tokens=self._thinking_budget,
+            active_strategies=dict(self._active_strategies),
+            stage_params=dict(self._stage_params),
         )
 
         emitter = self._event_emitter or EventEmitter()
@@ -220,7 +230,7 @@ class PipelineBuilder:
             "tools": len(self._tools) + len(self._tool_definitions),
             "mcp_sessions": self._mcp_sessions,
             "rag_collections": [r["collection"] for r in self._rag_collections],
-            "validation": "s08_judge" not in self._disabled,
+            "validation": self._active_strategies.get("s08_decide") == "judge_then_loop",
             "thinking": self._thinking_enabled,
             "max_iterations": self._max_iterations,
         }

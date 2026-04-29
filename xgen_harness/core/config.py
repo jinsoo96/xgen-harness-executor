@@ -1,9 +1,9 @@
 """
 HarnessConfig — 파이프라인 설정
 
-프리셋 없음. v0.14.0 에서 s07_llm 삭제 + 번호 시프트로 11개 스테이지 (s00_harness 제외).
-s00_harness 가 Provider/Strategy/본문호출/Planner 를 모두 통제 (재귀적 자율주행).
-workflow_data.harness_config에서 로드.
+v1.0 통합 — 9 스테이지 (s00_harness 통제탑 별도) + s05_policy 4훅 동시 작동.
+s00_harness 가 Provider / Strategy / 본문호출 / Planner 를 모두 통제 (재귀적 자율주행).
+workflow_data.harness_config 에서 로드.
 """
 
 import logging
@@ -15,29 +15,25 @@ from .stage_config import canonical_stage_id as _canonical, canonical_stage_id_m
 _cfg_logger = logging.getLogger("harness.core.config")
 
 
-# 전체 11 스테이지 (기본 전부 활성, s00_harness 는 별도 통제탑)
-# v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 본문 LLM 호출 소유.
-# v0.17.0: 이 리스트는 "원래부터 있던 기본 Stage" 화이트리스트. 새 Stage
-# (예: s05_policy Policy Gate) 는 여기 박지 않고 registry 에 등록만 —
+# 전체 10 스테이지 (v1.0 통합 — s05_strategy 분해 / s08_judge·s10_save 격하 / s12_publish 삭제)
+# s00_harness 는 본문 LLM 호출 통제탑. s05_policy 는 일반 순번 진입 + 4훅 동시.
+# 이 리스트는 "원래부터 있던 기본 Stage" 화이트리스트. 새 Stage 는 registry 에 등록만 —
 # `get_active_stage_ids()` 가 registry 와 병합해서 런타임 목록 생성.
 ALL_STAGES = [
     "s01_input",
     "s02_history",
     "s03_prompt",
     "s04_tool",
-    "s05_strategy",
+    "s05_policy",
     "s06_context",
     "s07_act",
-    "s08_judge",
-    "s09_decide",
-    "s10_save",
-    "s11_finalize",
+    "s08_decide",
+    "s09_finalize",
 ]
 
 # 비활성화 불가 스테이지 — 엔진 기본값 3개. 외부 기여자는 `mark_stage_required()` 로 추가.
-# v0.22.0 — 하드 set 이었던 것을 live set 으로 유지 + 등록 API 추가. 모든 참조는 이 동일
-# set 을 읽기 때문에 외부 등록이 즉시 반영된다 (snapshot 이 아니다).
-REQUIRED_STAGES: set[str] = {"s01_input", "s09_decide", "s11_finalize"}
+# v1.0 — 번호 시프트 반영: s09_decide → s08_decide, s11_finalize → s09_finalize.
+REQUIRED_STAGES: set[str] = {"s01_input", "s08_decide", "s09_finalize"}
 
 
 def mark_stage_required(stage_id: str) -> None:

@@ -231,11 +231,13 @@ class ExecuteStage(Stage):
             state.add_tool_result(tool_use_id, result_text, is_error=False)
 
             if state.event_emitter:
+                _src = (state.metadata.get("tool_source_of") or {}).get(tool_name, "")
                 await state.event_emitter.emit(ToolResultEvent(
                     tool_use_id=tool_use_id,
                     tool_name=tool_name,
                     result=result_text[:500],
                     is_error=False,
+                    tool_source=_src,
                 ))
 
             await state.emit_verbose(StageSubstepEvent(
@@ -257,11 +259,13 @@ class ExecuteStage(Stage):
             logger.error("[Execute] %s\n%s", error_msg, traceback.format_exc())
 
             if state.event_emitter:
+                _src = (state.metadata.get("tool_source_of") or {}).get(tool_name, "")
                 await state.event_emitter.emit(ToolResultEvent(
                     tool_use_id=tool_use_id,
                     tool_name=tool_name,
                     result=error_msg,
                     is_error=True,
+                    tool_source=_src,
                 ))
 
             return {"tool_name": tool_name, "success": False, "error": str(e)}, 0

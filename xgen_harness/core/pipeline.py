@@ -106,7 +106,7 @@ class Pipeline:
         try:
             # ━━━━ v0.14.0 — LLM provider 1 회 선초기화 ━━━━
             # "한 번 설정하고 그 핸들을 쭉 재사용" — state.provider 를 Pipeline 진입부에서
-            # 미리 띄워 s00_harness (Planner + main_call) / s08_judge 가 전부 **같은
+            # 미리 띄워 s00_harness (Planner + main_call) / s08_decide 가 전부 **같은
             # 인스턴스** 를 재활용. ensure_provider 는 idempotent.
             from .provider_bootstrap import ensure_provider
             try:

@@ -146,15 +146,16 @@ def _register_defaults() -> None:
     register_strategy("s07_act", "router", "mcp", MCPToolRouter)
     register_strategy("s07_act", "router", "builtin", BuiltinToolRouter)
 
-    # s08_judge — evaluation
-    register_strategy("s08_judge", "evaluation", "llm_judge", LLMJudgeEvaluation)
-    register_strategy("s08_judge", "evaluation", "rule_based", RuleBasedEvaluation)
-    register_strategy("s08_judge", "evaluation", "none", NoValidation)
+    # v1.0 — s08_judge stage 격하: evaluation 슬롯이 s08_decide 아래로 통합.
+    # judge_then_loop strategy 가 이 evaluation impl 들을 호출.
+    register_strategy("s08_decide", "evaluation", "llm_judge", LLMJudgeEvaluation)
+    register_strategy("s08_decide", "evaluation", "rule_based", RuleBasedEvaluation)
+    register_strategy("s08_decide", "evaluation", "none", NoValidation)
 
-    # s09_decide — decide (간단한 내장 Strategy)
+    # v1.0 — s09_decide → s08_decide 번호 시프트
     from ..stages.strategies._decide import ThresholdDecide, AlwaysPassDecide
-    register_strategy("s09_decide", "decide", "threshold", ThresholdDecide)
-    register_strategy("s09_decide", "decide", "always_pass", AlwaysPassDecide)
+    register_strategy("s08_decide", "decide", "threshold", ThresholdDecide)
+    register_strategy("s08_decide", "decide", "always_pass", AlwaysPassDecide)
 
     # s03 — cache
     from ..stages.strategies.cache import AnthropicCacheStrategy, NoCacheStrategy

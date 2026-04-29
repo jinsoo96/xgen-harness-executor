@@ -17,21 +17,18 @@ if TYPE_CHECKING:
 
 # --- 표시 이름 매핑 (사용자 편의 용어 강제) ---
 
-# v0.14.0: s07_llm 삭제 + 번호 시프트. s00_harness 가 LLM 통제탑.
+# v1.0 — 11→10 통합. s05_strategy 분해 / s08_judge·s10_save 격하 / s12_publish 삭제.
 STAGE_DISPLAY_NAMES: dict[str, str] = {
     "s00_harness":    "Auto",
     "s01_input":      "Input",
     "s02_history":    "History",
     "s03_prompt":     "Prompt",
     "s04_tool":       "Tool",
-    "s05_policy":     "Policy Gate",
-    "s05_strategy":   "Strategy",
+    "s05_policy":     "Policy",
     "s06_context":    "Context",
     "s07_act":        "Act",
-    "s08_judge":      "Judge",
-    "s09_decide":     "Decide",
-    "s10_save":       "Save",
-    "s11_finalize":   "Finalize",
+    "s08_decide":     "Decide",
+    "s09_finalize":   "Finalize",
 }
 
 STAGE_DISPLAY_NAMES_KO: dict[str, str] = {
@@ -40,14 +37,11 @@ STAGE_DISPLAY_NAMES_KO: dict[str, str] = {
     "s02_history":    "이력",
     "s03_prompt":     "프롬프트",
     "s04_tool":       "도구",
-    "s05_policy":     "정책 게이트",
-    "s05_strategy":   "전략",
+    "s05_policy":     "정책",
     "s06_context":    "컨텍스트",
     "s07_act":        "실행",
-    "s08_judge":      "판정",
-    "s09_decide":     "결정",
-    "s10_save":       "저장",
-    "s11_finalize":   "마무리",
+    "s08_decide":     "결정",
+    "s09_finalize":   "마무리",
 }
 
 
@@ -227,6 +221,12 @@ class Stage(ABC):
             params = state.config.stage_params.get(self.stage_id, {})
             if key in params:
                 return params[key]
+            # v1.0 — Strategy 카드 픽 (active_strategies) 도 "strategy" 키로 lookup 가능.
+            # UI 드롭다운(active_strategies)과 stage_params.strategy 가 서로 못 보던 mismatch 해소.
+            if key == "strategy":
+                active = getattr(state.config, "active_strategies", None) or {}
+                if self.stage_id in active:
+                    return active[self.stage_id]
 
         # 2. 코드 폴백 (config.provider 등 — 호출자가 넘긴 값)
         if default is not None:

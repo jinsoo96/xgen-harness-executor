@@ -37,6 +37,23 @@ from ...tools.rag_tool import RAGSearchTool
 
 logger = logging.getLogger("harness.stage.tool_index")
 
+# ─── Capability Discovery 기본값 (박제 풀기, v1.0 흡수 from 구 s05_strategy) ───
+# 자연어 intent 로 capability 자동 발견 시 사용. stage_params 또는
+# register_capability_discovery_defaults() 로 override 가능.
+CAPABILITY_DISCOVERY_DEFAULTS: dict[str, float | int] = {
+    "top_k": 3,
+    "min_score": 0.4,
+}
+
+
+def register_capability_discovery_defaults(*, top_k: int | None = None,
+                                            min_score: float | None = None) -> None:
+    """capability discovery 기본 임계값 override. 외부 작업자가 자기 도메인에 맞춰 조정."""
+    if top_k is not None:
+        CAPABILITY_DISCOVERY_DEFAULTS["top_k"] = int(top_k)
+    if min_score is not None:
+        CAPABILITY_DISCOVERY_DEFAULTS["min_score"] = float(min_score)
+
 
 class ToolIndexStage(Stage):
     """도구 색인 + progressive disclosure 설정 (v0.25.0)."""
@@ -85,6 +102,7 @@ class ToolIndexStage(Stage):
         rag_top_k: int = self.get_param("rag_top_k", state, 4)
 
         # ─── 0.5 Capability 바인딩 ────────────────────────────────────
+        # (a) config.capabilities 명시 선언 → materialize
         cap_result = self._bind_capabilities(state)
         if cap_result.get("_events"):
             from ...events.types import CapabilityBindEvent
@@ -92,6 +110,12 @@ class ToolIndexStage(Stage):
                 await state.emit_verbose(CapabilityBindEvent(
                     name=ev["name"], source=ev["source"], stage_id=self.stage_id,
                 ))
+
+        # (b) v1.0 — 자연어 intent → capability 자동 발견 (구 s05_strategy 흡수).
+        # active_strategy=="capability_auto" 이거나 stage_params.capability_discovery=True 일 때.
+        if self._is_capability_discovery_enabled(state):
+            disc_result = await self._discover_and_bind_capabilities(state)
+            cap_result["discovery"] = disc_result
 
         # ─── 1. ToolSource 수집 (단일 공급 채널) ──────────────────────
         existing_names = {td.get("name") for td in state.tool_definitions}
@@ -274,6 +298,85 @@ class ToolIndexStage(Stage):
             ],
         }
 
+    # ---------- Capability Auto-Discovery (v1.0 흡수 from 구 s05_strategy) ----------
+
+    def _is_capability_discovery_enabled(self, state: PipelineState) -> bool:
+        """active_strategy=="capability_auto" 또는 stage_params.capability_discovery=True 면 활성."""
+        active = ""
+        if state.config:
+            picked = (state.config.active_strategies or {}).get(self.stage_id)
+            if isinstance(picked, str):
+                active = picked.strip()
+        if active == "capability_auto":
+            return True
+        return bool(self.get_param("capability_discovery", state, False))
+
+    async def _discover_and_bind_capabilities(self, state: PipelineState) -> dict:
+        """자연어 intent(user_input) → capability 후보 매칭 + state 바인딩.
+
+        - 이미 config.capabilities 에 선언된 것은 _bind_capabilities 가 처리 → 중복 회피
+        - 매칭된 것 중 아직 안 된 것만 materialize
+        - 임계값(top_k / min_score) 은 stage_params 또는 모듈 상수로 override
+        """
+        if state.config is None:
+            return {"suggestions": 0, "bound": 0}
+
+        intent = state.user_input or ""
+        if not intent.strip():
+            return {"suggestions": 0, "bound": 0}
+
+        from ...capabilities import (
+            CapabilityMatcher,
+            MatchStrategy,
+            get_default_registry,
+            materialize_capabilities,
+            merge_into_state,
+        )
+
+        already_bound = set(state.metadata.get("capability_bindings", {}).keys())
+        already_declared = set(getattr(state.config, "capabilities", []) or [])
+        skip = already_bound | already_declared
+
+        top_k = int(self.get_param(
+            "capability_top_k", state, CAPABILITY_DISCOVERY_DEFAULTS["top_k"]))
+        min_score = float(self.get_param(
+            "capability_min_score", state, CAPABILITY_DISCOVERY_DEFAULTS["min_score"]))
+
+        registry = get_default_registry()
+        matcher = CapabilityMatcher(registry, min_score=min_score)
+        matches = matcher.match(intent, limit=top_k * 2, strategy=MatchStrategy.AUTO)
+
+        suggested = [m for m in matches if m.spec.name not in skip][:top_k]
+        if not suggested:
+            logger.info("[Tool Index] capability discovery: no new matches (intent=%r)", intent[:80])
+            return {"suggestions": 0, "bound": 0}
+
+        names = [m.spec.name for m in suggested]
+        state.metadata.setdefault("suggested_capabilities", []).extend(
+            [{"name": m.spec.name, "score": m.score, "strategy": m.strategy} for m in suggested]
+        )
+
+        report = materialize_capabilities(
+            names,
+            registry=registry,
+            capability_params=getattr(state.config, "capability_params", None),
+        )
+        added = merge_into_state(report, state)
+
+        logger.info(
+            "[Tool Index] capability discovery: suggestions=%s, bound=%d, unknown=%d, no_factory=%d",
+            names, added, len(report.unknown), len(report.no_factory),
+        )
+
+        from ...events.types import CapabilityBindEvent
+        for m in suggested:
+            if m.spec.name in report.resolved:
+                await state.emit_verbose(CapabilityBindEvent(
+                    name=m.spec.name, source="discovery", stage_id=self.stage_id,
+                ))
+
+        return {"suggestions": len(names), "bound": added, "names": names}
+
     def should_bypass(self, state: PipelineState) -> bool:
         # 도구/RAG/capability/builtin 중 하나라도 있으면 실행.
         # ToolSource 가 등록됐으면 공급자 있음 → 실행.
@@ -285,8 +388,11 @@ class ToolIndexStage(Stage):
         return not (has_tools or has_rag or has_sources or has_caps or has_builtins)
 
     def list_strategies(self) -> list[StrategyInfo]:
+        # v1.0 — capability_auto 카드 추가 (구 s05_strategy 흡수).
+        # capability_auto 픽 → 자연어 intent 로 capability 후보 자동 발견·바인딩.
         return [
             StrategyInfo("progressive_3level", "3단계 점진적 디스커버리", is_default=True),
             StrategyInfo("eager_load", "모든 도구 스키마를 즉시 로드"),
+            StrategyInfo("capability_auto", "자연어 intent → capability 자동 발견·바인딩"),
             StrategyInfo("none", "도구 인덱싱 비활성화"),
         ]

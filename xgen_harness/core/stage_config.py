@@ -18,20 +18,26 @@ _sc_logger = logging.getLogger("harness.core.stage_config")
 # Phase 1 (v0.11.x): 양쪽 다 수용. Phase 2 (v0.12+): 구 id 경고 → 제거.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STAGE_ID_ALIASES: dict[str, str] = {
+    # 기존 0.x 시리즈 별칭
     "s02_memory":        "s02_history",
     "s03_system_prompt": "s03_prompt",
     "s04_tool_index":    "s04_tool",
-    "s05_plan":          "s05_strategy",
-    # v0.14.0 — s07_llm 삭제 + 번호 시프트 하위호환
     "s07_llm":           "s00_harness",   # 본문 LLM 호출은 s00 이 소유
     "s08_execute":       "s07_act",
     "s08_act":           "s07_act",
-    "s09_validate":      "s08_judge",
-    "s09_judge":         "s08_judge",
-    "s10_decide":        "s09_decide",
-    "s11_save":          "s10_save",
-    "s12_finalize":      "s11_finalize",
-    "s12_complete":      "s11_finalize",
+    # v1.0 — 11→10 통합 (s05_strategy 분해 / judge·save 격하 / publish 삭제)
+    "s05_plan":          "s03_prompt",    # CoT 는 prompt 로 흡수
+    "s05_strategy":      "s03_prompt",    # 동일
+    "s09_validate":      "s08_decide",
+    "s09_judge":         "s08_decide",    # judge → decide 의 judge_then_loop strategy
+    "s08_judge":         "s08_decide",
+    "s09_decide":        "s08_decide",    # 번호 −1 시프트
+    "s10_decide":        "s08_decide",
+    "s11_save":          "s09_finalize",  # save → finalize 의 persist strategy
+    "s10_save":          "s09_finalize",
+    "s12_finalize":      "s09_finalize",  # 번호 −2 시프트
+    "s12_complete":      "s09_finalize",
+    "s11_finalize":      "s09_finalize",
 }
 
 
@@ -135,7 +141,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "memory_collection",
                 "label": "메모리 컬렉션",
                 "type": "select",
-                "options_source": "rag_collections",
+                "options_source": "rag-collections",
                 "default": "memory",
                 "description": "embedding_search 전략에서 검색할 컬렉션. 기본 'memory'. xgen-documents 에 미리 컬렉션이 있어야 함.",
             },
@@ -214,11 +220,42 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": [],
                 "description": "citation_mode=auto 휴리스틱에 추가할 상품형 collection 토큰. 기본값(product/stock/inventory/...) 에 OR 결합.",
             },
+            # v1.0 — 구 s05_strategy 분해 흡수: thinking_mode 카드 (Strategy 카드와 자동 매핑)
+            {
+                "id": "thinking_mode",
+                "label": "사고 모드 (CoT/ReAct)",
+                "type": "select",
+                "options": ["auto", "cot", "react", "none"],
+                "default": "auto",
+                "description": "auto: input_complexity 보고 simple→none / moderate→cot / complex→react 자동. cot: 단계별 계획 지시 추가. react: Thought→Action→Observation 루프 지시. none: 사고 모드 비활성. Strategy 카드(cot_planner/react/none) 픽이 있으면 그 값 우선.",
+            },
+            {
+                "id": "planning_instruction_template",
+                "label": "사고 모드 raw 템플릿 override",
+                "type": "textarea",
+                "default": "",
+                "description": "비워두면 thinking_mode 의 등록 템플릿 사용. 채우면 그 raw 텍스트를 planning_instruction 으로 사용. register_thinking_mode() 또는 entry_points(xgen_harness.prompt_templates) 로도 등록 가능.",
+            },
+            {
+                "id": "identity_template",
+                "label": "Identity 템플릿 이름",
+                "type": "text",
+                "default": "default",
+                "description": "register_identity() 또는 entry_points 로 등록한 이름. 기본 'default' 외 외부 패키지가 등록한 이름 가능.",
+            },
+            {
+                "id": "rules_template",
+                "label": "Rules 템플릿 이름",
+                "type": "text",
+                "default": "default",
+                "description": "register_rules() 또는 entry_points 로 등록한 이름.",
+            },
         ],
         "behavior": [
-            "섹션 우선순위: Identity → Rules → Tools → RAG → History",
+            "섹션 우선순위: Identity → Rules → Planning → Tools → RAG → History",
             "컨텍스트 압축 시 낮은 우선순위부터 제거",
             "strict 모드: 제공 문서 밖 정보는 'not available' 로 응답",
+            "Planning 섹션은 첫 루프에만 주입 (재계획 불필요)",
         ],
     },
     "s04_tool": {
@@ -257,7 +294,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "rag_collections",
                 "label": "문서 컬렉션 (RAG)",
                 "type": "multi_select",
-                "options_source": "rag_collections",
+                "options_source": "rag-collections",
                 "default": [],
                 "description": "검색할 문서 컬렉션을 선택하세요",
             },
@@ -292,52 +329,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": "both",
                 "description": "both: system prompt 주입 + rag_search 도구 둘 다 / tool: 도구로만 노출 (system prompt skip → tool_result 누적 → L3 microcompact 발동) / system_prompt: 즉시 주입만 (도구 노출 X). s06 의 rag_ingestion_mode 와 자동 정합.",
             },
-            # v0.29.1 — capabilities stage_params 필드 제거 (audit).
-            # s04 코드는 stage_params.s04_tool.capabilities 안 읽고 state.config.capabilities
-            # (top-level) 만 read. 전역 ConfigPanel 또는 s05_strategy capability 모드로 일원화.
-        ],
-        "behavior": [
-            "단일 공급 채널: 모든 도구는 ToolSource.list_tools() 로 수집",
-            "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",
-            "Level 2: discover_tools로 상세 스키마 조회",
-            "Level 3: 실제 도구 실행 (s07_act)",
-            "RAG: Documents API로 벡터 검색 → 시스템 프롬프트에 주입",
-            "확장: 외부 패키지가 entry_points(xgen_harness.tool_sources) 로 자기 소스 등록",
-        ],
-    },
-    "s05_strategy": {
-        "description_ko": "Chain-of-Thought 계획을 수립합니다. LLM이 단계별로 생각하도록 유도합니다.",
-        "when_to_use": "복잡한 추론 · 멀티에이전트 DAG · 단계별 계획이 이득이 될 때.",
-        "when_to_skip": "단일 패스 직답형 요청 (인사·짧은 QA·단순 조회).",
-        "cost_hint": "low",
-        "description_en": "Chain-of-Thought planning before execution.",
-        "icon": "📋",
-        "fields": [
-            {
-                "id": "planning_mode",
-                "label": "계획 모드",
-                "type": "select",
-                # v0.29.1 — auto / capability 옵션 추가. 코드는 이미 지원 중인데 UI 가
-                # 3 개만 노출해 사용자가 capability mode / auto 모드를 못 골랐다.
-                "options": ["auto", "cot", "react", "capability", "none"],
-                "default": "cot",
-                "description": "auto: s01 input_complexity 보고 simple→none / moderate→cot / complex→react 자동 라우팅 / cot: 단계별 계획 지시 추가 / react: Thought→Action→Observation 루프 지시 / capability: 자연어 intent → capability 자동 발견 (등록된 spec 매칭) / none: 계획 단계 비활성화.",
-            },
-            {
-                "id": "intent_rules",
-                "label": "Intent Routing 규칙 (JSON)",
-                "type": "textarea",
-                "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
-                "default": "",
-                "description": "쿼리 키워드 → metadata_filter 자동 매핑 규칙. 매칭되면 s06 이 auto_metadata_filter 로 사용 (명시 filter 없을 때). JSON 배열 문자열",
-            },
-            # v0.29.1 — capability discovery 옵션 3종 노출 (코드는 이미 read 중).
+            # capabilities top-level: state.config.capabilities (전역 ConfigPanel) 만 사용.
+            # v1.0 — 자연어 intent → capability 자동 발견 (구 s05_strategy 흡수)
             {
                 "id": "capability_discovery",
-                "label": "Capability Discovery 활성",
+                "label": "Capability 자동 발견 활성",
                 "type": "toggle",
                 "default": False,
-                "description": "켜면 cot/react 모드에서도 capability 자동 매칭 같이 실행 (planning 지시 + capability 동시).",
+                "description": "켜면 user_input 매칭으로 capability 후보를 자동 발견 + 바인딩. Strategy 카드 'capability_auto' 픽으로도 동일 효과.",
             },
             {
                 "id": "capability_top_k",
@@ -346,7 +345,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 1,
                 "max": 10,
                 "default": 3,
-                "description": "capability 모드 / discovery 시 user_input 매칭으로 가져올 상위 K. registry 에 등록된 spec 수보다 작아야 의미.",
+                "description": "user_input 매칭으로 가져올 상위 K. CAPABILITY_DISCOVERY_DEFAULTS['top_k'] override.",
             },
             {
                 "id": "capability_min_score",
@@ -356,15 +355,23 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 1,
                 "step": 0.05,
                 "default": 0.4,
-                "description": "이 점수 이상 후보만 채택. 0.4 이하로 낮추면 false positive, 너무 높이면 매칭 0.",
+                "description": "이 점수 이상 후보만 채택. CAPABILITY_DISCOVERY_DEFAULTS['min_score'] override.",
             },
         ],
         "behavior": [
-            "첫 번째 루프에서만 실행",
-            "시스템 프롬프트에 계획 지시 추가",
-            "Intent Routing: 쿼리 의도 → auto_metadata_filter 자동 생성 (s06 에 전달)",
+            "단일 공급 채널: 모든 도구는 ToolSource.list_tools() 로 수집",
+            "Level 1: 도구 메타데이터만 프롬프트에 (~40 tokens/tool)",
+            "Level 2: discover_tools로 상세 스키마 조회",
+            "Level 3: 실제 도구 실행 (s07_act)",
+            "RAG: Documents API로 벡터 검색 → 시스템 프롬프트에 주입",
+            "v1.0 — Capability 자동 발견 흡수 (구 s05_strategy)",
+            "확장: 외부 패키지가 entry_points(xgen_harness.tool_sources) 로 자기 소스 등록",
         ],
     },
+    # v1.0 — s05_strategy stage 삭제. Fields 분배:
+    #   planning_mode → s03_prompt.thinking_mode (CoT/ReAct)
+    #   intent_rules  → s06_context (RAG metadata 자동 라우팅)
+    #   capability_*  → s04_tool (자연어 intent → capability 자동 발견)
     "s06_context": {
         "description_ko": "RAG 컬렉션 · DB · 폴더 · 파일 · GraphRAG 같은 문서/지식 리소스를 검색해 LLM 답변 직전 컨텍스트로 주입합니다. 컨텍스트가 토큰 예산을 넘으면 자동으로 압축(Cascade L3~L5)합니다.",
         "when_to_use": "RAG 컨텍스트 주입 · 긴 대화 압축 · Progressive Disclosure (5-Level cascade) 가 필요할 때. s04_tool 이 RAG/문서 리소스를 고르면 거의 필수.",
@@ -610,6 +617,15 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": 20,
                 "description": "strategy=sliding_window 일 때 messages 말미에서 유지할 최근 메시지 개수. 다른 압축 strategy 에서는 무시.",
             },
+            # v1.0 — Intent Routing 흡수 (구 s05_strategy)
+            {
+                "id": "intent_rules",
+                "label": "Intent Routing 규칙 (JSON)",
+                "type": "textarea",
+                "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
+                "default": "",
+                "description": "쿼리 키워드 → metadata_filter 자동 매핑. 매칭되면 metadata_filter 가 비어있을 때 auto_metadata_filter 로 사용 (명시 filter 우선). JSON 배열 문자열.",
+            },
         ],
         "behavior": [
             "3단계 압축: 오래된 메시지 제거 → 저우선순위 섹션 삭제 → 요약",
@@ -617,10 +633,11 @@ STAGE_CONFIGS: dict[str, dict] = {
             "RAG: DocumentService.search 에 score_threshold / filter / rerank / rerank_top_k 전달",
             "서버 rerank 요청 단위 활성 (xgen-documents DocumentSearchRequest 지원)",
             "metadata_filter: 파일/폴더 기반 범위 제한으로 정답 청크 도달률 개선",
+            "v1.0 — Intent Routing: 쿼리 의도 → auto_metadata_filter 자동 (구 s05_strategy 흡수)",
             "enhance_prompt: <enhance_prompt> 블록으로 system_prompt 말미에 추가",
         ],
     },
-    # v0.14.0 — s07_llm 삭제됨. 본문 LLM 호출 관련 필드는 s00_harness 로 이관.
+    # 본문 LLM 호출 관련 필드는 s00_harness 로 이관.
     "s07_act": {
         "description_ko": "도구를 실행합니다. MCP 도구, 빌트인 도구를 호출하고 결과를 수집합니다.",
         "when_to_use": "s00 본문 호출이 도구를 생성했을 때 (tool_use). Pipeline 이 자동 판단하므로 chosen 에 포함해두면 충분.",
@@ -677,53 +694,20 @@ STAGE_CONFIGS: dict[str, dict] = {
             "discover_tools 빌트인 (Progressive Disclosure L2)",
         ],
     },
-    "s08_judge": {
-        "description_ko": "독립 LLM 호출로 응답 품질을 평가합니다. 기준 미달 시 재시도합니다.",
-        "when_to_use": "품질 검증 필수 (규제·법무·의료·금융·정확도 민감). 기준 미달 시 s09_decide 가 retry 판단.",
-        "when_to_skip": "창작·브레인스토밍·잡담 — 정답이 없어 평가 기준이 모호한 경우.",
-        "cost_hint": "medium",
-        "description_en": "Evaluates response quality with independent LLM call.",
-        "icon": "✅",
-        "fields": [
-            {
-                "id": "threshold",
-                "label": "통과 기준 점수",
-                "type": "slider",
-                "min": 0,
-                "max": 1,
-                "step": 0.05,
-                "default": 0.7,
-            },
-            {
-                "id": "criteria",
-                "label": "평가 기준",
-                "type": "multi_select",
-                "options": ["relevance", "completeness", "accuracy", "clarity"],
-                "default": ["relevance", "completeness", "accuracy", "clarity"],
-            },
-        ],
-        "behavior": [
-            "관련성(0.3) + 완전성(0.3) + 정확성(0.2) + 명확성(0.2)",
-            "독립 LLM 호출 (temperature=0)",
-            "점수 미달 → s09_decide가 retry 결정",
-        ],
-    },
     # s05_policy: dict 박제 대신 PolicyGateStage.describe_config() self-describing.
     # get_stage_config() 가 Stage 의 describe_config() 를 먼저 조회 — 새 Stage 는
     # 중앙 dict 수정 없이 자체 선언만으로 UI 에 합류.
 
-    "s09_decide": {
-        "description_ko": "루프를 계속할지 완료할지 판단합니다.",
-        "when_to_use": "항상 (필수). 에이전틱 루프 종료 판정.",
+    # v1.0 — s08_judge stage 격하 흡수: judge_then_loop strategy 로 통합. fields 합쳐짐.
+    "s08_decide": {
+        "description_ko": "루프를 계속할지 완료할지 판단합니다. judge_then_loop strategy 활성 시 LLM 평가도 같이 수행.",
+        "when_to_use": "항상 (필수). 에이전틱 루프 종료 판정. 품질 검증이 필요하면 active_strategies['s08_decide']='judge_then_loop' 픽.",
         "when_to_skip": "불가 (REQUIRED_STAGES).",
         "cost_hint": "low",
-        "description_en": "Decides whether to continue, complete, or retry.",
+        "description_en": "Decides loop continuation. Optionally runs LLM evaluation when judge_then_loop strategy active.",
         "icon": "🔀",
-        # v0.26.0 — max_iterations stage_param 제거 (D4).
-        # Pipeline 은 top-level `state.config.max_iterations` 만 read. s09 의 stage_param
-        # 으로 노출하면 ConfigPanel 의 글로벌 max_iterations 와 이중 노출되어
-        # 사용자가 어느 값이 박히는지 헷갈림. 단일 진실 소스 = HarnessConfig top-level.
-        # max_retries 는 그대로 유지 (s09 가 직접 read).
+        # max_iterations 는 top-level (HarnessConfig) 만 사용 — 단일 진실 소스.
+        # max_retries 는 stage_param (decide 가 직접 read).
         "fields": [
             {
                 "id": "max_retries",
@@ -732,52 +716,67 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 10,
                 "default": 3,
-                "description": "검증 점수 미달 시 LLM 답변 재시도 한도. 비용/토큰/콘텐츠 정책 같은 다른 종료 조건은 s05_policy (Policy Gate) 의 guards 로 선언 — v0.17.0 부터 Policy Gate 가 단일 채널.",
+                "description": "검증 점수 미달 시 LLM 답변 재시도 한도. 비용/토큰/콘텐츠 정책 같은 다른 종료 조건은 s05_policy 의 guards 로 선언.",
+            },
+            # v1.0 — s08_judge 격하 흡수 (judge_then_loop strategy 활성 시만 의미)
+            {
+                "id": "judge_enabled",
+                "label": "응답 품질 평가 (judge) 활성",
+                "type": "toggle",
+                "default": False,
+                "description": "켜면 매 루프 응답 후 독립 LLM 호출로 품질 평가. Strategy 카드 'judge_then_loop' 픽으로도 동일 효과. 추가 LLM 비용 발생.",
+            },
+            {
+                "id": "judge_threshold",
+                "label": "judge 통과 기준 점수",
+                "type": "slider",
+                "min": 0,
+                "max": 1,
+                "step": 0.05,
+                "default": 0.7,
+                "description": "judge_then_loop strategy 시 점수 < threshold 이면 retry.",
+            },
+            {
+                "id": "criteria",
+                "label": "judge 평가 기준",
+                "type": "multi_select",
+                "options": ["relevance", "completeness", "accuracy", "clarity"],
+                "default": ["relevance", "completeness", "accuracy", "clarity"],
+                "description": "judge_then_loop strategy 시 사용. register_evaluation_criterion() 또는 entry_points(xgen_harness.evaluation_criteria) 로 외부 등록 추가.",
+            },
+            {
+                "id": "evaluation_strategy",
+                "label": "평가 구현체",
+                "type": "select",
+                "options": ["llm_judge", "rule_based", "none"],
+                "default": "llm_judge",
+                "description": "judge_then_loop 활성일 때 사용할 EvaluationStrategy. 'none' 이면 평가 skip.",
+            },
+            {
+                "id": "evaluation_prompt_template",
+                "label": "평가 프롬프트 템플릿 이름",
+                "type": "text",
+                "default": "default",
+                "description": "register_evaluation_prompt_template() 으로 등록한 이름. 기본 'default'.",
             },
         ],
         "behavior": [
             "비용 초과 → complete",
             "반복 한도 → complete",
             "도구 호출 대기 → continue",
-            "검증 미달 → retry",
-            "텍스트 응답 → complete",
+            "검증 미달 (judge) → retry",
+            "Policy Gate block → 그 결정 존중",
+            "텍스트 응답 + 도구 없음 → complete",
+            "v1.0 — judge_then_loop strategy 흡수 (구 s08_judge stage)",
         ],
     },
-    "s10_save": {
-        "description_ko": "실행 결과를 데이터베이스에 저장합니다.",
-        "when_to_use": "실행 로그 영구화 필요 (감사·리플레이·KPI 측정·세션 공유).",
-        "when_to_skip": "테스트·ephemeral·개인 비공유 세션.",
-        "cost_hint": "low",
-        "description_en": "Persists execution results to database.",
-        "icon": "💾",
-        "fields": [
-            {
-                "id": "save_enabled",
-                "label": "DB 저장 활성화",
-                "type": "toggle",
-                "default": True,
-            },
-            # v0.29.1 — table_name 노출 (코드는 이미 read 중).
-            {
-                "id": "table_name",
-                "label": "저장 테이블명",
-                "type": "text",
-                "default": "harness_execution_log",
-                "description": "실행 로그가 저장될 DB 테이블명. 기본 'harness_execution_log'. 별도 감사 테이블로 분리하고 싶을 때 변경.",
-            },
-        ],
-        "behavior": [
-            "harness_execution_log 테이블에 기록",
-            "메트릭스: 토큰, 비용, 시간, 모델",
-            "DB 없으면 graceful skip",
-        ],
-    },
-    "s11_finalize": {
-        "description_ko": "최종 출력을 확정하고 메트릭스를 수집합니다.",
-        "when_to_use": "항상 (필수). MetricsEvent 방출 + final_output 확정.",
+    # v1.0 — s10_save stage 격하 흡수: persist strategy 로 통합. fields 합쳐짐.
+    "s09_finalize": {
+        "description_ko": "최종 출력 확정 + 메트릭스 + 선택적 DB 저장. persist strategy 활성 시 harness_execution_log 에 기록.",
+        "when_to_use": "항상 (필수). MetricsEvent 방출 + final_output 확정. 영구 로그가 필요하면 active_strategies['s09_finalize']='persist' 픽.",
         "when_to_skip": "불가 (REQUIRED_STAGES).",
         "cost_hint": "low",
-        "description_en": "Finalizes output and collects metrics.",
+        "description_en": "Finalizes output, emits metrics, optionally persists to DB.",
         "icon": "🏁",
         "fields": [
             {
@@ -786,12 +785,48 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "select",
                 "options": ["text", "markdown", "json"],
                 "default": "text",
+                "description": "register_output_formatter() 또는 entry_points(xgen_harness.output_formatters) 로 외부 등록 추가 가능.",
+            },
+            # v1.0 — s10_save 격하 흡수
+            {
+                "id": "save_enabled",
+                "label": "DB 저장 활성화",
+                "type": "toggle",
+                "default": False,
+                "description": "켜면 harness_execution_log 에 기록. Strategy 카드 'persist' 픽으로도 동일 효과.",
+            },
+            {
+                "id": "table_name",
+                "label": "저장 테이블명",
+                "type": "text",
+                "default": "harness_execution_log",
+                "description": "save 활성 시 사용할 DB 테이블명. PERSIST_DEFAULTS['table_name'] override.",
+            },
+            {
+                "id": "input_text_cap",
+                "label": "input_text 길이 cap",
+                "type": "number",
+                "min": 100,
+                "max": 100_000,
+                "default": 5_000,
+                "description": "DB 저장 시 input_text 최대 길이. PERSIST_DEFAULTS['input_text_cap'] override.",
+            },
+            {
+                "id": "output_text_cap",
+                "label": "output_text 길이 cap",
+                "type": "number",
+                "min": 1_000,
+                "max": 1_000_000,
+                "default": 50_000,
+                "description": "DB 저장 시 output_text 최대 길이. PERSIST_DEFAULTS['output_text_cap'] override.",
             },
         ],
         "behavior": [
-            "state.final_output 확정",
+            "state.final_output 확정 (등록된 포맷터 적용)",
             "MetricsEvent 발행 (토큰, 비용, 시간)",
             "DoneEvent로 스트리밍 종료",
+            "v1.0 — persist strategy 흡수 (구 s10_save stage)",
+            "DB 없으면 graceful skip",
         ],
     },
 }

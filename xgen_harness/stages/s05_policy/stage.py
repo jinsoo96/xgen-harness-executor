@@ -59,8 +59,9 @@ class PolicyGateStage(Stage):
 
     @property
     def order(self) -> int:
-        # order=5 는 s05_strategy 와 겹치지만 Pipeline 이 role 로 찾아 호출하므로 문제 없음.
-        # loop_stages 순회에서는 should_bypass 가 True 라 skip 된다.
+        # v1.0: 일반 순번 진입 (PRE_TOOL 시점, s04_tool 다음 / s06_context 전).
+        # Guard 가 block 하면 PipelineAbortError 즉시 발생 → "규제 위반 → 실행 멈춤" 보장.
+        # 동시에 Pipeline 이 PRE_MAIN / POST_RESPONSE / LOOP_BOUNDARY 훅에서도 별도 호출.
         return 5
 
     @classmethod
@@ -106,12 +107,22 @@ class PolicyGateStage(Stage):
         }
 
     def should_bypass(self, state: PipelineState) -> bool:
-        # 일반 loop 순서에서는 항상 bypass — Pipeline 이 role 로 3 훅에 별도 호출.
-        return True
+        # v1.0 — 자동 bypass: guards 가 비어있으면 stage 흐름에서 skip (default 가 bypass).
+        # guards 가 선언됐을 때만 일반 순번 진입 (PRE_TOOL 시점 검사). 4훅(PRE_MAIN/POST_RESPONSE/
+        # LOOP_BOUNDARY) 호출은 Pipeline 이 role 로 별도 트리거하므로 영향 없음.
+        guard_configs = self.get_param("guards", state, []) or []
+        return not bool(guard_configs)
 
     async def execute(self, state: PipelineState) -> dict:
-        # 방어적 폴백 — bypass 가 안 된 경우에만 도달. 실질 로직은 invoke_hook.
-        return {"bypassed": True, "reason": "Policy Gate 는 Pipeline 훅 경로로만 호출"}
+        # v1.0 — 일반 순번 진입 시점. machine meta 만 emit (UI 안내 텍스트 박제 X).
+        # 실제 Guard 차단은 Pipeline 이 4 훅 (PRE_MAIN/PRE_TOOL/POST_RESPONSE/LOOP_BOUNDARY) 에서 별도 호출.
+        guards = self.get_param("guards", state, []) or []
+        guard_names = [g.get("name") for g in guards if isinstance(g, dict) and g.get("name")]
+        return {
+            "active": True,
+            "guards_declared": len(guards),
+            "guard_names": guard_names,
+        }
 
     async def invoke_hook(self, state: PipelineState, hook_name: str) -> dict[str, Any]:
         """Pipeline 이 훅 시점에 호출하는 진입점.

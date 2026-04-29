@@ -2,7 +2,7 @@
 Guard strategies — Policy Gate (v0.17.0 재설계)
 
 ## 배경
-기존 _GUARD_REGISTRY dict 하드코딩 + s09_decide 내부 호출 → lotte 류
+기존 _GUARD_REGISTRY dict 하드코딩 + s08_decide 내부 호출 → lotte 류
 "도구 호출 직전 BLOCK" 같은 정책 요구를 못 받음. 본 재설계는 3 축으로 정리.
 
 ## 축 1 — Guard 를 1급 플러그인 (entry_points)

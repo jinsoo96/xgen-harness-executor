@@ -40,7 +40,15 @@ class ContextStage(Stage):
         results = {
             "rag_chunks": 0, "rag_collections": 0, "db_results": 0, "compacted": False,
             "ontology_results": 0, "folders_expanded": 0, "reranked": False,
+            "intent_routed": False,
         }
+
+        # ── 0. Intent Routing (v1.0 흡수 from 구 s05_strategy) ──
+        # 사용자 입력 → metadata_filter 자동 결정 (auto_metadata_filter).
+        # stage_params.metadata_filter 가 비어있을 때만 fallback 으로 사용.
+        await self._apply_intent_routing(state)
+        if state.metadata.get("auto_metadata_filter"):
+            results["intent_routed"] = True
 
         # ── 1. RAG 컬렉션 + folders 확장 ──
         rag_collections: list[str] = list(self.get_param("rag_collections", state, []) or [])
@@ -263,6 +271,8 @@ class ContextStage(Stage):
                         results["enhance_prompt_applied"] = True
                     results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
                     results["rag_collections"] = len(rag_collections)
+                    # v1.0 — UI 가시성: 컬렉션 이름 목록도 노출. 사용자가 "어떤 collection 썼나" 즉시 확인.
+                    results["rag_collection_names"] = list(rag_collections)
                     logger.info("[Context] RAG: %d collections, added to system prompt (mode=%s)",
                                 len(rag_collections), rag_ing_mode)
                 else:
@@ -697,6 +707,49 @@ class ContextStage(Stage):
         except Exception as e:
             logger.warning("[Context] L5 summarize LLM 호출 실패: %s", e)
             return ""
+
+    # ---------- Intent Routing (v1.0 흡수 from 구 s05_strategy) ----------
+
+    async def _apply_intent_routing(self, state: PipelineState) -> None:
+        """stage_params.intent_rules 로 user_input 분류 → state.metadata["auto_metadata_filter"].
+
+        rules 구조 (UI textarea / stage_param 양쪽 허용):
+          [{"keywords": ["상품", "product"], "filter": {"file_name": "products.csv"}},
+           {"keywords": ["리뷰", "review"],  "filter": {"file_name": "reviews.csv"}}]
+
+        첫 매칭 rule 의 filter 를 auto_metadata_filter 에 저장.
+        s06 본 execute 가 stage_params.metadata_filter 가 비어있을 때만 이 값 사용.
+        키워드/필터 정의는 사용자 stage_param 데이터로만 결정 — 코드에 박제 0.
+        """
+        rules = self.get_param("intent_rules", state, None)
+        # UI textarea 로 오면 JSON 문자열. 파싱.
+        if isinstance(rules, str) and rules.strip():
+            try:
+                import json as _json
+                rules = _json.loads(rules)
+            except Exception as e:
+                logger.debug("[Context] intent_rules JSON 파싱 실패: %s", e)
+                rules = None
+        if not rules or not isinstance(rules, list):
+            return
+        user_input = (state.user_input or "").lower()
+        if not user_input:
+            return
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            keywords = rule.get("keywords") or []
+            if not isinstance(keywords, list) or not keywords:
+                continue
+            if any(str(k).lower() in user_input for k in keywords):
+                filt = rule.get("filter")
+                if isinstance(filt, dict) and filt:
+                    state.metadata["auto_metadata_filter"] = filt
+                    logger.info(
+                        "[Context] intent_routing matched keywords=%s → auto_metadata_filter=%s",
+                        keywords, filt,
+                    )
+                    return
 
     def list_strategies(self) -> list[StrategyInfo]:
         # v0.11.20 — dispatcher 와 완전 동기. stage_config.options 와 이 목록은 단일 진실 원본이어야 함.

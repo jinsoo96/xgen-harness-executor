@@ -70,8 +70,14 @@ def resolve_phase(order: int) -> str:
 
 
 def _ensure_defaults_registered() -> None:
-    """엔진 기본 3개 phase. v0.14.0 11-Stage 구조 기준 (s07_llm 삭제 반영).
+    """엔진 기본 3개 phase. v1.0 10-Stage 구조 기준.
 
+    경계 (v1.0 통합 후):
+      ingress: order ≤ 4 → s01_input / s02_history / s03_prompt / s04_tool
+      loop:    5 ≤ order ≤ 8 → s05_policy / s06_context / s07_act / s08_decide
+      egress:  order ≥ 9 → s09_finalize
+
+    s00_harness 는 order=0 이지만 phase property 를 ingress 로 override 함.
     외부에서 `unregister_phase("loop")` 로 덜어내거나 새 경계로 재등록 가능.
     """
     global _DEFAULTS_REGISTERED
@@ -83,12 +89,12 @@ def _ensure_defaults_registered() -> None:
         register_phase("ingress", upper_order=4,
                        description="입력 정규화·Planner·이력·프롬프트 준비")
     if "loop" not in _REGISTRY:
-        register_phase("loop", upper_order=9,
-                       description="Strategy·Context·Act·Judge·Decide 반복 루프")
+        register_phase("loop", upper_order=8,
+                       description="Policy·Context·Act·Decide 반복 루프")
     if "egress" not in _REGISTRY:
         # upper_order 를 크게 잡아 모든 후속 order 를 egress 로 유도.
         register_phase("egress", upper_order=9999,
-                       description="저장·마무리·응답 확정")
+                       description="최종 출력·메트릭스·저장")
 
     _discover_from_entry_points()
 

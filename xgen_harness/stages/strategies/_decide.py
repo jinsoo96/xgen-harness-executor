@@ -1,5 +1,5 @@
 """
-Decide strategies — s09_decide 용 Strategy 구현체
+Decide strategies — s08_decide 용 Strategy 구현체 (v1.0)
 
 v0.17.0 책임 분리:
   - Guard 호출은 전부 s05_policy Stage (Policy Gate) 로 이관.

@@ -123,7 +123,7 @@ class ValidationError(HarnessError):
 
     def __init__(self, message: str, score: float = 0.0):
         self.score = score
-        super().__init__(message, "s08_judge", ErrorCategory.UNKNOWN)
+        super().__init__(message, "s08_decide", ErrorCategory.UNKNOWN)
 
 
 class PipelineAbortError(HarnessError):

@@ -1,15 +1,12 @@
 """
-Main LLM call helper — v0.14.0
+Main LLM call helper
 
-s00_harness 가 소유하는 "본문 LLM 호출" 로직. 과거 s07_llm 이 맡았던
-재시도 / 스트리밍 / tool_use 감지 / 토큰 집계 / 컨텍스트 축약 / 비용 추정을
-하나의 자유 함수 세트로 노출. s00_harness.main_call 이 이 함수를 호출하고
-Pipeline 은 Phase B 루프 안에서 s00_harness.main_call 을 invoke.
+s00_harness 가 소유하는 "본문 LLM 호출" 로직. 재시도 / 스트리밍 / tool_use 감지 /
+토큰 집계 / 컨텍스트 축약 / 비용 추정을 하나의 자유 함수 세트로 노출.
+s00_harness.main_call 이 이 함수를 호출하고 Pipeline 은 loop 안에서 main_call 을 invoke.
 
-이관 이유:
-- v0.14.0 "재귀적 자율주행": Provider 설정 / Strategy(streaming|batch) 선택 /
-  실제 호출을 전부 s00 이 통제. s07 Stage 는 폐지.
-- 호출 로직 자체는 Stage 와 무관한 순수 함수라 헬퍼로 두는 게 자연스럽다.
+호출 로직 자체는 Stage 와 무관한 순수 함수라 헬퍼로 두는 게 자연스럽다 — 외부에서
+Provider 와 Stage 가 동일 함수를 재사용 가능.
 """
 
 from __future__ import annotations
@@ -272,10 +269,14 @@ async def _single_call(
                 "tool_input": event.tool_input,
             })
             if state.event_emitter:
+                # v1.0 — tool_source 자동 채움 (state.metadata['tool_source_of'] 는 s04_tool 이 채움).
+                # 사용자가 UI 에서 어떤 채널 (mcp/builtin/xgen_node/rag/synthesized/외부) 의 도구인지 즉시 식별.
+                _src = (state.metadata.get("tool_source_of") or {}).get(event.tool_name, "")
                 await state.event_emitter.emit(ToolCallEvent(
                     tool_use_id=event.tool_use_id,
                     tool_name=event.tool_name,
                     tool_input=event.tool_input,
+                    tool_source=_src,
                 ))
 
         elif event.type == ProviderEventType.USAGE:
@@ -424,7 +425,7 @@ async def aux_call(
     ----------
     state : PipelineState
     stage_id : str
-        호출자 식별 (verbose 이벤트 + 로그 추적용). 예: "s08_judge", "s06_context.l5", "evaluation.llm_judge".
+        호출자 식별 (verbose 이벤트 + 로그 추적용). 예: "s08_decide", "s06_context.l5", "evaluation.judge_then_loop".
     prompt : str
         사용자 메시지. system 따로 받음.
     system : Optional[str]

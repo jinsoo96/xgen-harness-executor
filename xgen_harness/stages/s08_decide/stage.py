@@ -1,14 +1,18 @@
 """
-S09 Decide — 루프 계속/완료 판단 (v0.14.0 번호 시프트: s10_decide → s09_decide)
+S08 Decide — 루프 계속/완료 판단 + 응답 품질 평가 (v1.0)
 
 Strategy 에 전적 위임 — Stage 내부에 분기 로직 없음.
 각 DecideStrategy 구현체가 자기 판단 규칙을 전부 들고 있다.
 
 기본 Strategy:
-  threshold (ThresholdDecide): Guard 체인 + 도구 호출 + 점수 + 응답 기반
-  always_pass (AlwaysPassDecide): 항상 complete
+  threshold        — Guard 체인 + 도구 호출 + 점수 + 응답 기반 단순 판정
+  judge_then_loop  — v1.0: LLM 평가(구 s08_judge) → 점수 → threshold 결정 (격하 흡수)
+  always_pass      — 항상 complete
 
-v0.11.1 리팩토링: 기존 execute() 안 if/else 하드코딩을 ThresholdDecide.decide() 로 이관.
+v1.0 통합:
+  - 구 s09_decide → s08_decide (번호 −1 시프트)
+  - 구 s08_judge stage 삭제 — judge_then_loop strategy 로 격하
+  - 응답 평가가 필요하면 active_strategies['s08_decide'] = 'judge_then_loop' 픽
 """
 
 import logging
@@ -41,13 +45,33 @@ class DecideStage(Stage):
 
     @property
     def stage_id(self) -> str:
-        return "s09_decide"
+        return "s08_decide"
 
     @property
     def order(self) -> int:
-        return 9
+        return 8
 
     async def execute(self, state: PipelineState) -> dict:
+        # v1.0 — judge_then_loop strategy (구 s08_judge 격하 흡수).
+        # active_strategies['s08_decide'] == 'judge_then_loop' 이거나
+        # stage_params.judge_enabled == True 면 평가 실행.
+        active = ""
+        if state.config:
+            picked = (state.config.active_strategies or {}).get(self.stage_id)
+            if isinstance(picked, str):
+                active = picked.strip()
+        do_judge = (active == "judge_then_loop") or bool(self.get_param("judge_enabled", state, False))
+        if do_judge:
+            from .strategies.judge_then_loop import evaluate_response
+            judge_result = await evaluate_response(state, self.get_param)
+            if state.event_emitter and not judge_result.get("bypassed"):
+                from ...events.types import EvaluationEvent
+                await state.event_emitter.emit(EvaluationEvent(
+                    score=judge_result.get("score", 0.0),
+                    feedback=judge_result.get("feedback", ""),
+                    verdict=judge_result.get("verdict", "pass"),
+                ))
+
         # s07_act 의 strict_no_error 변형이 도구 실패를 감지하면 즉시 stop.
         # 박은 측: stages/s07_act/stage.py · 키 prefix 's07_strict_*'.
         # 폴리시: 부분 성공 위에서 LLM 이 추측 답변하느니 명시 에러로 종료.
@@ -93,7 +117,9 @@ class DecideStage(Stage):
         return result
 
     def list_strategies(self) -> list[StrategyInfo]:
+        # v1.0 — judge_then_loop 추가 (구 s08_judge stage 격하).
         return [
-            StrategyInfo("threshold", "Guard 체인 + 점수 기반 판단", is_default=True),
+            StrategyInfo("threshold", "Guard 체인 + 점수 기반 단순 판단", is_default=True),
+            StrategyInfo("judge_then_loop", "LLM 평가 → 점수 → threshold (구 s08_judge 흡수)"),
             StrategyInfo("always_pass", "항상 완료 (루프 없음)"),
         ]

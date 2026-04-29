@@ -4,13 +4,15 @@ S03 System Prompt — 시스템 프롬프트 조립
 섹션 우선순위 기반 조립:
 1. Identity (역할/페르소나)
 2. Rules (행동 규칙)
-3. Tool Index (도구 메타데이터 — progressive disclosure Level 1)
-4. RAG Context (검색된 문서) — 읽기만, 실행은 s06_context 담당
-5. History Summary (이전 대화 요약)
-6. Custom Sections (사용자 정의)
+3. Planning (사고 모드 지시 — CoT/ReAct, v1.0 흡수)
+4. Tool Index (도구 메타데이터 — progressive disclosure Level 1)
+5. RAG Context (검색된 문서) — 읽기만, 실행은 s06_context 담당
+6. History Summary (이전 대화 요약)
+7. Custom Sections (사용자 정의)
 
+v1.0: 구 s05_strategy 의 CoT/ReAct planning_instruction + Strategy 카드 매핑 흡수.
+      Capability discovery 는 s04_tool, Intent Routing 은 s06_context 로 분배.
 v0.9.0: RAG 검색은 s06_context 가 단독 담당 — 이 Stage 는 state.rag_context 를 읽기만.
-(docs/harness/00-PHILOSOPHY.md §2 s03 "비담당" 참조)
 """
 
 import logging
@@ -24,12 +26,133 @@ logger = logging.getLogger("harness.stage.system_prompt")
 SECTION_PRIORITIES = {
     "identity": 1,
     "rules": 2,
+    "planning": 2.5,  # v1.0: CoT/ReAct 지시 — rules 다음, tools 전 (구 s05_strategy 흡수)
     "tools": 3,
     "rag": 4,
     "history": 5,
     "custom": 6,
     "footer": 7,
 }
+
+# ─── 공개 레지스트리 (v1.0 — 박제 풀기) ───────────────────────────────
+# 모든 프롬프트 텍스트를 등록 기반으로 관리. 외부 작업자/사용자가 자기 도메인
+# 템플릿 주입 가능. 우선순위:
+#   1. stage_params 직접 override (가장 강함)
+#   2. entry_points (xgen_harness.prompt_templates) 로 등록된 외부 템플릿
+#   3. register_*(...) 으로 등록된 in-process 템플릿
+#   4. 본 파일에 등록된 기본 템플릿 (가장 약함)
+
+# Identity / Rules / Planning 기본 템플릿 — 키 = 템플릿 이름, 값 = 텍스트.
+# 외부 등록 시 같은 키 덮어쓰면 override.
+DEFAULT_IDENTITIES: dict[str, str] = {
+    "default": (
+        "You are a helpful AI assistant. "
+        "Answer the user's questions accurately and concisely. "
+        "If you need more information, use the available tools to find it."
+    ),
+}
+
+DEFAULT_RULES: dict[str, str] = {
+    "default": (
+        "<rules>\n"
+        "- Always respond in the same language as the user's input.\n"
+        "- When using tools, explain what you're doing and why.\n"
+        "- If a tool call fails, try an alternative approach before giving up.\n"
+        "- Cite sources when using information from reference documents.\n"
+        "- Be concise but thorough.\n"
+        "</rules>"
+    ),
+}
+
+# Thinking mode 템플릿 — 키 = 모드 이름, 값 = planning_instruction 텍스트.
+# "none" 은 빈 문자열 → planning 섹션 생략.
+THINKING_MODE_TEMPLATES: dict[str, str] = {
+    "none": "",
+    "cot": (
+        "<planning_instruction>\n"
+        "Before answering, think step by step about what information you need "
+        "and which tools to use. Create a brief plan, then execute it.\n"
+        "</planning_instruction>"
+    ),
+    "react": (
+        "<planning_instruction>\n"
+        "Use the ReAct (Reason + Act) framework:\n"
+        "1. Thought: Analyze the current situation and decide the next action.\n"
+        "2. Action: Execute a tool or generate a response.\n"
+        "3. Observation: Review the result and decide if more steps are needed.\n"
+        "Repeat until the task is complete.\n"
+        "</planning_instruction>"
+    ),
+}
+
+# Strategy 카드 → thinking_mode 매핑. 외부에서 새 카드 등록 시 같이 늘리면 됨.
+STRATEGY_CARD_TO_MODE: dict[str, str] = {
+    "cot_planner": "cot",
+    "react": "react",
+    "none": "none",
+}
+
+
+def register_identity(name: str, template: str) -> None:
+    """Identity 템플릿 등록. 사용자가 stage_params.identity_template = name 으로 선택."""
+    DEFAULT_IDENTITIES[name] = template
+
+
+def register_rules(name: str, template: str) -> None:
+    """Rules 템플릿 등록. 사용자가 stage_params.rules_template = name 으로 선택."""
+    DEFAULT_RULES[name] = template
+
+
+def register_thinking_mode(name: str, template: str, *, card_alias: str | None = None) -> None:
+    """Thinking mode 등록. card_alias 주면 Strategy 카드 픽도 자동 매핑.
+
+    예) register_thinking_mode("tree_of_thought", "<planning>...</planning>",
+                                card_alias="tot")
+        → stage_params.thinking_mode = "tree_of_thought" 로 선택,
+          또는 active_strategies[s03_prompt] = "tot" 카드 픽으로 자동 매핑.
+    """
+    THINKING_MODE_TEMPLATES[name] = template
+    if card_alias:
+        STRATEGY_CARD_TO_MODE[card_alias] = name
+
+
+_PROMPT_TEMPLATES_DISCOVERED = False
+
+
+def _discover_prompt_templates_from_entry_points() -> None:
+    """entry_points 그룹 ``xgen_harness.prompt_templates`` 자동 발견. idempotent.
+
+    외부 패키지 등록 예:
+      [project.entry-points."xgen_harness.prompt_templates"]
+      lotte_pack = "lotte_harness.prompts:register_all"
+
+    register_all() 콜러블이 호출되며, 안에서 register_identity/register_rules/
+    register_thinking_mode 를 자유롭게 호출.
+    """
+    global _PROMPT_TEMPLATES_DISCOVERED
+    if _PROMPT_TEMPLATES_DISCOVERED:
+        return
+    _PROMPT_TEMPLATES_DISCOVERED = True
+    try:
+        from importlib.metadata import entry_points
+    except Exception:
+        return
+    try:
+        eps = entry_points()
+        group = "xgen_harness.prompt_templates"
+        items = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])  # type: ignore[arg-type]
+        for ep in items:
+            try:
+                fn = ep.load()
+                if callable(fn):
+                    fn()
+            except Exception as e:
+                logger.warning("[prompt_templates] entry_point %s 로드 실패: %s", ep.name, e)
+    except Exception as e:
+        logger.debug("[prompt_templates] entry_points discovery 실패: %s", e)
+
+
+_discover_prompt_templates_from_entry_points()
 
 
 class SystemPromptStage(Stage):
@@ -63,11 +186,11 @@ class SystemPromptStage(Stage):
         if system_prompt_override:
             sections.append((SECTION_PRIORITIES["identity"], "identity", system_prompt_override))
         else:
-            sections.append((SECTION_PRIORITIES["identity"], "identity", self._default_identity()))
+            sections.append((SECTION_PRIORITIES["identity"], "identity", self._default_identity(state)))
 
         # 2. Rules — 기본 행동 규칙 (include_rules=False면 건너뛰기)
         if include_rules:
-            sections.append((SECTION_PRIORITIES["rules"], "rules", self._default_rules()))
+            sections.append((SECTION_PRIORITIES["rules"], "rules", self._default_rules(state)))
 
         # 3. Tool Index — Level 1 메타데이터 (progressive disclosure)
         if state.tool_index:
@@ -130,6 +253,14 @@ class SystemPromptStage(Stage):
             )
             sections.append((SECTION_PRIORITIES["rules"] + 0.6, "grounding", strict_guard))
 
+        # 5.5 Planning (CoT/ReAct, v1.0 흡수 from 구 s05_strategy)
+        # 첫 루프에만 주입 (재계획 불필요).
+        if state.loop_iteration <= 1:
+            thinking_mode = self._resolve_thinking_mode(state)
+            planning_instruction = self._build_planning_instruction(thinking_mode, state)
+            if planning_instruction:
+                sections.append((SECTION_PRIORITIES["planning"], "planning", planning_instruction))
+
         # 6. History Summary (이전 결과)
         if state.previous_results:
             history = "\n---\n".join(state.previous_results[-3:])  # 최근 3개
@@ -149,8 +280,15 @@ class SystemPromptStage(Stage):
             "sections": [name for _, name, _ in sections],
             "message_count": len(state.messages),
             "rag_included": bool(state.rag_context),
+            # v1.0 — UI 가시성: 사고 모드 / 인용 모드 결과 노출.
+            # _build_planning_instruction 에서 auto → cot/react/none resolve 한 결과를
+            # state.metadata 에 박아 두면 더 정확하지만, 우선 thinking_mode_resolved 키로 직접 표시.
+            "thinking_mode_resolved": (state.metadata.get("thinking_mode_resolved")
+                                       or self._resolve_thinking_mode(state)),
+            "citation_mode": citation_mode,
         }
-        logger.info("[System Prompt] %d chars, sections=%s", len(assembled), result["sections"])
+        logger.info("[System Prompt] %d chars, sections=%s, thinking=%s",
+                    len(assembled), result["sections"], result.get("thinking_mode_resolved"))
         return result
 
     # 기본 도메인 토큰 — 일반 명사만. 회사/프로젝트 고유명사는 포함하지 않는다.
@@ -251,23 +389,74 @@ class SystemPromptStage(Stage):
         )
         return decision
 
-    def _default_identity(self) -> str:
-        return (
-            "You are a helpful AI assistant. "
-            "Answer the user's questions accurately and concisely. "
-            "If you need more information, use the available tools to find it."
-        )
+    # ---------- Planning / Thinking Mode (v1.0 흡수 from 구 s05_strategy) ----------
 
-    def _default_rules(self) -> str:
-        return (
-            "<rules>\n"
-            "- Always respond in the same language as the user's input.\n"
-            "- When using tools, explain what you're doing and why.\n"
-            "- If a tool call fails, try an alternative approach before giving up.\n"
-            "- Cite sources when using information from reference documents.\n"
-            "- Be concise but thorough.\n"
-            "</rules>"
-        )
+    def _resolve_thinking_mode(self, state: PipelineState) -> str:
+        """thinking_mode 결정 — Strategy 카드 우선, stage_params.thinking_mode 폴백.
+
+        반환 값: "auto" | "none" | "cot" | "react"
+        """
+        # 1. Strategy 카드 (active_strategies) 가 picked 됐으면 그 값 매핑 사용
+        active = ""
+        if hasattr(state, "config") and state.config:
+            picked = (state.config.active_strategies or {}).get(self.stage_id)
+            if isinstance(picked, str):
+                active = picked.strip()
+        if active and active in STRATEGY_CARD_TO_MODE:
+            return STRATEGY_CARD_TO_MODE[active]
+
+        # 2. stage_params.thinking_mode 폴백 (default=auto)
+        return self.get_param("thinking_mode", state, "auto")
+
+    def _build_planning_instruction(self, mode: str, state: PipelineState) -> str:
+        """thinking_mode 에 따라 planning_instruction 문자열 생성.
+
+        해석 순서 (위에서부터, 박제 0):
+          1. stage_params.planning_instruction_template — 사용자가 raw 텍스트 직접 주입
+          2. THINKING_MODE_TEMPLATES[mode] — registry/entry_points 로 등록된 템플릿
+          3. mode == "auto" 면 input_complexity → mode 자동 결정 후 다시 lookup
+          4. 없으면 빈 문자열 (planning 섹션 생략)
+        """
+        # 1. stage_params raw override (가장 강함)
+        raw_override = self.get_param("planning_instruction_template", state, None)
+        if isinstance(raw_override, str) and raw_override.strip():
+            return raw_override
+
+        # 2. auto 는 complexity 로 mode 결정
+        if mode == "auto":
+            complexity = state.metadata.get("input_complexity", "moderate")
+            if complexity == "simple":
+                mode = "none"
+            elif complexity == "complex":
+                mode = "react"
+            else:
+                mode = "cot"
+            logger.info("[Prompt] thinking_mode auto → '%s' (complexity=%s)", mode, complexity)
+
+        # 3. registry lookup (사용자/외부 등록 + 기본)
+        return THINKING_MODE_TEMPLATES.get(mode, "")
+
+    def _default_identity(self, state: PipelineState | None = None) -> str:
+        """Identity 텍스트 — registry + stage_params override 지원 (박제 0)."""
+        if state is not None:
+            raw = self.get_param("identity_template_raw", state, None)
+            if isinstance(raw, str) and raw.strip():
+                return raw
+            name = self.get_param("identity_template", state, "default")
+        else:
+            name = "default"
+        return DEFAULT_IDENTITIES.get(name, DEFAULT_IDENTITIES["default"])
+
+    def _default_rules(self, state: PipelineState | None = None) -> str:
+        """Rules 텍스트 — registry + stage_params override 지원 (박제 0)."""
+        if state is not None:
+            raw = self.get_param("rules_template_raw", state, None)
+            if isinstance(raw, str) and raw.strip():
+                return raw
+            name = self.get_param("rules_template", state, "default")
+        else:
+            name = "default"
+        return DEFAULT_RULES.get(name, DEFAULT_RULES["default"])
 
     def _build_tool_index_section(self, tool_index: list[dict]) -> str:
         """Progressive Disclosure Level 1: 도구 메타데이터만 포함"""
@@ -289,9 +478,12 @@ class SystemPromptStage(Stage):
         return "\n".join(lines)
 
     def list_strategies(self) -> list[StrategyInfo]:
-        # v0.26.0 — `simple` 라벨 제거 (D5).
-        # execute() 에 strategy_name="simple" 분기 코드가 한 번도 없었음 → label-only
-        # dead. section_priority 단일 동작이 실제 wiring 이므로 라벨 1개로 정리.
+        # v1.0 — section_priority(조립 방식) + Planning 카드 (사고 모드, 구 s05_strategy 흡수).
+        # 카드 픽 → STRATEGY_CARD_TO_MODE 로 thinking_mode 자동 결정.
+        # 카드 미픽 → stage_params.thinking_mode (default=auto) 폴백.
         return [
             StrategyInfo("section_priority", "우선순위 기반 섹션 조립", is_default=True),
+            StrategyInfo("cot_planner", "Chain-of-Thought 사고 지시 주입"),
+            StrategyInfo("react", "ReAct (Reason+Act) 프레임워크 지시 주입"),
+            StrategyInfo("none", "사고 모드 비활성 — planning 섹션 생략"),
         ]

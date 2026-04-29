@@ -5,6 +5,61 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-04-30
+
+### 🔥 BREAKING — 11→10 Stage 고결화 통합
+
+Spec: `docs/harness/2026-04-29-stage-consolidation-v1.md` (LOCKED v1.1).
+
+#### Stage 변경
+- **삭제 (분해 흡수)**:
+  - `s05_strategy/` → CoT/ReAct → `s03_prompt`, capability discovery → `s04_tool`, intent routing → `s06_context`
+  - `s08_judge/` → `s08_decide` 의 `judge_then_loop` strategy 로 격하
+  - `s10_save/` → `s09_finalize` 의 `persist` strategy 로 격하
+  - `s12_publish/` → 빈 dead slot 삭제
+- **번호 시프트**: `s09_decide → s08_decide`, `s11_finalize → s09_finalize`
+- **격상**: `s05_policy` 가 role-based 단독에서 **일반 순번 진입 + 4훅 동시 작동**.
+  PRE_TOOL 시점 자연 매핑 (s04 다음, s06 전). PRE_MAIN/POST_RESPONSE/LOOP_BOUNDARY 훅도 그대로.
+  Guard 가 block 하면 `PipelineAbortError` 즉시 발생 → "규제 위반 → 실행 차단" 보장.
+
+#### 박제 풀기 (4 신규 레지스트리)
+- `xgen_harness.prompt_templates` — Identity / Rules / Thinking mode 템플릿
+- `xgen_harness.evaluation_criteria` — Judge 평가 기준
+- `xgen_harness.output_formatters` — Finalize 출력 포맷
+- `register_persist_defaults / register_capability_discovery_defaults` — 임계값
+- `_default_identity / _default_rules` 함수 안 박제 → DEFAULT_IDENTITIES / DEFAULT_RULES dict
+
+#### 코드 변경
+- `core/config.py`: ALL_STAGES 11→9 (s00 별도 통제탑), REQUIRED_STAGES = `{s01_input, s08_decide, s09_finalize}`
+- `core/presets.py`: 4 preset (minimal/chat/agent/evaluator/rag) 재정의 + `multi_agent` 추가, `register_preset()` 공개
+- `core/stage.py`: STAGE_DISPLAY_NAMES (10 entry)
+- `core/stage_io.py`: STAGE_PARAM_SCHEMAS 정리
+- `core/stage_config.py`: STAGE_CONFIGS (UI fields) 분배 — s03/s04/s06 흡수, s08_decide/s09_finalize 통합
+- `core/strategy_resolver.py`: evaluation/decide 슬롯 등록 위치 → `s08_decide`
+- `core/registry.py`: `MultiAgentPlannerStage` 등록 슬롯 → `s00_harness` 의 `multi_agent`
+- `core/builder.py`: `with_validate()` 가 `active_strategies['s08_decide']='judge_then_loop'` 셋
+- `orchestrator/multi_agent_planner.py`: `PLAN_SLOT = "s00_harness"`, `order = 0`
+- `errors/hierarchy.py`: ValidationError 의 stage_id → `s08_decide`
+
+#### Stage ID 별칭 (구→신, 자동 정규화)
+- `s05_plan / s05_strategy → s03_prompt`
+- `s09_validate / s09_judge / s08_judge → s08_decide`
+- `s09_decide / s10_decide → s08_decide`
+- `s11_save / s10_save → s09_finalize`
+- `s12_finalize / s12_complete / s11_finalize → s09_finalize`
+
+#### 테스트
+- `tests/test_import_smoke.py`: 13→10 stage / `REQUIRED_STAGES` 갱신 / wheel export 제거
+- `tests/test_plan_fingerprint.py`: 10-stage CATALOG / s08_decide judge_then_loop
+- 22/22 PASS
+
+#### 마이그레이션 가이드
+- `register_strategy("s05_strategy", ...)` 호출 → 삭제. CoT 는 `register_thinking_mode()` 로.
+- `register_strategy("s08_judge", "evaluation", ...)` 호출 → `register_strategy("s08_decide", "evaluation", ...)`
+- `disabled_stages={"s05_strategy"}` 설정 → 제거 (해당 책임은 s03/s04/s06 의 stage_param 으로)
+- `disabled_stages={"s08_judge"}` 설정 → `active_strategies={"s08_decide": "threshold"}` (judge 비활성)
+- `disabled_stages={"s10_save"}` 설정 → `active_strategies={"s09_finalize": "default"}` 또는 `"noop"`
+
 ## [0.29.0] — 2026-04-29
 
 ### 🔥 BREAKING — Python wheel 채널 완전 제거 (npm 단일 채널화)

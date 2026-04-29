@@ -1,13 +1,15 @@
 """
-Preset 시스템 — 스테이지 활성/비활성 + Strategy 일괄 변경
+Preset 시스템 — 스테이지 활성/비활성 + Strategy 일괄 변경 (v1.0)
 
-geny-harness 패턴: minimal, chat, agent, evaluator, vtuber
-각 Preset은 12개 스테이지 중 어떤 것을 켜고 끌지, Strategy를 뭘로 할지 정의.
+각 Preset은 10개 스테이지 중 어떤 것을 켜고 끌지, 어떤 strategy 를 쓸지 정의.
+
+v1.0 변경:
+- s05_strategy / s08_judge / s10_save / s12_publish 삭제 (분해/격하)
+- s09_decide → s08_decide / s11_finalize → s09_finalize 번호 시프트
+- judge / save 는 별도 stage 가 아니라 strategy 격하 → disabled_stages 가 아닌 active_strategies 로 토글
 
 사용:
     config = HarnessConfig.from_preset("agent")
-    # → s02_history ON, s04_tool ON, s05_strategy ON, s08_judge ON
-    # → s09_decide: "threshold", s08: "llm_judge"
 """
 
 from dataclasses import dataclass, field
@@ -34,16 +36,19 @@ class Preset:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  내장 프리셋
+#  내장 프리셋 — 모든 텍스트는 외부 등록 가능 (박제 0)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 PRESETS: dict[str, Preset] = {
     "minimal": Preset(
         name="minimal",
-        description="Minimal chat — no tools, no RAG, no validation",
-        description_ko="최소 채팅 — 도구/RAG/검증 없이 바로 대화",
-        disabled_stages={"s02_history", "s04_tool", "s05_strategy", "s06_context", "s07_act", "s08_judge", "s10_save"},
-        active_strategies={"s09_decide": "always_pass"},
+        description="Minimal chat — no tools, no RAG, no policy, no judge",
+        description_ko="최소 채팅 — 도구/RAG/정책/평가 없이 바로 대화",
+        disabled_stages={"s02_history", "s04_tool", "s05_policy", "s06_context", "s07_act"},
+        active_strategies={
+            "s08_decide": "always_pass",
+            "s09_finalize": "noop",   # save 비활성
+        },
         temperature=0.7,
         max_iterations=1,
     ),
@@ -52,21 +57,24 @@ PRESETS: dict[str, Preset] = {
         name="chat",
         description="Chat with memory — conversation history maintained",
         description_ko="대화형 — 이전 대화 이력 유지, 멀티턴",
-        disabled_stages={"s04_tool", "s05_strategy", "s06_context", "s07_act", "s08_judge", "s10_save"},
-        active_strategies={"s09_decide": "always_pass"},
+        disabled_stages={"s04_tool", "s05_policy", "s06_context", "s07_act"},
+        active_strategies={
+            "s08_decide": "always_pass",
+            "s09_finalize": "noop",
+        },
         temperature=0.7,
         max_iterations=1,
     ),
 
     "agent": Preset(
         name="agent",
-        description="Full agent — tools, RAG, planning, validation, loop",
-        description_ko="에이전트 — 도구 사용, RAG, 계획, 검증, 루프",
-        disabled_stages=set(),  # 전체 활성
+        description="Full agent — tools, RAG, policy, judge, loop",
+        description_ko="에이전트 — 도구·RAG·정책·평가·루프 전부 활성",
+        disabled_stages=set(),
         active_strategies={
             "s04_tool": "progressive_3level",
-            "s08_judge": "rule_based",
-            "s09_decide": "threshold",
+            "s08_decide": "threshold",      # judge 없는 단순 결정
+            "s09_finalize": "default",
         },
         temperature=0.3,
         max_iterations=10,
@@ -74,16 +82,16 @@ PRESETS: dict[str, Preset] = {
 
     "evaluator": Preset(
         name="evaluator",
-        description="Evaluator agent — strict validation with LLM judge",
-        description_ko="평가형 — LLM Judge로 엄격한 품질 검증",
+        description="Evaluator agent — strict validation with LLM judge (in-decide)",
+        description_ko="평가형 — s08_decide 의 judge_then_loop strategy 로 엄격 검증",
         disabled_stages=set(),
         active_strategies={
             "s04_tool": "progressive_3level",
-            "s08_judge": "llm_judge",
-            "s09_decide": "threshold",
+            "s08_decide": "judge_then_loop",   # judge 격하: decide 안 strategy
+            "s09_finalize": "persist",
         },
         default_params={
-            "s08_judge": {"threshold": 0.8},
+            "s08_decide": {"judge_threshold": 0.8},
         },
         temperature=0.2,
         max_iterations=15,
@@ -93,12 +101,34 @@ PRESETS: dict[str, Preset] = {
         name="rag",
         description="RAG-focused — document search, no tools",
         description_ko="RAG 전용 — 문서 검색 기반 답변, 도구 없음",
-        disabled_stages={"s04_tool", "s05_strategy", "s07_act", "s08_judge"},
-        active_strategies={"s09_decide": "always_pass"},
+        disabled_stages={"s04_tool", "s07_act"},
+        active_strategies={
+            "s08_decide": "always_pass",
+            "s09_finalize": "noop",
+        },
         temperature=0.3,
         max_iterations=1,
     ),
+
+    "multi_agent": Preset(
+        name="multi_agent",
+        description="Multi-agent — s00_harness multi_agent strategy (RAG fan-out + 종합)",
+        description_ko="멀티 에이전트 — s00 의 multi_agent 카드로 컬렉션별 sub-agent 병렬",
+        disabled_stages={"s04_tool", "s07_act"},
+        active_strategies={
+            "s00_harness": "multi_agent",
+            "s08_decide": "always_pass",
+            "s09_finalize": "default",
+        },
+        temperature=0.3,
+        max_iterations=2,
+    ),
 }
+
+
+def register_preset(preset: Preset) -> None:
+    """외부 패키지가 자기 프리셋 등록. 같은 이름이면 덮어씀."""
+    PRESETS[preset.name] = preset
 
 
 def get_preset(name: str) -> Preset | None:

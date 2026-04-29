@@ -199,10 +199,10 @@ def _register_default_stages(registry: ArtifactRegistry) -> None:
         logger.debug("[registry] fs_scanner: %d stage artifacts", art_count)
 
     # 멀티에이전트 planner 는 `orchestrator/` 디렉토리에 있어 일반 Stage 스캔 대상 외 —
-    # s05_strategy 의 대안 artifact 로 register (유일한 cross-directory artifact).
+    # v1.0: s00_harness 의 multi_agent strategy 로 register (구 s05_strategy 슬롯 삭제됨).
     try:
         from ..orchestrator.multi_agent_planner import MultiAgentPlannerStage
-        registry.register("s05_strategy", "multi_agent", MultiAgentPlannerStage)
+        registry.register("s00_harness", "multi_agent", MultiAgentPlannerStage)
     except ImportError:
         pass
 
