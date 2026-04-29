@@ -102,7 +102,7 @@ class DecideStage(Stage):
         # state.policy_block_reason / loop_decision 으로 전달받아 그 결정을 존중.
         # max_retries 만 retry 카운트 비교용으로 의미.
         params = {
-            "max_retries": self.get_param("max_retries", state, 3),
+            "max_retries": self.get_param("max_retries", state, None) or 0,
         }
 
         try:

@@ -32,7 +32,8 @@ class Preset:
     default_params: dict[str, dict[str, Any]] = field(default_factory=dict)
     # 기본 설정
     temperature: float = 0.7
-    max_iterations: int = 10
+    # default 는 외부 (이식측/프론트) 가 owns. 엔진은 sentinel 0.
+    max_iterations: int = 0
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -50,7 +51,7 @@ PRESETS: dict[str, Preset] = {
             "s09_finalize": "noop",   # save 비활성
         },
         temperature=0.7,
-        max_iterations=1,
+        # max_iterations 미지정 — 이식측이 자기 default 박음
     ),
 
     "chat": Preset(
@@ -63,7 +64,6 @@ PRESETS: dict[str, Preset] = {
             "s09_finalize": "noop",
         },
         temperature=0.7,
-        max_iterations=1,
     ),
 
     "agent": Preset(
@@ -107,7 +107,7 @@ PRESETS: dict[str, Preset] = {
             "s09_finalize": "noop",
         },
         temperature=0.3,
-        max_iterations=1,
+        max_iterations=5,
     ),
 
     "multi_agent": Preset(

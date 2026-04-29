@@ -99,7 +99,7 @@ class ToolIndexStage(Stage):
             self.get_param("tool_source_filters", state, {}) or {}
         )
         rag_collections: list[str] = self.get_param("rag_collections", state, []) or []
-        rag_top_k: int = self.get_param("rag_top_k", state, 4)
+        rag_top_k: int = self.get_param("rag_top_k", state, None) or 0
 
         # ─── 0.5 Capability 바인딩 ────────────────────────────────────
         # (a) config.capabilities 명시 선언 → materialize

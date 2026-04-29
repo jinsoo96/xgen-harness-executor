@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.0.0"
-description = "XGEN Harness v1.0 — 11→10 stage 고결화 통합. s05_strategy 분해 (CoT→s03_prompt, capability→s04_tool, intent_routing→s06_context) / s08_judge stage 격하 (s08_decide.judge_then_loop strategy) / s10_save stage 격하 (s09_finalize.persist strategy) / s12_publish 빈 디렉토리 삭제 / 번호 시프트 (s09_decide→s08_decide, s11_finalize→s09_finalize). s05_policy 가 일반 순번 진입 + 4훅(PRE_MAIN/POST_RESPONSE/PRE_TOOL/LOOP_BOUNDARY) 동시 작동 — 규제 위반 시 즉시 차단. 4 신규 박제 풀린 레지스트리: prompt_templates / evaluation_criteria / output_formatters / persist_defaults. BREAKING — 외부 작업자 마이그레이션 가이드 docs/harness/2026-04-29-stage-consolidation-v1.md 참조."
+version = "1.0.2"
+description = "XGEN Harness v1.0 — 10-stage 고결화 (BREAKING). s05_strategy 분해 / s08_judge·s10_save 격하 / 번호 시프트 / s05_policy 일반 순번 진입 + 4훅. 4 신규 레지스트리 (prompt_templates / evaluation_criteria / output_formatters / persist_defaults). 마이그레이션 가이드: docs/harness/2026-04-29-stage-consolidation-v1.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

@@ -80,7 +80,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "Transport Strategy",
                 "type": "select",
                 "options_source": "s00_harness_transport_strategies",
-                "default": "streaming",
+                "default": None,
                 "description": "본문 LLM 호출 방식. 등록된 Transport Strategy 중 선택.",
             },
             # max_tokens / thinking_enabled / thinking_budget 은 HarnessConfig top-level
@@ -133,7 +133,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 20,
-                "default": 5,
+                "default": None,
             },
             # v0.29.1 — embedding_search 전략 임계 3종 노출 (코드는 이미 read 중인데
             # UI 통로가 없어 사용자가 못 박던 것 — audit 로 발견).
@@ -142,7 +142,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "메모리 컬렉션",
                 "type": "select",
                 "options_source": "rag-collections",
-                "default": "memory",
+                "default": None,
                 "description": "embedding_search 전략에서 검색할 컬렉션. 기본 'memory'. xgen-documents 에 미리 컬렉션이 있어야 함.",
             },
             {
@@ -151,7 +151,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 20,
-                "default": 5,
+                "default": None,
                 "description": "embedding_search 가 컬렉션에서 가져올 상위 K 결과 수.",
             },
             {
@@ -161,7 +161,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 1,
                 "step": 0.05,
-                "default": 0.3,
+                "default": None,
                 "description": "이 점수 이상 결과만 system_prompt 에 주입. 0 이면 전체 포함.",
             },
         ],
@@ -185,7 +185,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "시스템 프롬프트",
                 "type": "textarea",
                 "placeholder": "에이전트의 역할을 정의하세요...",
-                "default": "",
+                "default": None,
             },
             # v0.29.1 — prompt_id 필드 제거 (audit). stage.py 어디서도 안 읽음 — dead spec.
             # 향후 prompt store wiring 추가 시 이식측 (harness_bridge) 가 prompt_id 받아
@@ -194,14 +194,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "include_rules",
                 "label": "기본 규칙 포함",
                 "type": "toggle",
-                "default": True,
+                "default": None,
             },
             {
                 "id": "citation_mode",
                 "label": "인용 모드",
                 "type": "select",
                 "options": ["off", "enabled", "strict", "auto"],
-                "default": "off",
+                "default": None,
                 "description": "off: 인용 지시 없음 / enabled: [DOC_n] 인용 권장 / strict: 참조 문서 밖 정보 답변 금지 (환각 방지) / auto: RAG context 패턴 감지 후 자동 strict/off (v0.11.17+ 실험적)",
             },
             {
@@ -226,28 +226,28 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "사고 모드 (CoT/ReAct)",
                 "type": "select",
                 "options": ["auto", "cot", "react", "none"],
-                "default": "auto",
+                "default": None,
                 "description": "auto: input_complexity 보고 simple→none / moderate→cot / complex→react 자동. cot: 단계별 계획 지시 추가. react: Thought→Action→Observation 루프 지시. none: 사고 모드 비활성. Strategy 카드(cot_planner/react/none) 픽이 있으면 그 값 우선.",
             },
             {
                 "id": "planning_instruction_template",
                 "label": "사고 모드 raw 템플릿 override",
                 "type": "textarea",
-                "default": "",
+                "default": None,
                 "description": "비워두면 thinking_mode 의 등록 템플릿 사용. 채우면 그 raw 텍스트를 planning_instruction 으로 사용. register_thinking_mode() 또는 entry_points(xgen_harness.prompt_templates) 로도 등록 가능.",
             },
             {
                 "id": "identity_template",
                 "label": "Identity 템플릿 이름",
                 "type": "text",
-                "default": "default",
+                "default": None,
                 "description": "register_identity() 또는 entry_points 로 등록한 이름. 기본 'default' 외 외부 패키지가 등록한 이름 가능.",
             },
             {
                 "id": "rules_template",
                 "label": "Rules 템플릿 이름",
                 "type": "text",
-                "default": "default",
+                "default": None,
                 "description": "register_rules() 또는 entry_points 로 등록한 이름.",
             },
         ],
@@ -304,7 +304,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 20,
-                "default": 4,
+                "default": None,
             },
             {
                 "id": "builtin_tools",
@@ -317,7 +317,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "force_tool_use",
                 "label": "도구 호출 강제 (v0.11.19+)",
                 "type": "toggle",
-                "default": False,
+                "default": None,
                 "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건.",
             },
             # v0.29.2 — RAG 도구 노출 모드 (코드는 이미 read 중).
@@ -326,7 +326,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "RAG 도구 노출 모드",
                 "type": "select",
                 "options": ["both", "tool", "system_prompt"],
-                "default": "both",
+                "default": None,
                 "description": "both: system prompt 주입 + rag_search 도구 둘 다 / tool: 도구로만 노출 (system prompt skip → tool_result 누적 → L3 microcompact 발동) / system_prompt: 즉시 주입만 (도구 노출 X). s06 의 rag_ingestion_mode 와 자동 정합.",
             },
             # capabilities top-level: state.config.capabilities (전역 ConfigPanel) 만 사용.
@@ -335,7 +335,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "capability_discovery",
                 "label": "Capability 자동 발견 활성",
                 "type": "toggle",
-                "default": False,
+                "default": None,
                 "description": "켜면 user_input 매칭으로 capability 후보를 자동 발견 + 바인딩. Strategy 카드 'capability_auto' 픽으로도 동일 효과.",
             },
             {
@@ -344,7 +344,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 10,
-                "default": 3,
+                "default": None,
                 "description": "user_input 매칭으로 가져올 상위 K. CAPABILITY_DISCOVERY_DEFAULTS['top_k'] override.",
             },
             {
@@ -354,7 +354,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 1,
                 "step": 0.05,
-                "default": 0.4,
+                "default": None,
                 "description": "이 점수 이상 후보만 채택. CAPABILITY_DISCOVERY_DEFAULTS['min_score'] override.",
             },
         ],
@@ -387,7 +387,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 10000,
                 "max": 1000000,
                 "step": 10000,
-                "default": 200000,
+                "default": None,
             },
             {
                 "id": "compaction_threshold",
@@ -396,7 +396,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 95,
                 "step": 5,
-                "default": 80,
+                "default": None,
             },
             {
                 "id": "score_threshold",
@@ -405,7 +405,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 1,
                 "step": 0.05,
-                "default": 0.0,
+                "default": None,
                 "description": "0 이면 필터링 없음. 임계 이상 점수의 검색 결과만 컨텍스트에 포함 (precision 도구)",
             },
             {
@@ -414,14 +414,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 20,
-                "default": 4,
+                "default": None,
                 "description": "reranker 가 활성일 때 재정렬 후 유지할 상위 청크 수 (미설정 시 rag_top_k 사용)",
             },
             {
                 "id": "reranker",
                 "label": "리랭커 활성",
                 "type": "toggle",
-                "default": False,
+                "default": None,
                 "description": "켜면 xgen-documents 리랭커로 검색 결과 재정렬. provider 는 서버 기동 시 설정된 값 사용",
             },
             # v0.11.23 — 이식 options_source 5종 공식 선언. 이전에 harness_options_registry 수동 매핑.
@@ -466,7 +466,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "응답 향상 프롬프트",
                 "type": "textarea",
                 "placeholder": "예: '가장 최신 데이터를 우선하여 요약하라' — RAG 컨텍스트 뒤에 덧붙여집니다",
-                "default": "",
+                "default": None,
                 "description": "RAG 컨텍스트 주입 후 이어 붙는 사용자 지정 지시. 비우면 적용 안함",
             },
             {
@@ -474,7 +474,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "메타데이터 필터 (JSON)",
                 "type": "textarea",
                 "placeholder": '예: {"file_name": "products.csv"}  ← 해당 파일 청크만 검색',
-                "default": "",
+                "default": None,
                 "description": "DocumentSearchRequest.filter 로 전달. 특정 파일/폴더로 검색 범위를 좁혀 recall 향상. JSON 객체 문자열",
             },
             {
@@ -482,7 +482,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "RAG Progressive Disclosure",
                 "type": "select",
                 "options": ["eager", "progressive"],
-                "default": "eager",
+                "default": None,
                 "description": "eager: 청크 본문 전체를 system_prompt 에 주입 (기존). progressive: 인덱스 한 줄 + snippet 만 주입, 본문은 pd_stores 에 보관 — LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 것만 pull (Claude Code 패턴)",
             },
             {
@@ -490,7 +490,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "RAG 주입 방식 (v0.11.18+)",
                 "type": "select",
                 "options": ["system_prompt", "tool_only", "both"],
-                "default": "system_prompt",
+                "default": None,
                 "description": "system_prompt (기본): RAG 를 system prompt 에 즉시 주입 / tool_only: system prompt 주입 skip, LLM 은 rag_search 도구로만 접근 → tool_result 누적 → L3 microcompact 발동 조건 / both: 둘 다. rag_tool_mode=tool 이면 자동 tool_only 전환.",
             },
             {
@@ -499,7 +499,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 10,
-                "default": 3,
+                "default": None,
                 "description": "estimated_tokens = total_chars / chars_per_token. 기본 3 은 혼합 언어 평균. 영어 위주면 4, 한국어 위주면 2 권장.",
             },
             {
@@ -509,7 +509,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 40,
                 "max": 500,
                 "step": 20,
-                "default": 120,
+                "default": None,
                 "description": "progressive 모드에서 인덱스 한 줄에 노출할 청크 앞부분 미리보기 크기",
             },
             {
@@ -517,7 +517,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "압축 전략",
                 "type": "select",
                 "options": ["token_budget", "sliding_window", "microcompact", "context_collapse_overlay", "autocompact_llm", "cascade"],
-                "default": "token_budget",
+                "default": None,
                 "description": "token_budget: 기본 파괴적 3단계 / sliding_window: 최근 N 개 / microcompact (L3): 오래된 tool_result 만 placeholder (Claude Code L3) / context_collapse_overlay (L4): 비파괴 overlay (Claude Code L4) / autocompact_llm (L5): child LLM 9-section summary (Claude Code L5) / cascade: 임계별 L3→L4→L5 자동 선택 (Claude Code Cascade)",
             },
             {
@@ -527,7 +527,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 90,
                 "step": 5,
-                "default": 80,
+                "default": None,
                 "description": "cascade 전략에서 이 비율 이상이면 L3 microcompact 먼저 시도 (tool_result 교체, 경량). v0.11.16 이후 기본 80 — Pilot #11 에서 조기 발동(70) 의 -19% 품질 악화 관측",
             },
             {
@@ -537,7 +537,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 60,
                 "max": 95,
                 "step": 5,
-                "default": 90,
+                "default": None,
                 "description": "cascade 전략에서 이 비율 이상이면 L4 context_collapse_overlay 추가 발동 (비파괴 overlay, 중량). v0.11.16 기본 90",
             },
             {
@@ -547,7 +547,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 70,
                 "max": 99,
                 "step": 1,
-                "default": 97,
+                "default": None,
                 "description": "cascade 전략에서 이 비율 이상이면 최후 수단 L5 autocompact_llm 발동 (child LLM 요약). v0.11.16 기본 97",
             },
             {
@@ -557,7 +557,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 95,
                 "step": 5,
-                "default": 90,
+                "default": None,
                 "description": "context_collapse_overlay 전략에서 이 비율 이상 토큰 사용 시 collapse 발동 (Claude Code 기본 90%)",
             },
             {
@@ -566,7 +566,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 10,
-                "default": 3,
+                "default": None,
                 "description": "collapse 후 messages 말미에 온전히 남길 최근 메시지 개수",
             },
             {
@@ -576,7 +576,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 95,
                 "step": 5,
-                "default": 75,
+                "default": None,
                 "description": "microcompact 전략에서 이 비율 이상 토큰 사용 시 오래된 tool_result 를 placeholder 로 교체 (원본은 pd_stores['tool_result'] 에서 복원 가능)",
             },
             {
@@ -585,7 +585,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 20,
-                "default": 5,
+                "default": None,
                 "description": "messages 내 최근 N 개 tool_result 만 원본 유지, 나머지는 placeholder",
             },
             {
@@ -595,7 +595,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 50,
                 "max": 95,
                 "step": 5,
-                "default": 87,
+                "default": None,
                 "description": "autocompact_llm 전략에서 이 비율 이상 토큰 사용 시 child LLM 요약 발동 (Claude Code 기본 87%). 연속 실패 3회 시 회로 차단",
             },
             {
@@ -604,7 +604,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 10,
-                "default": 3,
+                "default": None,
                 "description": "autocompact 후 messages 말미에 온전히 남길 최근 메시지 개수",
             },
             # v0.29.2 — sliding_window strategy 의 윈도우 크기 (코드는 이미 read 중).
@@ -614,7 +614,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1,
                 "max": 100,
-                "default": 20,
+                "default": None,
                 "description": "strategy=sliding_window 일 때 messages 말미에서 유지할 최근 메시지 개수. 다른 압축 strategy 에서는 무시.",
             },
             # v1.0 — Intent Routing 흡수 (구 s05_strategy)
@@ -623,7 +623,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "Intent Routing 규칙 (JSON)",
                 "type": "textarea",
                 "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
-                "default": "",
+                "default": None,
                 "description": "쿼리 키워드 → metadata_filter 자동 매핑. 매칭되면 metadata_filter 가 비어있을 때 auto_metadata_filter 로 사용 (명시 filter 우선). JSON 배열 문자열.",
             },
         ],
@@ -652,7 +652,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 5,
                 "max": 300,
-                "default": 60,
+                "default": None,
             },
             {
                 "id": "result_budget",
@@ -661,7 +661,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 5000,
                 "max": 200000,
                 "step": 5000,
-                "default": 50000,
+                "default": None,
                 "description": "여러 도구 결과의 합계 상한 (2차 방어). 개별 결과는 preview_threshold 로 통제",
             },
             {
@@ -671,7 +671,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 1000,
                 "max": 200000,
                 "step": 1000,
-                "default": 50000,
+                "default": None,
                 "description": "개별 결과가 이 크기를 넘으면 preview 만 messages 에 흘리고 원본은 pd_stores 로 보존 (Claude Code L1 패턴)",
             },
             {
@@ -681,7 +681,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 256,
                 "max": 16384,
                 "step": 256,
-                "default": 2048,
+                "default": None,
                 "description": "preview 로 남길 첫 N 자. LLM 은 fetch_pd(kind='tool_result', id=<tool_use_id>) 로 원본 조회",
             },
         ],
@@ -715,7 +715,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 0,
                 "max": 10,
-                "default": 3,
+                "default": None,
                 "description": "검증 점수 미달 시 LLM 답변 재시도 한도. 비용/토큰/콘텐츠 정책 같은 다른 종료 조건은 s05_policy 의 guards 로 선언.",
             },
             # v1.0 — s08_judge 격하 흡수 (judge_then_loop strategy 활성 시만 의미)
@@ -723,7 +723,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "judge_enabled",
                 "label": "응답 품질 평가 (judge) 활성",
                 "type": "toggle",
-                "default": False,
+                "default": None,
                 "description": "켜면 매 루프 응답 후 독립 LLM 호출로 품질 평가. Strategy 카드 'judge_then_loop' 픽으로도 동일 효과. 추가 LLM 비용 발생.",
             },
             {
@@ -733,7 +733,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 1,
                 "step": 0.05,
-                "default": 0.7,
+                "default": None,
                 "description": "judge_then_loop strategy 시 점수 < threshold 이면 retry.",
             },
             {
@@ -749,14 +749,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "평가 구현체",
                 "type": "select",
                 "options": ["llm_judge", "rule_based", "none"],
-                "default": "llm_judge",
+                "default": None,
                 "description": "judge_then_loop 활성일 때 사용할 EvaluationStrategy. 'none' 이면 평가 skip.",
             },
             {
                 "id": "evaluation_prompt_template",
                 "label": "평가 프롬프트 템플릿 이름",
                 "type": "text",
-                "default": "default",
+                "default": None,
                 "description": "register_evaluation_prompt_template() 으로 등록한 이름. 기본 'default'.",
             },
         ],
@@ -784,7 +784,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "출력 포맷",
                 "type": "select",
                 "options": ["text", "markdown", "json"],
-                "default": "text",
+                "default": None,
                 "description": "register_output_formatter() 또는 entry_points(xgen_harness.output_formatters) 로 외부 등록 추가 가능.",
             },
             # v1.0 — s10_save 격하 흡수
@@ -792,14 +792,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "save_enabled",
                 "label": "DB 저장 활성화",
                 "type": "toggle",
-                "default": False,
+                "default": None,
                 "description": "켜면 harness_execution_log 에 기록. Strategy 카드 'persist' 픽으로도 동일 효과.",
             },
             {
                 "id": "table_name",
                 "label": "저장 테이블명",
                 "type": "text",
-                "default": "harness_execution_log",
+                "default": None,
                 "description": "save 활성 시 사용할 DB 테이블명. PERSIST_DEFAULTS['table_name'] override.",
             },
             {
@@ -808,7 +808,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 100,
                 "max": 100_000,
-                "default": 5_000,
+                "default": None,
                 "description": "DB 저장 시 input_text 최대 길이. PERSIST_DEFAULTS['input_text_cap'] override.",
             },
             {
@@ -817,7 +817,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "number",
                 "min": 1_000,
                 "max": 1_000_000,
-                "default": 50_000,
+                "default": None,
                 "description": "DB 저장 시 output_text 최대 길이. PERSIST_DEFAULTS['output_text_cap'] override.",
             },
         ],

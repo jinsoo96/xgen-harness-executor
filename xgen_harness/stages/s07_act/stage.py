@@ -200,8 +200,8 @@ class ExecuteStage(Stage):
             # 개별 결과가 preview_threshold 를 초과하면 preview 만 messages 에 흘리고
             # 원본은 state.pd_stores["tool_result"][tool_use_id] 에 보존.
             # LLM 은 `fetch_pd(kind="tool_result", id=<tool_use_id>)` 로 원본 재접근.
-            preview_threshold = int(self.get_param("tool_result_preview_threshold", state, 50000))
-            preview_size = int(self.get_param("tool_result_preview_size", state, 2048))
+            preview_threshold = int(self.get_param("tool_result_preview_threshold", state, None) or 0)
+            preview_size = int(self.get_param("tool_result_preview_size", state, None) or 0)
             if original_chars > preview_threshold:
                 preview_body = result_text[:preview_size]
                 hint = (

@@ -54,7 +54,7 @@ class MemoryStage(Stage):
     async def _execute_default(self, state: PipelineState) -> dict:
         """기본 전략: 대화 이력 + previous_results"""
         injected = 0
-        max_history = int(self.get_param("max_history", state, 10))
+        max_history = int(self.get_param("max_history", state, None) or 0)
 
         # 1. 대화 이력이 있으면 messages에 추가 (max_history로 제한)
         if state.conversation_history:
@@ -85,8 +85,8 @@ class MemoryStage(Stage):
         검색된 과거 상호작용을 시스템 프롬프트에 추가한다.
         """
         collection = self.get_param("memory_collection", state, "memory")
-        top_k = int(self.get_param("memory_top_k", state, 5))
-        score_threshold = float(self.get_param("memory_score_threshold", state, 0.3))
+        top_k = int(self.get_param("memory_top_k", state, None) or 0)
+        score_threshold = float(self.get_param("memory_score_threshold", state, None) or 0)
 
         # 기본 전략도 함께 실행 (대화 이력 주입)
         base_result = await self._execute_default(state)

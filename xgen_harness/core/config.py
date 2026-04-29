@@ -59,32 +59,33 @@ def get_required_stages() -> set[str]:
 
 @dataclass
 class HarnessConfig:
-    """하네스 파이프라인 설정 — 프리셋 없음, 스테이지 개별 토글"""
+    """하네스 파이프라인 설정 — 정책 default 는 외부(이식측) 가 owns.
 
-    # --- LLM ---
-    # provider 기본값은 providers.get_default_provider() 가 런타임에 해석.
-    # ("" / None / 누락 → XGEN_HARNESS_DEFAULT_PROVIDER env → openai → anthropic → 레지스트리 첫 항목)
-    # model 기본값은 providers.PROVIDER_DEFAULT_MODEL[provider] 에서 런타임 해석.
-    # "" 로 들어오면 어댑터/s01_input 이 Redis → env → PROVIDER_DEFAULT_MODEL 순으로 결정.
-    provider: str = ""
-    model: str = ""
-    temperature: float = 0.7
-    max_tokens: int = 8192
-    # 보조 LLM 호출 (s06 compaction / s08 judge / evaluation strategy 등) 용 max_tokens.
-    # 본문(s07_act) 호출 max_tokens 와 분리 — 보조 호출은 짧은 판정/요약이라 작은 값으로
-    # 비용 / 지연 관리. v0.26.11 — 매직넘버 500 4건 통합 (auxiliary_max_tokens 필드화).
-    aux_max_tokens: int = 500
+    엔진은 모든 정책 field 를 sentinel(0/None/"") 로 둔다. 이식측이 사용자 입력을 받아
+    `resolve_policy_defaults()` 같은 함수로 자기 비즈니스 정책 default 를 박는다.
+    엔진은 어떤 도메인(웹/사내/규제) 인지 모르므로 default 를 박을 수 없다.
 
-    # --- 폴백 모델 (provider 별) — PROVIDER_DEFAULT_MODEL 레지스트리가 단일 진실 소스.
-    # "" 로 두면 런타임에 레지스트리 lookup. 새 provider 추가 시 레지스트리만 갱신.
+    정책 field 와 머신 상수 구분:
+      - 정책: max_iterations / temperature / cost_budget_usd / max_tokens 등 — 사용자 결정
+      - 머신: queue_size / preview_size 등 — 엔진 동작에 필요 (PHILOSOPHY §5)
+    """
+
+    # --- LLM (정책 — sentinel) ---
+    provider: str = ""                    # "" → providers.get_default_provider() 런타임 해석
+    model: str = ""                       # "" → PROVIDER_DEFAULT_MODEL 레지스트리 lookup
+    temperature: Optional[float] = None   # 이식측이 박음 (도메인별 다름 — 창의/엄격)
+    max_tokens: Optional[int] = None      # 이식측 (응답 max — 비용/지연 정책)
+    aux_max_tokens: Optional[int] = None  # 보조 LLM 호출 max (s06 compact / s08 judge)
+
+    # --- 폴백 모델 (provider 별) — PROVIDER_DEFAULT_MODEL 레지스트리가 단일 진실 소스 ---
     openai_model: str = ""
     anthropic_model: str = ""
 
-    # --- 루프 제어 ---
-    max_iterations: int = 10
-    max_tool_rounds: int = 20
-    max_retries: int = 3
-    validation_threshold: float = 0.7
+    # --- 루프 제어 (정책 — sentinel) ---
+    max_iterations: Optional[int] = None       # 도구 호출 횟수 cap
+    max_tool_rounds: Optional[int] = None      # 도구 라운드 cap
+    max_retries: Optional[int] = None          # 검증 재시도 한도
+    validation_threshold: Optional[float] = None  # judge 통과 임계
 
     # --- 시스템 프롬프트 ---
     system_prompt: str = ""
@@ -126,11 +127,11 @@ class HarnessConfig:
     #              "required": bool, "default": Any, "description": str}}
     external_inputs: dict = field(default_factory=dict)
 
-    # --- 기타 ---
-    cost_budget_usd: float = 10.0
-    context_window: int = 200_000
-    thinking_enabled: bool = False
-    thinking_budget_tokens: int = 10000
+    # --- 기타 (정책 — sentinel) ---
+    cost_budget_usd: Optional[float] = None     # 실행당 USD 예산 cap
+    context_window: Optional[int] = None        # 컨텍스트 윈도우 (provider context limit)
+    thinking_enabled: bool = False              # bool 은 명시 — false 가 기본 의미
+    thinking_budget_tokens: Optional[int] = None  # extended thinking 토큰 예산
 
     # --- 관찰/디버깅 ---
     # True 면 Pipeline/Stage 내부 세밀한 이벤트(ServiceLookup / CapabilityBind /

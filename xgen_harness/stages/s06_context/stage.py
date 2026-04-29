@@ -85,7 +85,7 @@ class ContextStage(Stage):
         if rag_collections and state.user_input:
             # verbose: RAG fetch 시작
             from ...events.types import StageSubstepEvent as _Sub
-            top_k = int(self.get_param("rag_top_k", state, 4))
+            top_k = int(self.get_param("rag_top_k", state, None) or 0)
             await state.emit_verbose(_Sub(
                 stage_id=self.stage_id, substep="rag_fetch_start",
                 meta={"collections": rag_collections, "top_k": top_k},
@@ -151,7 +151,7 @@ class ContextStage(Stage):
                 rag_pd_mode = str(self.get_param("rag_pd_mode", state, "eager") or "eager").strip().lower()
                 if rag_pd_mode not in ("eager", "progressive"):
                     rag_pd_mode = "eager"
-                rag_pd_snippet = int(self.get_param("rag_pd_snippet_size", state, 120))
+                rag_pd_snippet = int(self.get_param("rag_pd_snippet_size", state, None) or 0)
                 for col in rag_collections:
                     try:
                         # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
@@ -379,7 +379,7 @@ class ContextStage(Stage):
         #   autocompact_llm (L5):  child LLM 9-section 요약으로 교체. 비파괴.
         #   cascade (v0.11.15+):   임계별 L3 → L4 → L5 순 자동 전환. 현재 turn 에 1개만 발동.
         strategy_name = self.get_param("strategy", state, "token_budget")
-        compaction_threshold = self.get_param("compaction_threshold", state, 80) / 100.0
+        compaction_threshold = self.get_param("compaction_threshold", state, None) or 0 / 100.0
 
         # v0.11.21 — 외부 기여자가 register_strategy("s06_context","compactor",...) 로
         # 교체할 수 있도록 resolver 경로를 선행 조회. AdvancedContextCompactor 인스턴스가
@@ -400,7 +400,7 @@ class ContextStage(Stage):
             pass  # AdvancedContextCompactor 가 results 에 이미 반영
         elif strategy_name == "sliding_window":
             # 슬라이딩 윈도우: 최근 N개 메시지만 유지 (심플하지만 채팅에 효과적)
-            window_size = int(self.get_param("window_size", state, 20))
+            window_size = int(self.get_param("window_size", state, None) or 0)
             if len(state.messages) > window_size:
                 state.messages = state.messages[-window_size:]
                 results["compacted"] = True
@@ -442,9 +442,9 @@ class ContextStage(Stage):
         Pilot #11 에서 조기 발동 품질 악화 관측 → baseline compact 시점 이후만 개입.
         v0.11.20 — helper 에 직접 threshold 전달 (state.metadata 임시 키 제거, leak 방지).
         """
-        l3_th = self.get_param("cascade_l3_threshold", state, 80) / 100.0
-        l4_th = self.get_param("cascade_l4_threshold", state, 90) / 100.0
-        l5_th = self.get_param("cascade_l5_threshold", state, 97) / 100.0
+        l3_th = self.get_param("cascade_l3_threshold", state, None) or 0 / 100.0
+        l4_th = self.get_param("cascade_l4_threshold", state, None) or 0 / 100.0
+        l5_th = self.get_param("cascade_l5_threshold", state, None) or 0 / 100.0
         cascade_applied: list[str] = []
         if budget_used >= l3_th:
             pre_mc = results.get("microcompacted", 0)
@@ -474,11 +474,11 @@ class ContextStage(Stage):
 
         threshold_override: cascade 에서 전달하는 임계(0~1). None 이면 stage_param 의 기본값 사용.
         """
-        mc_keep = int(self.get_param("microcompact_keep_recent", state, 5))
+        mc_keep = int(self.get_param("microcompact_keep_recent", state, None) or 0)
         if threshold_override is not None:
             mc_threshold = float(threshold_override)
         else:
-            mc_threshold = self.get_param("microcompact_threshold", state, 75) / 100.0
+            mc_threshold = self.get_param("microcompact_threshold", state, None) or 0 / 100.0
         if budget_used <= mc_threshold:
             return
         tool_refs: list[tuple[int, int, str]] = []
@@ -534,8 +534,8 @@ class ContextStage(Stage):
         if threshold_override is not None:
             collapse_threshold = float(threshold_override)
         else:
-            collapse_threshold = self.get_param("context_collapse_threshold", state, 90) / 100.0
-        keep_tail = int(self.get_param("context_collapse_keep_tail", state, 3))
+            collapse_threshold = self.get_param("context_collapse_threshold", state, None) or 0 / 100.0
+        keep_tail = int(self.get_param("context_collapse_keep_tail", state, None) or 0)
         if budget_used <= collapse_threshold or len(state.messages) <= keep_tail + 1:
             return
         head = state.messages[0]
@@ -595,8 +595,8 @@ class ContextStage(Stage):
         if threshold_override is not None:
             auto_threshold = float(threshold_override)
         else:
-            auto_threshold = self.get_param("autocompact_threshold", state, 87) / 100.0
-        keep_tail = int(self.get_param("autocompact_keep_tail", state, 3))
+            auto_threshold = self.get_param("autocompact_threshold", state, None) or 0 / 100.0
+        keep_tail = int(self.get_param("autocompact_keep_tail", state, None) or 0)
         failures = int(state.metadata.get("autocompact_failures", 0))
         if failures >= 3:
             logger.warning("[Context] L5 Autocompact circuit-breaker tripped (failures=%d), skip", failures)
