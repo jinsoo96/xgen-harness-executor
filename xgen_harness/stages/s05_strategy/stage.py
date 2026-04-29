@@ -49,7 +49,12 @@ class PlanStage(Stage):
         # metadata_filter 가 비어있을 때만 이 값을 fallback 으로 사용 (명시 설정 우선).
         await self._apply_intent_routing(state)
 
-        mode = self.get_param("planning_mode", state, "auto")
+        # v0.29.3 — Strategy 카드 (active_strategies) 가 picked 됐으면 그 값을
+        # planning_mode 로 매핑해서 사용. 이전엔 카드 픽이 stage 코드에 도달 안 해
+        # vestigial UI 였음. 이제 카드 = 모드 단축 프리셋:
+        #   cot_planner → cot / react → react / capability → capability / none → none
+        # 카드 미픽 또는 알 수 없는 값이면 planning_mode 필드 (default=auto) 폴백.
+        mode = self._resolve_planning_mode(state)
 
         # "auto" 모드: input_complexity에 따라 planning depth 결정
         if mode == "auto":
@@ -110,6 +115,32 @@ class PlanStage(Stage):
             "planning_mode": mode,
             **(cap_result or {}),
         }
+
+    # ---------- Strategy 카드 → planning_mode 매핑 (v0.29.3) ----------
+
+    _STRATEGY_TO_MODE = {
+        "cot_planner": "cot",
+        "react": "react",
+        "capability": "capability",
+        "none": "none",
+    }
+
+    def _resolve_planning_mode(self, state: PipelineState) -> str:
+        """active_strategies (UI 전략 카드) → planning_mode 매핑. 카드 미픽이면 필드 폴백.
+
+        StrategyInfo("cot_planner", ..., is_default=True) 처럼 default 카드도 있어서
+        active_strategies 가 ""이거나 dict 자체 미설정인 경우만 필드 폴백 — 카드가
+        명시적으로 picked 되었으면 그 값을 신뢰.
+        """
+        active = ""
+        if hasattr(state, "config") and state.config:
+            picked = (state.config.active_strategies or {}).get(self.stage_id)
+            if isinstance(picked, str):
+                active = picked.strip()
+        if active and active in self._STRATEGY_TO_MODE:
+            return self._STRATEGY_TO_MODE[active]
+        # 카드 미픽 또는 알 수 없는 값 → planning_mode 필드 폴백 (default=auto)
+        return self.get_param("planning_mode", state, "auto")
 
     # ---------- Intent Routing (RR2) ----------
 
