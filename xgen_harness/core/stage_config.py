@@ -77,31 +77,9 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": "streaming",
                 "description": "본문 LLM 호출 방식. 등록된 Transport Strategy 중 선택.",
             },
-            {
-                "id": "max_tokens",
-                "label": "최대 출력 토큰",
-                "type": "number",
-                "min": 256,
-                "max": 32768,
-                "step": 256,
-                "default": 8192,
-            },
-            {
-                "id": "thinking_enabled",
-                "label": "Extended Thinking",
-                "type": "toggle",
-                "default": False,
-            },
-            {
-                "id": "thinking_budget",
-                "label": "Thinking 토큰 예산",
-                "type": "number",
-                "min": 1000,
-                "max": 100000,
-                "step": 1000,
-                "default": 10000,
-                "depends_on": "thinking_enabled",
-            },
+            # max_tokens / thinking_enabled / thinking_budget 은 HarnessConfig top-level
+            # (전역 ConfigPanel) 단일 진실 소스. stage_params 에 박혀도 엔진이 안 읽어 박제
+            # 였음 (v0.29.1 audit). stage detail 에서 제거하고 전역 패널에서만 만지도록 일원화.
         ],
         "behavior": [
             "카탈로그 자동 수집 (Stage/Capability/Tool/Resource)",
@@ -151,10 +129,35 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 20,
                 "default": 5,
             },
-            # v0.26.0 — memory_source 필드 제거 (D2).
-            # stage.py 가 이 필드를 한 번도 read 하지 않음 (grep 0 hit). 실제 동작은
-            # strategy 분기 (default vs embedding_search) 와 ServiceProvider.documents
-            # 주입 여부로만 결정. 빈 multi_select 가 사용자 거짓말이었음.
+            # v0.29.1 — embedding_search 전략 임계 3종 노출 (코드는 이미 read 중인데
+            # UI 통로가 없어 사용자가 못 박던 것 — audit 로 발견).
+            {
+                "id": "memory_collection",
+                "label": "메모리 컬렉션",
+                "type": "select",
+                "options_source": "rag_collections",
+                "default": "memory",
+                "description": "embedding_search 전략에서 검색할 컬렉션. 기본 'memory'. xgen-documents 에 미리 컬렉션이 있어야 함.",
+            },
+            {
+                "id": "memory_top_k",
+                "label": "메모리 검색 상위 K",
+                "type": "number",
+                "min": 1,
+                "max": 20,
+                "default": 5,
+                "description": "embedding_search 가 컬렉션에서 가져올 상위 K 결과 수.",
+            },
+            {
+                "id": "memory_score_threshold",
+                "label": "메모리 점수 임계",
+                "type": "slider",
+                "min": 0,
+                "max": 1,
+                "step": 0.05,
+                "default": 0.3,
+                "description": "이 점수 이상 결과만 system_prompt 에 주입. 0 이면 전체 포함.",
+            },
         ],
         "behavior": [
             "DB에서 최근 N개 실행 결과 조회",
@@ -178,15 +181,9 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "placeholder": "에이전트의 역할을 정의하세요...",
                 "default": "",
             },
-            # v0.11.23 — prompt store / my-prompts 선택. 이전에 이식에 stage_id 수동 매핑.
-            {
-                "id": "prompt_id",
-                "label": "Prompt Store / My Prompts",
-                "type": "select",
-                "options_source": "prompt-store",
-                "default": "",
-                "description": "저장된 프롬프트 템플릿을 선택하면 system_prompt 대신 사용. 비워두면 system_prompt 그대로.",
-            },
+            # v0.29.1 — prompt_id 필드 제거 (audit). stage.py 어디서도 안 읽음 — dead spec.
+            # 향후 prompt store wiring 추가 시 이식측 (harness_bridge) 가 prompt_id 받아
+            # state.config.system_prompt 에 fetch & inject 한 뒤 엔진에 넘기는 패턴 권장.
             {
                 "id": "include_rules",
                 "label": "기본 규칙 포함",
@@ -286,14 +283,9 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": False,
                 "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건.",
             },
-            {
-                "id": "capabilities",
-                "label": "Capabilities",
-                "type": "multi_select",
-                "options_source": "capabilities",
-                "default": [],
-                "description": "Capability 카탈로그 선택 — 도구 자동 바인딩.",
-            },
+            # v0.29.1 — capabilities stage_params 필드 제거 (audit).
+            # s04 코드는 stage_params.s04_tool.capabilities 안 읽고 state.config.capabilities
+            # (top-level) 만 read. 전역 ConfigPanel 또는 s05_strategy capability 모드로 일원화.
         ],
         "behavior": [
             "단일 공급 채널: 모든 도구는 ToolSource.list_tools() 로 수집",
@@ -316,8 +308,11 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "id": "planning_mode",
                 "label": "계획 모드",
                 "type": "select",
-                "options": ["cot", "react", "none"],
+                # v0.29.1 — auto / capability 옵션 추가. 코드는 이미 지원 중인데 UI 가
+                # 3 개만 노출해 사용자가 capability mode / auto 모드를 못 골랐다.
+                "options": ["auto", "cot", "react", "capability", "none"],
                 "default": "cot",
+                "description": "auto: s01 input_complexity 보고 simple→none / moderate→cot / complex→react 자동 라우팅 / cot: 단계별 계획 지시 추가 / react: Thought→Action→Observation 루프 지시 / capability: 자연어 intent → capability 자동 발견 (등록된 spec 매칭) / none: 계획 단계 비활성화.",
             },
             {
                 "id": "intent_rules",
@@ -326,6 +321,33 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
                 "default": "",
                 "description": "쿼리 키워드 → metadata_filter 자동 매핑 규칙. 매칭되면 s06 이 auto_metadata_filter 로 사용 (명시 filter 없을 때). JSON 배열 문자열",
+            },
+            # v0.29.1 — capability discovery 옵션 3종 노출 (코드는 이미 read 중).
+            {
+                "id": "capability_discovery",
+                "label": "Capability Discovery 활성",
+                "type": "toggle",
+                "default": False,
+                "description": "켜면 cot/react 모드에서도 capability 자동 매칭 같이 실행 (planning 지시 + capability 동시).",
+            },
+            {
+                "id": "capability_top_k",
+                "label": "Capability 후보 수",
+                "type": "number",
+                "min": 1,
+                "max": 10,
+                "default": 3,
+                "description": "capability 모드 / discovery 시 user_input 매칭으로 가져올 상위 K. registry 에 등록된 spec 수보다 작아야 의미.",
+            },
+            {
+                "id": "capability_min_score",
+                "label": "Capability 매칭 임계",
+                "type": "slider",
+                "min": 0,
+                "max": 1,
+                "step": 0.05,
+                "default": 0.4,
+                "description": "이 점수 이상 후보만 채택. 0.4 이하로 낮추면 false positive, 너무 높이면 매칭 0.",
             },
         ],
         "behavior": [
@@ -692,6 +714,60 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 10,
                 "default": 3,
             },
+            # v0.29.1 — guard / budget / content_* 7종 노출 (코드는 이미 read 중).
+            # s05_policy 의 guards 와 다른 별도 채널 — Decide strategy 가 loop 종료
+            # 판단에 사용 (threshold strategy 안에서 검사).
+            {
+                "id": "guards",
+                "label": "Decide Guards (JSON)",
+                "type": "textarea",
+                "placeholder": '예: [{"name":"iteration","params":{"max":3}}]',
+                "default": "",
+                "description": "Decide strategy 가 loop 종료 판단에 검사할 Guard 목록 (JSON 배열). s05_policy 의 guards 와 별도 — 이건 종료 판정용. 비워두면 검사 안 함.",
+            },
+            {
+                "id": "cost_budget_usd",
+                "label": "비용 예산 (USD)",
+                "type": "number",
+                "min": 0,
+                "max": 100,
+                "step": 0.5,
+                "default": 0,
+                "description": "누적 비용이 이 값 이상이면 loop 즉시 complete. 0 이면 검사 안 함.",
+            },
+            {
+                "id": "token_budget",
+                "label": "토큰 예산",
+                "type": "number",
+                "min": 0,
+                "max": 1000000,
+                "step": 1000,
+                "default": 0,
+                "description": "누적 토큰이 이 값 이상이면 loop 즉시 complete. 0 이면 검사 안 함.",
+            },
+            {
+                "id": "content_blocked_patterns",
+                "label": "콘텐츠 차단 패턴 (JSON)",
+                "type": "textarea",
+                "placeholder": '예: ["password", "api_key", "/(?i)credit\\\\s*card/"]',
+                "default": "",
+                "description": "응답 또는 도구 호출에서 차단할 패턴 (JSON 배열). 정규식 가능. 매칭 시 retry. 비우면 검사 안 함.",
+            },
+            {
+                "id": "content_check_target",
+                "label": "콘텐츠 검사 대상",
+                "type": "select",
+                "options": ["both", "response", "tool_calls"],
+                "default": "both",
+                "description": "차단 패턴/PII 검사 대상. both: 응답+도구 호출 / response: 응답만 / tool_calls: 도구 호출만.",
+            },
+            {
+                "id": "content_detect_pii",
+                "label": "PII 자동 탐지",
+                "type": "toggle",
+                "default": False,
+                "description": "켜면 응답에서 이메일/전화/주민번호 같은 PII 패턴 자동 탐지 → retry. content_blocked_patterns 와 합산.",
+            },
         ],
         "behavior": [
             "비용 초과 → complete",
@@ -714,6 +790,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "DB 저장 활성화",
                 "type": "toggle",
                 "default": True,
+            },
+            # v0.29.1 — table_name 노출 (코드는 이미 read 중).
+            {
+                "id": "table_name",
+                "label": "저장 테이블명",
+                "type": "text",
+                "default": "harness_execution_log",
+                "description": "실행 로그가 저장될 DB 테이블명. 기본 'harness_execution_log'. 별도 감사 테이블로 분리하고 싶을 때 변경.",
             },
         ],
         "behavior": [

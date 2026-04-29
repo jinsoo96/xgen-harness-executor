@@ -88,8 +88,12 @@ class HarnessStage(Stage):
         if not harness_mode:
             harness_mode = self.get_param("strategy", state, "autonomous")
         # legacy: strategy="noop" 를 off 로 간주
+        # v0.29.1 — fallback_all 분리. off 는 의도된 정상 경로 (사용자가 자율조립 끔)
+        # → source="off" 로 emit 해서 port 의 fallback_all 경고 (planner 실패 안내) 가
+        # off 케이스에선 안 뜨게 함. 빈 chosen 은 그대로 — Pipeline 이 모든 stage 실행
+        # 하면서 사용자 s04 selected_tools 를 그대로 사용.
         if harness_mode in ("off", "noop"):
-            plan = HarnessPlan.fallback_all(f"harness_mode={harness_mode}")
+            plan = HarnessPlan.off_mode(f"harness_mode={harness_mode}")
             state.metadata["harness_plan"] = plan.to_dict()
             return {
                 "planner_source": plan.source,

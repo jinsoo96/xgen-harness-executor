@@ -77,6 +77,19 @@ class HarnessPlan:
         """LLM 호출/파싱 실패 시 안전망. 빈 chosen 은 Pipeline 에서 '전체 실행'."""
         return cls(chosen=[], reasoning=reason, source="fallback_all")
 
+    @classmethod
+    def off_mode(cls, reason: str = "harness_mode=off — planner 실행 안 함") -> "HarnessPlan":
+        """harness_mode=off / noop 일 때 planner 우회 — 사용자가 의도한 정상 분기.
+
+        v0.29.1 — `fallback_all` 과 분리. fallback_all 은 'planner 가 실패했음' 신호이고
+        사용자에게 경고를 띄워야 하지만, off 는 사용자가 자율 조립을 끄고 자기 s04
+        selected_tools 만으로 가겠다고 명시한 정상 경로 — 경고 X.
+
+        빈 chosen 은 Pipeline 에서 '전체 stage 실행'. 도구 호출은 사용자가 박은
+        state.config.selected_tools 가 그대로 살아남아 적용.
+        """
+        return cls(chosen=[], reasoning=reason, source="off")
+
 
 # ───────────────────────────────────────────────────────────────────
 #  submit_plan 도구 스키마 — HarnessPlan 에서 자동 파생
