@@ -789,7 +789,7 @@ def register_guard(name: str, cls: type[Guard]) -> None:
     테스트 / 일회성 주입용. 정식 확장은 pyproject.toml entry_points 권장.
     """
     if not isinstance(cls, type) or not issubclass(cls, Guard):
-        raise TypeError(f"register_guard: {cls} 는 Guard 서브클래스가 아님")
+        raise TypeError(f"register_guard: {cls} is not a Guard subclass")
     _discover_guards_once()
     _DISCOVERED[name] = cls
 

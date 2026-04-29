@@ -46,7 +46,8 @@ class InputStage(Stage):
             raise PipelineAbortError("Config not set", self.stage_id)
 
         if not state.user_input and not state.attached_files:
-            raise ConfigError("입력이 비어있습니다", self.stage_id)
+            # v1.0 — 한국어 박제 제거. 코드 식별자만 — 이식측이 i18n 으로 사용자 메시지 변환.
+            raise ConfigError("input_empty", self.stage_id)
 
         # 사용자 메시지 push
         state.add_message("user", self._build_user_content(state))
