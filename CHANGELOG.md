@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] — 2026-04-30
+
+### 🛡 Policy Gate emit 본체 + decide defaults 레지스트리화
+
+#### Bug fix (BLOCKER)
+- `s05_policy/stage.py`: `_emit_policy_blocked` 메서드 본문 추가. 기존엔 호출(line 169 / 212)만 있고 본문 없어 Guard block 발생 시 `AttributeError` 로 파이프라인 크래시.
+- 신규 `PolicyBlockedEvent` (events/types.py) 가 4 훅(PRE_MAIN/PRE_TOOL/POST_RESPONSE/LOOP_BOUNDARY) 차단을 SSE 로 발행 — UI 가 어떤 Guard / 어떤 시점 / 어떤 도구 막혔는지 가시화.
+- `event_to_dict` 매핑 정합: `event_type=policy_blocked` 으로 6 필드 (guard_name / hook / reason / severity / tool_name / timestamp) 직렬화.
+
+#### 박제 정리 (확장성)
+- `stages/strategies/_decide.py`: `max_retries=3` magic number 박제 → `_DECIDE_DEFAULTS` 레지스트리 + `register_decide_defaults(**kwargs)` / `get_decide_default(key)` 외부 override API. v1.0.2 "정책 default 박제 정리" 룰을 strategy 영역에도 적용.
+- `validation_threshold=0.7` 도 동일 레지스트리화.
+
+#### 코멘트 / 메타 정합
+- `core/stage.py:99`: `"실행 순서 (0~11)"` → `"v1.0 통합 기준 0~9"` (s00 + s01~s09).
+- `api/router.py:9, 52`: `"12개 스테이지"` → 동적 표현 (registry 기반 — 외부 stage 자동 합류).
+- `compile/npm_spec.py:78`: `harness_version=">=0.28.0,<0.29"` 박제 default → `""` (snapshot.harness_version 가 항상 override 함을 코멘트로 명시. 박제 fallback 회귀 위험 제거).
+
+#### 이식·프론트 동반 변경 (별도 레포)
+- xgen-workflow `harness_bridge/xgen_streaming.py`: `PolicyBlockedEvent` SSE 변환 추가 (`event_kind: "policy_blocked"`).
+- xgen-frontend `packages/harness-store/src/index.ts`: `policy_blocked` → `type: 'policy.blocked'` 매핑.
+- xgen-frontend `features/main-harness-chat/src/components/event-log.tsx`: `EVENT_META['policy.blocked']` 항목 추가 (⛔ 차단 배너).
+
 ## [1.0.0] — 2026-04-30
 
 ### 🔥 BREAKING — 11→10 Stage 고결화 통합

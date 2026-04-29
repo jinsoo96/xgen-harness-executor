@@ -6,7 +6,7 @@ xgen-workflow main.py:
     app.include_router(harness_router, prefix="/api/harness")
 
 엔드포인트:
-    GET  /api/harness/stages      — 12개 스테이지 설명 + required 정보
+    GET  /api/harness/stages      — 등록된 모든 스테이지 설명 + required 정보 (v1.0 = 10)
     POST /api/harness/execute     — SSE 스트리밍 실행
     POST /api/harness/orchestrate — 멀티에이전트 DAG SSE 실행
     WS   /api/harness/ws/{sid}    — WebSocket 실행
@@ -49,7 +49,7 @@ try:
 
     @harness_router.get("/stages")
     async def list_stages():
-        """12개 스테이지 전체 + required + 설정 스키마"""
+        """등록된 스테이지 전체 + required + 설정 스키마 (registry 기반 — 추가 stage 자동 합류)"""
         from ..core.stage_config import get_all_stage_configs
         registry = ArtifactRegistry.default()
         stages = registry.describe_all()

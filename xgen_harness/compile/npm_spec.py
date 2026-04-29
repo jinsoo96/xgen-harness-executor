@@ -75,7 +75,11 @@ class HarnessSpec:
     """
 
     spec_version: str = SPEC_VERSION
-    harness_version: str = ">=0.28.0,<0.29"
+    # default 는 dataclass 인스턴스 직접 생성 시에만 사용 (build_spec 경로는
+    # snapshot.harness_version 으로 항상 override 함 — npm_spec.py:131 참조).
+    # 정확한 값은 컴파일 시점 __version__ 으로 결정 (snapshot._current_harness_spec).
+    # 박제 fallback 은 회귀 위험 — 빈 문자열 = "어떤 엔진 버전과도 호환".
+    harness_version: str = ""
     gallery_name: str = ""
     gallery_version: str = "0.1.0"
     compiled_at: str = ""

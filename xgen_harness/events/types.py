@@ -174,6 +174,21 @@ class RetryEvent(HarnessEvent):
     max_attempts: int = 1
 
 
+@dataclass
+class PolicyBlockedEvent(HarnessEvent):
+    """Policy Gate 가 Guard 체크에서 block 한 사실을 외부에 알림.
+
+    UI 는 이 이벤트로 "정책 차단" 배너를 띄우고, 사용자에게 어떤 Guard 가
+    어떤 훅에서 왜 막았는지 가시화. 본 이벤트가 없으면 s05_policy 는
+    `bypassed: true` 로만 보여 "정책이 돌긴 했나?" 의심을 산다.
+    """
+    guard_name: str = ""                     # "cost_budget" / "iteration" / ...
+    hook: str = ""                            # "loop_boundary" / "pre_main" / "post_response" / "pre_tool"
+    reason: str = ""                          # Guard 가 돌려준 사유 (예: "비용 예산 초과 ($0.0170 >= $0.00)")
+    severity: str = "block"                   # "block" 만 emit (warn/info 는 안 흘림)
+    tool_name: str = ""                       # PRE_TOOL 차단 시 어떤 도구가 막혔는지
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Harness Planner — v0.12.0 "Real Harness" 축 A
 #  LLM 이 카탈로그를 보고 Stage/파라미터/Strategy 를 런타임 조립한 결과.
@@ -243,6 +258,7 @@ def event_to_dict(event: HarnessEvent) -> dict[str, Any]:
         CapabilityBindEvent: "capability_bind",
         StageSubstepEvent: "stage_substep",
         RetryEvent: "retry",
+        PolicyBlockedEvent: "policy_blocked",
         PlanningEvent: "planning",
         ApprovalRequiredEvent: "approval_required",
         ApprovalDecidedEvent: "approval_decided",

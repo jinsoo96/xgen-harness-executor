@@ -166,6 +166,7 @@ class PolicyGateStage(Stage):
             )
             if hook == HookPoint.LOOP_BOUNDARY:
                 state.loop_decision = "complete"
+            await self._emit_policy_blocked(state, blocked, hook)
         return {
             "hook": hook.value,
             "guards_checked": len(chain.guards),
@@ -208,6 +209,7 @@ class PolicyGateStage(Stage):
                 "[PolicyGate] pre_tool 차단: %s (tool=%s) — %s",
                 blocked.guard_name, tool_name, blocked.reason,
             )
+            await self._emit_policy_blocked(state, blocked, HookPoint.PRE_TOOL, tool_name=tool_name)
 
         if blocked_ids:
             # 차단된 항목 제거
@@ -228,3 +230,25 @@ class PolicyGateStage(Stage):
     def list_strategies(self) -> list[StrategyInfo]:
         # Strategy Variants 대신 Guard 조합으로 구성 — Strategy 슬롯 없음.
         return []
+
+    async def _emit_policy_blocked(
+        self,
+        state: PipelineState,
+        blocked: Any,
+        hook: Any,
+        tool_name: str = "",
+    ) -> None:
+        """Guard block 사실을 PolicyBlockedEvent 로 발행. UI 가 "정책 차단" 배너 표시.
+
+        block 은 사용자에게 즉시 가시화돼야 하는 정상 흐름(verbose 게이트 X)이라
+        emit_event 사용. emitter 미연결이어도 throw 안 함 (state.emit_event 가 흡수).
+        """
+        from ...events.types import PolicyBlockedEvent
+        hook_value = getattr(hook, "value", str(hook))
+        await state.emit_event(PolicyBlockedEvent(
+            guard_name=getattr(blocked, "guard_name", "") or "",
+            hook=hook_value,
+            reason=getattr(blocked, "reason", "") or "",
+            severity=getattr(blocked, "severity", "block") or "block",
+            tool_name=tool_name,
+        ))

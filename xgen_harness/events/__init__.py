@@ -11,6 +11,7 @@ from .types import (
     MetricsEvent,
     ErrorEvent,
     DoneEvent,
+    PolicyBlockedEvent,
     event_to_dict,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "MetricsEvent",
     "ErrorEvent",
     "DoneEvent",
+    "PolicyBlockedEvent",
     "event_to_dict",
 ]

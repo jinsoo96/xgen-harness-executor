@@ -96,7 +96,7 @@ class Stage(ABC):
     @property
     @abstractmethod
     def order(self) -> int:
-        """실행 순서 (0~11)"""
+        """실행 순서. v1.0 통합 기준 0~9 (s00_harness=0 통제탑 + s01_input~s09_finalize)."""
         ...
 
     @property

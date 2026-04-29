@@ -26,6 +26,29 @@ LOOP_ERROR = "error"
 LOOP_ESCALATE = "escalate"
 
 
+# default 값은 외부 override 가능한 단일 레지스트리. v1.0.2 "정책 default 박제 정리"
+# 룰을 strategy 영역에도 적용 — magic number 가 함수 본문에 박히지 않도록 한다.
+_DECIDE_DEFAULTS: dict[str, Any] = {
+    "max_retries": 3,
+    "validation_threshold": 0.7,
+}
+
+
+def register_decide_defaults(**kwargs: Any) -> None:
+    """외부 갤러리/이식측에서 decide 기본값을 조정.
+
+    예: `register_decide_defaults(max_retries=5)` → ThresholdDecide.decide 가
+    params 에 max_retries 가 없을 때 5 사용.
+    """
+    for k, v in kwargs.items():
+        if k in _DECIDE_DEFAULTS:
+            _DECIDE_DEFAULTS[k] = v
+
+
+def get_decide_default(key: str) -> Any:
+    return _DECIDE_DEFAULTS.get(key)
+
+
 class ThresholdDecide(DecideStrategy):
     """도구 호출 대기 / 검증 점수 / 텍스트 응답 기반 루프 판단.
 
@@ -64,10 +87,12 @@ class ThresholdDecide(DecideStrategy):
         validation_score = getattr(state, "validation_score", None)
         if validation_score is not None:
             config = getattr(state, "config", None)
-            threshold = getattr(config, "validation_threshold", 0.7) if config else 0.7
+            default_threshold = _DECIDE_DEFAULTS["validation_threshold"]
+            threshold = getattr(config, "validation_threshold", default_threshold) if config else default_threshold
             if validation_score < threshold:
                 retry_count = int(getattr(state, "retry_count", 0) or 0)
-                max_retries = int(params.get("max_retries", 3) or 3)
+                default_max = _DECIDE_DEFAULTS["max_retries"]
+                max_retries = int(params.get("max_retries", default_max) or default_max)
                 if retry_count < max_retries:
                     return {
                         "decision": LOOP_RETRY,
