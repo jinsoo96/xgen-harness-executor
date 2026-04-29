@@ -5,6 +5,43 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] — 2026-04-29
+
+### 🎯 npm 컴파일 채널 1차 — 외부 MCP 생태계 호환
+
+기존 Python wheel + inline pip install 패턴 (mcp-station 의 다른 MCP 서버들과
+이질적) 대신 표준 npx 패턴으로 전환. wrapper 는 minio presigned tarball, engine
+은 npmjs registry 의 `xgen-harness-engine-node`. fully equivalent — 모든 stage
+설정값 spec.json 1:1.
+
+### 신규
+- `xgen_harness/compile/npm_spec.py` — `HarnessSpec` (HarnessConfig 1:1) +
+  `freeze_http_tool` / `freeze_xgen_node_tool` (alias) / `freeze_mcp_session_tool`
+  / `freeze_rag_tool`
+- `xgen_harness/compile/npm_pack.py` — `compile_workflow_to_npm()` +
+  `build_npm_package()` + `NpmPackResult` (dist_name / wheel_path alias 호환)
+- `node-engine/` — TypeScript 신규 패키지 (`xgen-harness-engine-node` npmjs publish)
+  - 13 stage 1:1 포팅 (s00 ~ s11)
+  - 4 strategy 본문 (cot_planner / react / capability / + none)
+  - 6 context strategy (token_budget / sliding_window / microcompact /
+    context_collapse_overlay / autocompact_llm / cascade) + RAG dispatch
+  - llm_judge 본문 (4 기준 가중평균)
+  - 4 빌트인 Guard (cost_cap / max_loop / pii_block / domain_allow) +
+    `registerGuard()` 확장점
+  - capability binding (spec.config.capabilities → tool_definitions 자동 합류)
+  - 4 provider — Anthropic / OpenAI / vLLM (Qwen `<tool_call>` XML parser
+    1:1 포팅, 0.27.1 의 알고리즘 그대로)
+  - frozen tool dispatch (http / mcp_session / rag / noop)
+  - MCP stdio server (`@modelcontextprotocol/sdk`)
+
+### 변경 (deprecated 마킹)
+- `compile/wheel.py` — Python wheel 빌더, v0.30 제거 예정
+- `compile/mcp_server.py` — wheel 안의 stdio wrapper, v0.30 제거 예정
+
+### 비파괴
+- 기존 `compile_workflow` (wheel) 그대로 import 가능 — 마이그레이션 기간 동안
+  외부 사용자 깨지지 않음.
+
 ## [0.27.1] — 2026-04-29
 
 ### 🐛 vLLM/Qwen native `<tool_call>` 텍스트 파서
