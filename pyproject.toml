@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.29.1"
-description = "XGEN Harness — UI 필드 audit 정리. 박제 3건 제거(s00 max_tokens/thinking_*, s03 prompt_id, s04 capabilities) + 미노출 필드 7건 추가(s02 memory_*, s05_strategy capability_*, s09 guards/budget/content_*, s10 table_name, planning_mode 에 auto/capability 추가). 엔진 코드 경로는 이미 read 중이었으나 UI 통로가 닫혀있어 사용자가 못 박던 설정들."
+version = "0.29.2"
+description = "XGEN Harness — Stage UI 필드 end-to-end 정합. v0.29.1 의 s09 추가 6건 dead 발견(ThresholdDecide v0.17.0+ 가 안 씀, Policy Gate 가 단일 채널) → 제거 + s09_decide.execute() 의 dead get_param 호출도 정리. 추가로 코드는 read 중인데 UI 미노출이던 진짜 active 2건 노출(s04 rag_tool_mode, s06 window_size). off_mode source 분리 + 도구 이벤트 SSE 파서 정정 (frontend) 함께. 모든 stage UI 필드가 engine read 와 1:1 align."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

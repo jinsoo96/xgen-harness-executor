@@ -283,6 +283,15 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": False,
                 "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건.",
             },
+            # v0.29.2 — RAG 도구 노출 모드 (코드는 이미 read 중).
+            {
+                "id": "rag_tool_mode",
+                "label": "RAG 도구 노출 모드",
+                "type": "select",
+                "options": ["both", "tool", "system_prompt"],
+                "default": "both",
+                "description": "both: system prompt 주입 + rag_search 도구 둘 다 / tool: 도구로만 노출 (system prompt skip → tool_result 누적 → L3 microcompact 발동) / system_prompt: 즉시 주입만 (도구 노출 X). s06 의 rag_ingestion_mode 와 자동 정합.",
+            },
             # v0.29.1 — capabilities stage_params 필드 제거 (audit).
             # s04 코드는 stage_params.s04_tool.capabilities 안 읽고 state.config.capabilities
             # (top-level) 만 read. 전역 ConfigPanel 또는 s05_strategy capability 모드로 일원화.
@@ -591,6 +600,16 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": 3,
                 "description": "autocompact 후 messages 말미에 온전히 남길 최근 메시지 개수",
             },
+            # v0.29.2 — sliding_window strategy 의 윈도우 크기 (코드는 이미 read 중).
+            {
+                "id": "window_size",
+                "label": "Sliding Window 크기 (메시지 수)",
+                "type": "number",
+                "min": 1,
+                "max": 100,
+                "default": 20,
+                "description": "strategy=sliding_window 일 때 messages 말미에서 유지할 최근 메시지 개수. 다른 압축 strategy 에서는 무시.",
+            },
         ],
         "behavior": [
             "3단계 압축: 오래된 메시지 제거 → 저우선순위 섹션 삭제 → 요약",
@@ -713,60 +732,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 10,
                 "default": 3,
-            },
-            # v0.29.1 — guard / budget / content_* 7종 노출 (코드는 이미 read 중).
-            # s05_policy 의 guards 와 다른 별도 채널 — Decide strategy 가 loop 종료
-            # 판단에 사용 (threshold strategy 안에서 검사).
-            {
-                "id": "guards",
-                "label": "Decide Guards (JSON)",
-                "type": "textarea",
-                "placeholder": '예: [{"name":"iteration","params":{"max":3}}]',
-                "default": "",
-                "description": "Decide strategy 가 loop 종료 판단에 검사할 Guard 목록 (JSON 배열). s05_policy 의 guards 와 별도 — 이건 종료 판정용. 비워두면 검사 안 함.",
-            },
-            {
-                "id": "cost_budget_usd",
-                "label": "비용 예산 (USD)",
-                "type": "number",
-                "min": 0,
-                "max": 100,
-                "step": 0.5,
-                "default": 0,
-                "description": "누적 비용이 이 값 이상이면 loop 즉시 complete. 0 이면 검사 안 함.",
-            },
-            {
-                "id": "token_budget",
-                "label": "토큰 예산",
-                "type": "number",
-                "min": 0,
-                "max": 1000000,
-                "step": 1000,
-                "default": 0,
-                "description": "누적 토큰이 이 값 이상이면 loop 즉시 complete. 0 이면 검사 안 함.",
-            },
-            {
-                "id": "content_blocked_patterns",
-                "label": "콘텐츠 차단 패턴 (JSON)",
-                "type": "textarea",
-                "placeholder": '예: ["password", "api_key", "/(?i)credit\\\\s*card/"]',
-                "default": "",
-                "description": "응답 또는 도구 호출에서 차단할 패턴 (JSON 배열). 정규식 가능. 매칭 시 retry. 비우면 검사 안 함.",
-            },
-            {
-                "id": "content_check_target",
-                "label": "콘텐츠 검사 대상",
-                "type": "select",
-                "options": ["both", "response", "tool_calls"],
-                "default": "both",
-                "description": "차단 패턴/PII 검사 대상. both: 응답+도구 호출 / response: 응답만 / tool_calls: 도구 호출만.",
-            },
-            {
-                "id": "content_detect_pii",
-                "label": "PII 자동 탐지",
-                "type": "toggle",
-                "default": False,
-                "description": "켜면 응답에서 이메일/전화/주민번호 같은 PII 패턴 자동 탐지 → retry. content_blocked_patterns 와 합산.",
+                "description": "검증 점수 미달 시 LLM 답변 재시도 한도. 비용/토큰/콘텐츠 정책 같은 다른 종료 조건은 s05_policy (Policy Gate) 의 guards 로 선언 — v0.17.0 부터 Policy Gate 가 단일 채널.",
             },
         ],
         "behavior": [

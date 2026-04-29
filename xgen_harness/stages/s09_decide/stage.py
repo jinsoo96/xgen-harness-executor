@@ -72,15 +72,13 @@ class DecideStage(Stage):
             logger.error("[Decide] %s", reason)
             return {"decision": LOOP_ERROR, "reason": reason}
 
+        # v0.29.2 — guards / cost_budget_usd / token_budget / content_* dead read 제거.
+        # ThresholdDecide (v0.17.0+) 가 이 params 를 더 이상 소비하지 않음 — Policy Gate
+        # (s05_policy) 가 LOOP_BOUNDARY 훅에서 Guard 체인을 직접 실행한 결과를
+        # state.policy_block_reason / loop_decision 으로 전달받아 그 결정을 존중.
+        # max_retries 만 retry 카운트 비교용으로 의미.
         params = {
-            "guards": self.get_param("guards", state, None),
-            "cost_budget_usd": self.get_param("cost_budget_usd", state, 0.0),
-            "token_budget": self.get_param("token_budget", state, 0),
             "max_retries": self.get_param("max_retries", state, 3),
-            # ContentGuard 설정 — 패턴/PII/대상
-            "content_blocked_patterns": self.get_param("content_blocked_patterns", state, None),
-            "content_detect_pii": self.get_param("content_detect_pii", state, False),
-            "content_check_target": self.get_param("content_check_target", state, "both"),
         }
 
         try:
