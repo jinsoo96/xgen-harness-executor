@@ -124,7 +124,13 @@ class ValidateStage(Stage):
             return {"bypassed": True, "reason": "no response to validate"}
 
         # ── Strategy 디스패치 ──
-        strategy = self.resolve_strategy("evaluation", state, "llm_judge")
+        # v0.27.x — default 를 'none' 으로 변경. llm_judge 는 사용자가 명시 선택해야
+        # 발동 (추가 LLM 호출 비용 보호).
+        strategy_name = self.get_param("strategy", state, "none")
+        if strategy_name == "none":
+            return {"bypassed": True, "reason": "judge=none (검증 비활성화 default)"}
+
+        strategy = self.resolve_strategy("evaluation", state, "none")
         if strategy:
             from ...stages.interfaces import EvaluationStrategy
             if isinstance(strategy, EvaluationStrategy):
@@ -247,8 +253,12 @@ class ValidateStage(Stage):
             return 0.7, "Evaluation parsing failed, assuming acceptable", "pass"
 
     def list_strategies(self) -> list[StrategyInfo]:
+        # default = none (검증 비활성화). llm_judge / rule_based 는 사용자가 명시
+        # 선택했을 때만 활성화. 사유: 추가 LLM 호출 비용/지연이 묵시적으로 발생하지
+        # 않도록. 이전엔 llm_judge 가 default 라서 단순 채팅에도 매 iteration 마다
+        # judge LLM 호출이 추가됐다.
         return [
-            StrategyInfo("llm_judge", "독립 LLM으로 4가지 기준 평가", is_default=True),
-            StrategyInfo("rule_based", "규칙 기반 평가 (길이, 키워드)"),
-            StrategyInfo("none", "검증 비활성화"),
+            StrategyInfo("none", "검증 비활성화 (기본). 추가 LLM 호출 없음.", is_default=True),
+            StrategyInfo("llm_judge", "독립 LLM 으로 4가지 기준 평가 — 추가 비용 발생"),
+            StrategyInfo("rule_based", "규칙 기반 평가 (길이/키워드) — LLM 비호출"),
         ]

@@ -48,6 +48,23 @@ class DecideStage(Stage):
         return 9
 
     async def execute(self, state: PipelineState) -> dict:
+        # s07_act 의 strict_no_error 변형이 도구 실패를 감지하면 즉시 stop.
+        # 박은 측: stages/s07_act/stage.py · 키 prefix 's07_strict_*'.
+        # 폴리시: 부분 성공 위에서 LLM 이 추측 답변하느니 명시 에러로 종료.
+        if state.metadata.get("s07_strict_failed"):
+            failures = state.metadata.get("s07_strict_failures") or []
+            reason = (
+                f"strict_no_error: {len(failures)}개 도구 실패 — "
+                f"후속 LLM 합성 차단"
+            )
+            logger.warning("[Decide] %s · failures=%s", reason, failures[:3])
+            state.loop_decision = LOOP_COMPLETE
+            return {
+                "decision": LOOP_COMPLETE,
+                "reason": reason,
+                "strict_failures": failures,
+            }
+
         strategy = self.resolve_strategy("decide", state, "threshold")
         if strategy is None:
             state.loop_decision = LOOP_ERROR

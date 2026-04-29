@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.26.20"
-description = "XGEN Harness — tool 후 합성 답변 safeguard 임계값 도입. max_iter=1 + 도구 활성 환경에서 LLM 이 짧은 intro (예: '분석해드리겠습니다' 37자) 흘리고 tool_use 로 끝나면 도구 결과만 남고 합성 답변이 안 나와 사용자에게 37자만 도달하던 결함. 기존 'last_assistant_text 빈 경우' safeguard 를 'intro<200자' 로 일반화 — tool_use 가 일어난 흔적 + max_iter 닫힘 + 짧은 텍스트 셋이면 도구 비활성 1회 추가 호출로 합성 강제."
+version = "0.27.0"
+description = "XGEN Harness — UX 6트랙 + Bug fix 일괄. preset 키 자동 expand (harness_config.preset='minimal' 등이 disabled_stages/active_strategies/max_iter 로 풀리도록), selected_tools list 형태 글로벌 화이트리스트화, max_retries 가 max_iterations 와 fallback (UI 단일 컨트롤 일관성), s08_judge default=none (추가 LLM 비용 보호), s02_history 'none' variant (이력 무시 독립실행), s07_act 'strict_no_error' variant + s09_decide wiring (도구 1개라도 실패 시 즉시 stop), unknown preset warning."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

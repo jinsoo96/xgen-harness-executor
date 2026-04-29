@@ -60,6 +60,21 @@ class ExecuteStage(Stage):
         else:
             results, total_chars = await self._execute_sequential(tool_calls, state, result_budget)
 
+        # strict_no_error: 도구 1개라도 실패하면 즉시 stop_on_error 마킹.
+        # 사유: 신뢰성 모드 — 부분 성공으로 LLM 이 추측 답변하는 것보다 명시 에러로
+        # 사용자에게 알리는 게 낫다는 사용자 피드백.
+        if strategy_name == "strict_no_error":
+            failed = [r for r in results if not r.get("success")]
+            if failed:
+                state.metadata["s07_strict_failed"] = True
+                state.metadata["s07_strict_failures"] = [
+                    {"tool": r.get("tool_name"), "error": r.get("error")} for r in failed
+                ]
+                logger.warning(
+                    "[Execute] strict_no_error: %d/%d 도구 실패 — 후속 LLM 합성 차단",
+                    len(failed), len(results),
+                )
+
         # 도구 결과를 messages에 flush
         state.flush_tool_results()
         state.tools_executed_count += len(results)
@@ -458,6 +473,17 @@ class ExecuteStage(Stage):
 
     def list_strategies(self) -> list[StrategyInfo]:
         return [
-            StrategyInfo("default", "순차 실행 + 에러 허용", is_default=True),
-            StrategyInfo("parallel_read", "읽기 도구 병렬, 쓰기 도구 직렬"),
+            StrategyInfo(
+                "default",
+                "순차 실행 + 에러 허용 (한 도구 실패해도 다음 도구 진행, LLM 이 보고 판단)",
+                is_default=True,
+            ),
+            StrategyInfo(
+                "parallel_read",
+                "읽기 도구 병렬 + 쓰기 도구 직렬 — 도구가 readOnlyHint 선언 시 자동 분기. 응답 빠름.",
+            ),
+            StrategyInfo(
+                "strict_no_error",
+                "에러 비허용 — 도구 1개라도 실패하면 즉시 중단 표시. 신뢰성 우선.",
+            ),
         ]

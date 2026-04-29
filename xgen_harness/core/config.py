@@ -296,11 +296,39 @@ class HarnessConfig:
         if isinstance(disabled_list, list):
             disabled = {_canonical(s) for s in disabled_list} - REQUIRED_STAGES
 
-        # 레거시 preset 호환
-        preset = harness_config.get("preset", "")
-        if preset and not disabled_list:
-            # 프리셋이 있으면 무시 (전부 활성)
-            pass
+        # preset 키 풀어주기 — `harness_config.preset = "minimal" | "chat" | ...`
+        # 만 박혀있으면 PRESETS 에서 disabled_stages / active_strategies /
+        # max_iterations 를 펼쳐서 채운다. 사용자가 disabled_stages 를 명시했으면
+        # 그게 우선 (사용자 명시 > preset).
+        preset_name = (harness_config.get("preset") or "").strip()
+        preset_strategies: dict[str, str] = {}
+        preset_max_iter: int | None = None
+        preset_temp: float | None = None
+        if preset_name:
+            try:
+                from .presets import PRESETS as _PRESETS
+                _p = _PRESETS.get(preset_name)
+                if _p is not None:
+                    if not disabled_list:
+                        disabled = set(_p.disabled_stages) - REQUIRED_STAGES
+                    preset_strategies = dict(_p.active_strategies)
+                    preset_max_iter = _p.max_iterations
+                    preset_temp = _p.temperature
+                else:
+                    # 등록되지 않은 preset 이름 — 외부 작업자가 PRESETS.register() 를
+                    # 빠뜨렸거나 사용자 오타. silent fail 은 디버깅을 어렵게 한다.
+                    import logging as _logging
+                    _logger = _logging.getLogger("xgen_harness.config")
+                    _logger.warning(
+                        "[HarnessConfig] unknown preset=%r — 등록된 preset: %s. "
+                        "사용자 명시 disabled_stages/active_strategies 그대로 적용.",
+                        preset_name, sorted(_PRESETS.keys()),
+                    )
+            except Exception as _e:
+                # presets 모듈 import 실패 시 silent — 기존 동작 유지. 단 debug 로그.
+                import logging as _logging
+                _logger = _logging.getLogger("xgen_harness.config")
+                _logger.debug("[HarnessConfig] presets 모듈 import 실패: %s", _e)
 
         from ..providers import get_default_provider
         return cls(
@@ -311,20 +339,50 @@ class HarnessConfig:
             ),
             # model 은 sentinel "" 로 받음 — 어댑터/s01_input 이 런타임에 PROVIDER_DEFAULT_MODEL 참조.
             model=harness_config.get("model") or agent_config.get("model", ""),
-            temperature=float(harness_config.get("temperature", agent_config.get("temperature", 0.7))),
+            temperature=float(
+                harness_config.get(
+                    "temperature",
+                    agent_config.get(
+                        "temperature",
+                        preset_temp if preset_temp is not None else 0.7,
+                    ),
+                )
+            ),
             max_tokens=int(harness_config.get("max_tokens", 8192)),
             aux_max_tokens=int(harness_config.get("aux_max_tokens", 500)),
             # provider 별 폴백은 런타임 PROVIDER_DEFAULT_MODEL 에서 해석. 여기선 명시값만 전달.
             openai_model=harness_config.get("openai_model") or agent_config.get("openai_model", ""),
             anthropic_model=harness_config.get("anthropic_model") or agent_config.get("anthropic_model", ""),
             system_prompt=harness_config.get("system_prompt") or agent_config.get("system_prompt", ""),
-            max_iterations=int(harness_config.get("max_iterations", 10)),
-            max_retries=int(harness_config.get("max_retries", 3)),
+            max_iterations=int(
+                harness_config.get(
+                    "max_iterations",
+                    preset_max_iter if preset_max_iter is not None else 10,
+                )
+            ),
+            # max_retries 가 명시되지 않으면 max_iterations 와 동기화. 사유: UI 가
+            # 통상 "최대 반복 N회" 한 컨트롤만 노출 → 사용자가 N=5 로 늘려도 retry
+            # cap=3 이 별도로 잘랐던 회귀 (BUG-C). 두 변수 의미는 다르지만 (iteration
+            # = 도구→LLM 루프 / retries = validation 재시도) UI 단일 출처를 보장.
+            max_retries=int(
+                harness_config.get(
+                    "max_retries",
+                    int(harness_config.get(
+                        "max_iterations",
+                        preset_max_iter if preset_max_iter is not None else 10,
+                    )),
+                )
+            ),
             validation_threshold=float(harness_config.get("validation_threshold", 0.7)),
             disabled_stages=disabled,
             artifacts=_alias_map(harness_config.get("artifacts", {})),
             stage_params=_alias_map(harness_config.get("stage_params", {})),
-            active_strategies=_alias_map(harness_config.get("active_strategies", {})),
+            # 사용자 명시 active_strategies > preset active_strategies. preset 만
+            # 있으면 그걸로 채움. 둘 다 있으면 사용자가 박은 키만 override.
+            active_strategies=_alias_map({
+                **preset_strategies,
+                **(harness_config.get("active_strategies") or {}),
+            }),
             strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
@@ -337,7 +395,7 @@ class HarnessConfig:
             capabilities=list(harness_config.get("capabilities", []) or []),
             capability_params=dict(harness_config.get("capability_params", {}) or {}),
             external_inputs=dict(harness_config.get("external_inputs", {}) or {}),
-            preset=preset,
+            preset=preset_name,
         )
 
 

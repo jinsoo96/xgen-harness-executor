@@ -5,6 +5,30 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] — 2026-04-29
+
+### 🐛 BUG-A — `harness_config.preset` 키 자동 expand
+이전: `preset="minimal"` 만 박으면 엔진이 무처리(`pass`) → 모든 13 stage 그대로 실행 → 사용자 의도와 정반대.
+현재: `core/config.py:from_workflow` 에서 `from .presets import PRESETS` 로 동적 lookup → `disabled_stages` / `active_strategies` / `max_iterations` / `temperature` 자동 채움. **사용자 명시 값은 항상 우선**. unknown preset 이름은 `WARNING` 으로 등록된 preset 목록을 동적 출력 (외부 `PRESETS.register` 도 자동 흡수 — 확장성 보존).
+
+### 🐛 BUG-B — `selected_tools` list 형태 글로벌 화이트리스트
+이전: dict (`{source_id: [name]}`) 만 처리. list 받으면 silently fallback → 모든 도구 LLM context dump → 비용 폭증 (실측 단순 채팅 1턴에 16K 토큰).
+현재: `stages/s04_tool/stage.py` 에서 list 형태도 정규화 → 글로벌 화이트리스트로 적용.
+
+### 🐛 BUG-C — `max_retries` 가 `max_iterations` 와 fallback
+이전: max_retries default=3 hardcoded. 사용자가 max_iterations=5 늘려도 retry cap=3 에서 잘림 → UI 속임.
+현재: `max_retries` 명시 안되면 `max_iterations` 와 동기화 (둘 다 횟수 cap). 사용자 명시 시 그게 우선. UI 단일 컨트롤(`max_iterations`) 일관성.
+
+### ✨ UX-2 — `s07_act` 에 `strict_no_error` variant + s09 wiring
+도구 1개라도 실패 시 즉시 중단. `state.metadata['s07_strict_failed']` 박고 **`s09_decide` 가 즉시 `LOOP_COMPLETE` 로 stop** (wiring 완성).
+
+### ✨ UX-4 — `s08_judge` default 를 `none` 으로
+이전: `llm_judge` default → 단순 채팅에도 매 iteration 마다 추가 LLM 호출.
+현재: `none` default. preset='evaluator' 가 명시 선택하므로 evaluator 사용자 영향 없음.
+
+### ✨ UX-7 — `s02_history` 에 `none` variant
+이력 무시 (매 turn 독립 실행). 변형 description 명확화.
+
 ## [0.26.13] — 2026-04-27
 
 ### 🐛 OpenAI tool schema 정규화 — Tavily 류 MCP 도구 400 수정

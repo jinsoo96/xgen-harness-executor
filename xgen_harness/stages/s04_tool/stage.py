@@ -27,6 +27,7 @@ S04 Tool Index — Progressive 도구 디스커버리 (v0.25.0 재설계)
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from ...core.stage import Stage, StrategyInfo
 from ...core.state import PipelineState
@@ -62,9 +63,21 @@ class ToolIndexStage(Stage):
             return {"strategy": "none", "tools_indexed": 0, "definitions_bound": 0}
 
         # ─── stage_params ──────────────────────────────────────────────
-        selected_tools_by_source: dict[str, list[str]] = (
-            self.get_param("selected_tools", state, {}) or {}
-        )
+        # selected_tools 입력 형태 두 가지 모두 허용:
+        #   1) dict {source_id: [tool_name, ...]}  — source 별 화이트리스트
+        #   2) list [tool_name, ...]               — 글로벌 화이트리스트 (모든 source)
+        # 사유: 사용자가 "이 도구 1개만 쓰고 싶다" 할 때 source_id 를 알 필요 없게.
+        # 이전 버전은 list 받으면 .get(sid) 호출에서 AttributeError → silently fallback
+        # → 모든 도구 노출 → 비용 폭증 (BUG-B 실측: selected=[tavily] 인데 brave 도 호출).
+        _sel_raw = self.get_param("selected_tools", state, {})
+        selected_tools_by_source: dict[str, list[str]] = {}
+        global_allow: Optional[set[str]] = None
+        if isinstance(_sel_raw, dict):
+            selected_tools_by_source = _sel_raw
+        elif isinstance(_sel_raw, list):
+            global_allow = {str(n) for n in _sel_raw if n}
+        # 그 외 타입은 무시 (전부 허용으로 폴백).
+
         tool_source_filters: dict[str, dict] = (
             self.get_param("tool_source_filters", state, {}) or {}
         )
@@ -114,6 +127,8 @@ class ToolIndexStage(Stage):
                 if not nm or nm in existing_names:
                     continue
                 if allow is not None and nm not in allow:
+                    continue
+                if global_allow is not None and nm not in global_allow:
                     continue
                 td = {
                     "name": nm,

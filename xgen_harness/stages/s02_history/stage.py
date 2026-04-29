@@ -27,6 +27,11 @@ class MemoryStage(Stage):
 
     def should_bypass(self, state: PipelineState) -> bool:
         strategy_name = self.get_param("strategy", state, "default")
+        # 'none' — 이력 무시 (독립 실행). 사용자가 매 turn 깨끗한 상태로 시작하고
+        # 싶을 때 사용. 사유: chat 모드에서도 이전 대화 기억이 필요 없는 단발 질의가
+        # 더 흔하다는 사용자 피드백.
+        if strategy_name == "none":
+            return True
         # embedding_search 전략은 conversation_history 없어도 실행 가능
         if strategy_name == "embedding_search":
             return not state.user_input
@@ -34,6 +39,12 @@ class MemoryStage(Stage):
 
     async def execute(self, state: PipelineState) -> dict:
         strategy_name = self.get_param("strategy", state, "default")
+
+        if strategy_name == "none":
+            # 이력/이전결과 미주입. messages 는 s01_input 이 만든 그대로 유지.
+            # 보통 should_bypass=True 가 이 분기 도달 전에 차단하지만, 외부에서
+            # 직접 execute() 를 호출하는 테스트/서브클래스 시나리오를 위한 안전 가드.
+            return {"injected": 0, "previous_results": 0, "strategy": "none"}
 
         if strategy_name == "embedding_search":
             return await self._execute_embedding_search(state)
@@ -129,8 +140,9 @@ class MemoryStage(Stage):
         )
         return results if isinstance(results, list) else []
 
-    def list_strategies(self) -> list[StrategyInfo]:
+    def list_strategies(self) -> list[StrategyInfo]:  # noqa: D401
         return [
-            StrategyInfo("default", "이전 실행 결과 + 대화 이력 로드", is_default=True),
-            StrategyInfo("embedding_search", "임베딩 기반 관련 기억 검색"),
+            StrategyInfo("default", "이전 실행 결과 + 대화 이력 로드 (멀티턴 기억 유지)", is_default=True),
+            StrategyInfo("embedding_search", "임베딩 기반 관련 기억만 골라 주입 (긴 대화에서 비용 절감)"),
+            StrategyInfo("none", "이력 무시 — 매 turn 독립 실행 (단발 질의용, 가장 빠름)"),
         ]
