@@ -182,6 +182,15 @@ class ToolPreconditionGuard(Guard):
                 except Exception:
                     rule["require_prior"] = []
 
+            # v0.29.4 — list[str] 단축형 정규화. 사용자가 ["list_files"] 처럼 도구 이름만
+            # 적어도 [{"tool": "list_files"}] 로 자동 변환. list[dict] 강제는 사용자 친화도 낮음.
+            rp = rule.get("require_prior")
+            if isinstance(rp, list):
+                rule["require_prior"] = [
+                    {"tool": item} if isinstance(item, str) else item
+                    for item in rp
+                ]
+
             # when 문자열 JSON 파싱 (빈 문자열은 조건 없음)
             if isinstance(rule.get("when"), str):
                 when_s = rule["when"].strip()
