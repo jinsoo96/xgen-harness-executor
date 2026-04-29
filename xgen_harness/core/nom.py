@@ -261,7 +261,7 @@ class NOMGraph:
         harness_config: Optional[Any] = None,
         extra_metadata: Optional[dict] = None,
     ) -> Any:
-        """NOM → `WorkflowSnapshot` (기존 `build_wheel` 에 그대로 전달 가능).
+        """NOM → `WorkflowSnapshot` (기존 `build_npm_package` 에 그대로 전달 가능).
 
         NOM 그래프를 ``workflow_data`` 의 nodes/edges 로 직렬화 + ``metadata.from_nom=True``.
         harness_config 미지정 시 빈 dict 로 기본값 생성 — 실행이 필요 없는 도구 묶음

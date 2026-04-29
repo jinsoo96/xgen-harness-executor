@@ -1,24 +1,25 @@
-"""NOM 그래프 전용 compile one-shot 진입점 (v0.21.0 Phase C).
+"""NOM 그래프 전용 compile one-shot 진입점 (v0.21.0 Phase C, v0.29.0 npm 전환).
 
-기존 `compile_workflow(harness_config, workflow_data, ...)` 가 "워크플로우" 중심이라면,
-`compile_nom_graph(graph, ...)` 는 "NOM 그래프" 중심.
+기존 ``compile_workflow_to_npm(harness_config, workflow_data, ...)`` 가 "워크플로우"
+중심이라면, ``compile_nom_graph(graph, ...)`` 는 "NOM 그래프" 중심.
 
-두 경로는 마지막 `build_wheel()` 에서 수렴. `NOMGraph.to_wheel_snapshot()` 이
-이미 `WorkflowSnapshot` 을 만들어주므로 이 모듈은 얇은 wrapper.
+두 경로는 마지막 ``build_npm_package()`` 에서 수렴. ``NOMGraph.to_wheel_snapshot()``
+이 이미 ``WorkflowSnapshot`` 을 만들어주므로 이 모듈은 얇은 wrapper.
 
 Use cases
 ---------
-1. Tool Synthesis 결과 (NOMNode 여러 개) 를 wheel 로 쌈 → pip install 가능한 도구 모듈.
-2. 외부 플러그인 노드 세트 (Stage / Strategy 묶음) 를 wheel 로 배포.
-3. 임의 NOM 그래프를 MCP 서버로 발행 (wheel 에 include_gallery_hints + serve-mcp CLI).
+1. Tool Synthesis 결과 (NOMNode 여러 개) 를 npm tarball 로 쌈 → npx 가능한 도구 모듈.
+2. 외부 플러그인 노드 세트 (Stage / Strategy 묶음) 를 npm 으로 배포.
+3. 임의 NOM 그래프를 MCP 서버로 발행.
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 from ..core.nom import NOMGraph
-from .wheel import WheelBuildResult, build_wheel
+from .npm_pack import NpmPackResult, build_npm_package
 
 
 def compile_nom_graph(
@@ -29,12 +30,9 @@ def compile_nom_graph(
     harness_config: Optional[Any] = None,
     description: str = "",
     out_dir: str | os.PathLike[str] = "./dist",
-    keep_source: bool = False,
     extra_metadata: Optional[dict] = None,
-    include_gallery_hints: bool = True,
-    requires_python: Optional[str] = None,
-) -> WheelBuildResult:
-    """NOM 그래프 → wheel (한 줄 API).
+) -> NpmPackResult:
+    """NOM 그래프 → npm tarball (한 줄 API).
 
     Example
     -------
@@ -44,8 +42,8 @@ def compile_nom_graph(
     ...             inputs=[NOMParam(name="host", required=True)]),
     ... ])
     >>> r = compile_nom_graph(g, gallery_name="nom_ping", gallery_version="0.1.0")
-    >>> r.wheel_path.name
-    'xgen_gallery_nom_ping-0.1.0-py3-none-any.whl'
+    >>> r.tarball_path.name
+    'xgen-harness-nom_ping-0.1.0.tgz'
     """
     meta = {"description": description} if description else {}
     if extra_metadata:
@@ -56,10 +54,7 @@ def compile_nom_graph(
         harness_config=harness_config,
         extra_metadata=meta,
     )
-    return build_wheel(
+    return build_npm_package(
         snapshot,
-        out_dir=out_dir,
-        keep_source=keep_source,
-        include_gallery_hints=include_gallery_hints,
-        requires_python=requires_python,
+        out_dir=Path(out_dir),
     )

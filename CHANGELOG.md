@@ -5,6 +5,31 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] — 2026-04-29
+
+### 🔥 BREAKING — Python wheel 채널 완전 제거 (npm 단일 채널화)
+
+v0.28.0 의 npm 채널이 안정화되어 wheel/PyPI 기반 컴파일 코드 일괄 제거.
+
+### 삭제
+- `xgen_harness/compile/wheel.py` — wheel 빌더 (420 LOC)
+- `xgen_harness/compile/mcp_server.py` — wheel 안의 stdio MCP wrapper (120 LOC)
+- `xgen_harness/compile/deps.py` — wheel 의존성 resolver (238 LOC)
+- `xgen_harness/compile/templates/` — wheel Python 패키지 템플릿
+- public API 제거: `build_wheel`, `compile_workflow`, `WheelBuildResult`,
+  `serve_mcp`, `run_mcp_blocking`, `MCPNotInstalledError`, `DependencyResolver`,
+  `resolve_dependencies`, `register_dependency_rule`, `DependencyRule`
+
+### 마이그레이션
+- 사용자가 v0.28 이전 publish 한 wheel session 은 verify-self-heal 시 명시
+  에러로 마킹 — 사용자가 재 publish 1회 (자동 npm 변환).
+- `compile_workflow` import 하던 외부 코드는 `compile_workflow_to_npm` 으로 이전.
+- `compile_nom_graph` 도 npm tarball 반환으로 변경 (NpmPackResult).
+
+### 비파괴
+- npm 채널 모든 helper (`compile_workflow_to_npm`, `freeze_*_tool` 등) 그대로.
+- `xgen-harness-engine-node` (npmjs) 와 별개 — 호환성 보장.
+
 ## [0.28.0] — 2026-04-29
 
 ### 🎯 npm 컴파일 채널 1차 — 외부 MCP 생태계 호환
