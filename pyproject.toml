@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "0.27.0"
-description = "XGEN Harness — UX 6트랙 + Bug fix 일괄. preset 키 자동 expand (harness_config.preset='minimal' 등이 disabled_stages/active_strategies/max_iter 로 풀리도록), selected_tools list 형태 글로벌 화이트리스트화, max_retries 가 max_iterations 와 fallback (UI 단일 컨트롤 일관성), s08_judge default=none (추가 LLM 비용 보호), s02_history 'none' variant (이력 무시 독립실행), s07_act 'strict_no_error' variant + s09_decide wiring (도구 1개라도 실패 시 즉시 stop), unknown preset warning."
+version = "0.27.1"
+description = "XGEN Harness — vLLM/Qwen native <tool_call> XML 텍스트 파서 추가. Qwen3 등이 vLLM serve 의 hermes parser 미활성 환경에서 native 형식(`<tool_call>{json}</tool_call>` 또는 `<function=name><parameter=k>v</parameter>...</function>`)으로 응답할 때 text content 를 후처리해 ProviderEvent.TOOL_USE 로 변환. chunk 경계 buffering 으로 stream 안전. 인프라 변경 없이 Qwen tool 사용 회복."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

@@ -2,10 +2,18 @@
 OpenAI LLM Provider — httpx SSE 스트리밍
 
 OpenAI Chat Completions API. tool_use를 Anthropic 포맷으로 통합 변환.
+
+vLLM/Qwen 등 OpenAI-호환 endpoint 가 native tool_calls 필드 매핑을 못 하면
+모델이 학습된 native XML 포맷 (`<tool_call>...</tool_call>`) 을 text content
+에 박아 응답한다. 두 변형(Hermes JSON / XML parameter) 을 본 모듈에서 후처리
+파싱해 ProviderEventType.TOOL_USE 로 변환하므로 vLLM serve 옵션에 의존하지
+않는다.
 """
 
 import json
 import logging
+import re
+import uuid
 from typing import Any, AsyncGenerator, Optional
 
 import httpx
@@ -16,6 +24,65 @@ from ..errors import ProviderError
 logger = logging.getLogger("harness.provider.openai")
 
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+
+
+# vLLM/Qwen native tool-call 텍스트 마커. Hermes (JSON body) 와 XML parameter
+# (Qwen 일부 fine-tune) 둘 다 같은 outer tag.
+_TOOL_CALL_OPEN = "<tool_call>"
+_TOOL_CALL_CLOSE = "</tool_call>"
+_TOOL_CALL_OPEN_LEN = len(_TOOL_CALL_OPEN)
+
+# XML parameter 형식 — `<function=name>...<parameter=key>value</parameter>...</function>`
+_FUNCTION_NAME_RE = re.compile(r"<function=([^>\s]+)\s*>", re.IGNORECASE)
+_PARAMETER_RE = re.compile(
+    r"<parameter=([^>\s]+)\s*>(.*?)</parameter\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_native_tool_call(body: str) -> Optional[dict]:
+    """`<tool_call>` 안쪽 본문을 name + arguments dict 로 파싱.
+
+    두 형식 모두 시도:
+    1) Hermes JSON: `{"name": "x", "arguments": {...}}`
+    2) XML param  : `<function=name><parameter=k>v</parameter>...</function>`
+
+    실패 시 None — 호출부는 원본 텍스트 그대로 fallback emit.
+    """
+    s = (body or "").strip()
+    if not s:
+        return None
+
+    # 1) JSON 시도
+    if s.startswith("{"):
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict) and obj.get("name"):
+                args = obj.get("arguments")
+                if isinstance(args, str):
+                    # arguments 가 문자열 JSON 일 수 있음 (Hermes variants)
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {"raw": args}
+                if not isinstance(args, dict):
+                    args = {} if args is None else {"value": args}
+                return {"name": str(obj["name"]), "arguments": args}
+        except Exception as e:
+            logger.debug("[openai] tool_call JSON parse 실패: %s", e)
+
+    # 2) XML parameter 시도
+    fn_match = _FUNCTION_NAME_RE.search(s)
+    if fn_match:
+        name = fn_match.group(1).strip()
+        params: dict[str, Any] = {}
+        for p_match in _PARAMETER_RE.finditer(s):
+            key = p_match.group(1).strip()
+            val = p_match.group(2).strip()
+            params[key] = val
+        return {"name": name, "arguments": params}
+
+    return None
 
 
 class OpenAIProvider(LLMProvider):
@@ -115,6 +182,30 @@ class OpenAIProvider(LLMProvider):
     ) -> AsyncGenerator[ProviderEvent, None]:
         current_tool_calls: dict[int, dict] = {}
 
+        # Native `<tool_call>` text 파싱용 버퍼.
+        # text_buf: 일반 text 누적. tool_call 시작 태그 매칭 가능 마진(_TOOL_CALL_OPEN_LEN)
+        # 까지 buffer 유지 — 그 미만은 즉시 flush. tool_buf: <tool_call>...</tool_call>
+        # 사이의 본문. 닫는 태그 만나면 _parse_native_tool_call 로 변환 후 TOOL_USE emit.
+        text_buf = ""
+        in_tool_call = False
+        tool_buf = ""
+
+        def _flush_text(force: bool = False) -> Optional[ProviderEvent]:
+            """text_buf 의 안전한 부분만 flush. 끝부분 마진은 buffer 유지."""
+            nonlocal text_buf
+            if not text_buf:
+                return None
+            if force:
+                ev = ProviderEvent(type=ProviderEventType.TEXT_DELTA, text=text_buf)
+                text_buf = ""
+                return ev
+            # _TOOL_CALL_OPEN 의 부분 매칭 후보를 위해 마지막 N자 보류.
+            if len(text_buf) <= _TOOL_CALL_OPEN_LEN:
+                return None
+            emit_chars = text_buf[:-_TOOL_CALL_OPEN_LEN]
+            text_buf = text_buf[-_TOOL_CALL_OPEN_LEN:]
+            return ProviderEvent(type=ProviderEventType.TEXT_DELTA, text=emit_chars)
+
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
             async with client.stream("POST", self._base_url, json=body, headers=headers) as response:
                 if response.status_code != 200:
@@ -149,15 +240,82 @@ class OpenAIProvider(LLMProvider):
                     delta = choices[0].get("delta", {})
                     finish_reason = choices[0].get("finish_reason")
 
-                    # 텍스트 델타
+                    # 텍스트 델타 — native <tool_call> 감지 + 파싱
                     content = delta.get("content")
                     if content:
-                        yield ProviderEvent(
-                            type=ProviderEventType.TEXT_DELTA,
-                            text=content,
-                        )
+                        # tool_call 본문 진행 중이면 tool_buf 에 누적
+                        if in_tool_call:
+                            tool_buf += content
+                            close_idx = tool_buf.find(_TOOL_CALL_CLOSE)
+                            if close_idx >= 0:
+                                inner = tool_buf[:close_idx]
+                                rest = tool_buf[close_idx + len(_TOOL_CALL_CLOSE):]
+                                parsed = _parse_native_tool_call(inner)
+                                if parsed is not None:
+                                    yield ProviderEvent(
+                                        type=ProviderEventType.TOOL_USE,
+                                        tool_use_id=f"native_{uuid.uuid4().hex[:16]}",
+                                        tool_name=parsed["name"],
+                                        tool_input=parsed["arguments"],
+                                    )
+                                else:
+                                    # 파싱 실패 — 원본 그대로 사용자에게 stream
+                                    yield ProviderEvent(
+                                        type=ProviderEventType.TEXT_DELTA,
+                                        text=f"{_TOOL_CALL_OPEN}{inner}{_TOOL_CALL_CLOSE}",
+                                    )
+                                in_tool_call = False
+                                tool_buf = ""
+                                # 닫는 태그 이후 텍스트는 일반 흐름으로 재진입
+                                if rest:
+                                    text_buf += rest
+                            # 닫는 태그 미발견 — 계속 누적
+                        else:
+                            text_buf += content
+                            open_idx = text_buf.find(_TOOL_CALL_OPEN)
+                            if open_idx >= 0:
+                                # 시작 발견 — 이전 텍스트 flush, 이후를 tool_buf 로 전환
+                                before = text_buf[:open_idx]
+                                after = text_buf[open_idx + _TOOL_CALL_OPEN_LEN:]
+                                if before:
+                                    yield ProviderEvent(
+                                        type=ProviderEventType.TEXT_DELTA, text=before,
+                                    )
+                                in_tool_call = True
+                                tool_buf = after
+                                text_buf = ""
+                                # 같은 chunk 안에 close 가 같이 와있을 수도 → 즉시 처리
+                                close_idx = tool_buf.find(_TOOL_CALL_CLOSE)
+                                if close_idx >= 0:
+                                    inner = tool_buf[:close_idx]
+                                    rest = tool_buf[close_idx + len(_TOOL_CALL_CLOSE):]
+                                    parsed = _parse_native_tool_call(inner)
+                                    if parsed is not None:
+                                        yield ProviderEvent(
+                                            type=ProviderEventType.TOOL_USE,
+                                            tool_use_id=f"native_{uuid.uuid4().hex[:16]}",
+                                            tool_name=parsed["name"],
+                                            tool_input=parsed["arguments"],
+                                        )
+                                    else:
+                                        yield ProviderEvent(
+                                            type=ProviderEventType.TEXT_DELTA,
+                                            text=f"{_TOOL_CALL_OPEN}{inner}{_TOOL_CALL_CLOSE}",
+                                        )
+                                    in_tool_call = False
+                                    tool_buf = ""
+                                    if rest:
+                                        text_buf += rest
+                            else:
+                                # tag 부분 매칭 후보(<tool_) 만 buffer, 나머지는 즉시 flush
+                                ev = _flush_text()
+                                if ev is not None:
+                                    yield ev
 
-                    # 도구 호출 델타
+                    # 도구 호출 델타 — native OpenAI tool_calls (vLLM hermes parser
+                    # 켜진 경우 이쪽 경로로 옴). 두 경로 (native field + text XML) 가
+                    # 동시에 활성화되지 않게 vLLM 이 정상 구성됐다고 가정 (둘 다 오면
+                    # 중복 emit 가능 — 운영 시 hermes parser 활성화 권장 메시지 출력).
                     tool_calls = delta.get("tool_calls", [])
                     for tc in tool_calls:
                         idx = tc.get("index", 0)
@@ -172,7 +330,30 @@ class OpenAIProvider(LLMProvider):
                             current_tool_calls[idx]["arguments"] += args
 
                     if finish_reason:
-                        # 도구 호출 완료 시 emit
+                        # 미완 tool_call 본문이 있으면 fallback (close 태그 없이 stop)
+                        if in_tool_call and tool_buf:
+                            parsed = _parse_native_tool_call(tool_buf)
+                            if parsed is not None:
+                                yield ProviderEvent(
+                                    type=ProviderEventType.TOOL_USE,
+                                    tool_use_id=f"native_{uuid.uuid4().hex[:16]}",
+                                    tool_name=parsed["name"],
+                                    tool_input=parsed["arguments"],
+                                )
+                            else:
+                                yield ProviderEvent(
+                                    type=ProviderEventType.TEXT_DELTA,
+                                    text=f"{_TOOL_CALL_OPEN}{tool_buf}",
+                                )
+                        elif text_buf:
+                            yield ProviderEvent(
+                                type=ProviderEventType.TEXT_DELTA, text=text_buf,
+                            )
+                        text_buf = ""
+                        tool_buf = ""
+                        in_tool_call = False
+
+                        # 도구 호출 완료 시 emit (native field 경로)
                         for tc_data in current_tool_calls.values():
                             try:
                                 parsed = json.loads(tc_data["arguments"]) if tc_data["arguments"] else {}
@@ -203,13 +384,52 @@ class OpenAIProvider(LLMProvider):
             message = choice.get("message", {})
             usage = data.get("usage", {})
 
+            text_content = message.get("content", "") or ""
+            # native field tool_calls 가 비어있고 본문에 <tool_call> XML 있으면 추출.
+            # batch path 는 stream 과 달리 chunk 없으니 단순 한 번 파싱.
+            native_tool_calls = message.get("tool_calls") or []
+            inline_tool_uses: list[dict] = []
+            if not native_tool_calls and _TOOL_CALL_OPEN in text_content:
+                cleaned_parts: list[str] = []
+                cursor = 0
+                while True:
+                    open_idx = text_content.find(_TOOL_CALL_OPEN, cursor)
+                    if open_idx < 0:
+                        cleaned_parts.append(text_content[cursor:])
+                        break
+                    cleaned_parts.append(text_content[cursor:open_idx])
+                    close_idx = text_content.find(_TOOL_CALL_CLOSE, open_idx + _TOOL_CALL_OPEN_LEN)
+                    if close_idx < 0:
+                        # close 태그 없음 → 잔여 그대로 fallback
+                        cleaned_parts.append(text_content[open_idx:])
+                        break
+                    inner = text_content[open_idx + _TOOL_CALL_OPEN_LEN:close_idx]
+                    parsed = _parse_native_tool_call(inner)
+                    if parsed is not None:
+                        inline_tool_uses.append({
+                            "id": f"native_{uuid.uuid4().hex[:16]}",
+                            "name": parsed["name"],
+                            "input": parsed["arguments"],
+                        })
+                    else:
+                        cleaned_parts.append(f"{_TOOL_CALL_OPEN}{inner}{_TOOL_CALL_CLOSE}")
+                    cursor = close_idx + len(_TOOL_CALL_CLOSE)
+                text_content = "".join(cleaned_parts)
+
+            # batch 경로는 단일 ProviderEvent 반환 시그니처라 다중 TOOL_USE emit
+                # 불가. inline_tool_uses 가 있으면 raw 에 첨부 — 호출부가 raw 에서
+                # `__inline_tool_uses__` 를 읽어 처리. prod 흐름은 stream=True 라
+                # 실질 영향 적음 (stream 경로는 정상 TOOL_USE event emit).
+            raw_out = dict(data) if isinstance(data, dict) else {"__data__": data}
+            if inline_tool_uses:
+                raw_out["__inline_tool_uses__"] = inline_tool_uses
             return ProviderEvent(
                 type=ProviderEventType.STOP,
-                text=message.get("content", ""),
+                text=text_content,
                 stop_reason=choice.get("finish_reason", ""),
                 input_tokens=usage.get("prompt_tokens", 0),
                 output_tokens=usage.get("completion_tokens", 0),
-                raw=data,
+                raw=raw_out,
             )
 
 

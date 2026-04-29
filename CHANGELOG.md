@@ -5,6 +5,21 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.1] — 2026-04-29
+
+### 🐛 vLLM/Qwen native `<tool_call>` 텍스트 파서
+prod 회귀: `provider=vllm` + `model=Qwen3.5-27b` 사용 시 답변에 `<tool_call><function=foo>...</function></tool_call>` XML 이 그대로 노출되고 도구 호출 발동 안 함 ("하다 마는" 답변).
+
+원인: vLLM 의 OpenAI 호환 endpoint 가 `--enable-auto-tool-choice --tool-call-parser hermes` 옵션 없이 serve 되면, Qwen 이 학습된 native 형식을 text content 에 박아 응답. 엔진 OpenAIProvider 는 `tool_calls` 필드만 보고 text 를 그대로 stream → 사용자 화면 노출 + tool 미발동 + s07_act 미진입.
+
+수정: `xgen_harness/providers/openai.py` 에 `_parse_native_tool_call` 추가. 두 형식 지원:
+- Hermes JSON: `<tool_call>{"name":"x","arguments":{...}}</tool_call>`
+- XML parameter: `<tool_call><function=name><parameter=k>v</parameter>...</function></tool_call>`
+
+`_stream_request` 에 chunk 경계 buffering 도입 — 마지막 `_TOOL_CALL_OPEN_LEN=11`자만 보류 후 flush, `<tool_call>` 발견 시 본문은 별도 buffer 누적, `</tool_call>` 발견 시 파싱해 `ProviderEvent(TOOL_USE)` emit. JSON 파싱 실패 시 원본 텍스트 그대로 fallback (no breakage). vLLM hermes parser 가 활성된 정상 환경에선 `tool_calls` 필드 경로로 와서 text parser pass-through.
+
+자가감사 4축 PASS — chunk 5종 시뮬 + JSON/XML/string-encoded args/empty/plain text 6 단위 테스트 통과. 인프라 변경 없이 Qwen tool 사용 회복.
+
 ## [0.27.0] — 2026-04-29
 
 ### 🐛 BUG-A — `harness_config.preset` 키 자동 expand
