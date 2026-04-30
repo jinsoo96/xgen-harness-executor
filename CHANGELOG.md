@@ -5,6 +5,29 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] — 2026-04-30
+
+### 🔍 Stage UI 정합성 일괄 audit + dead/ambiguous 제거
+
+#### Pipeline / Policy Gate
+- `core/pipeline.py`: PRE_TOOL **OR** POST_RESPONSE 한쪽만 호출하던 분기를 두 훅 독립 호출로 변경. 도구 호출 + 응답 텍스트 동반 케이스에서 ContentGuard 의 응답 검증(PRE_MAIN/POST_RESPONSE) 누락 결함 수정. POST_RESPONSE 는 항상, PRE_TOOL 은 pending 있을 때만 호출.
+
+#### s08 judge LLM system prompt override (확장성)
+- `stages/s08_decide/strategies/judge_then_loop.py`: `_llm_judge_fallback` 의 `aux_call()` 호출에 `system=` 파라미터 전달. `evaluation_system_prompt` stage_param 으로 사용자 도메인별 평가관 톤·출력 규약 박을 수 있음.
+- `core/stage_config.py` s08_decide.fields 에 `evaluation_system_prompt` textarea 추가.
+
+#### Advanced 플래그 (확장 포인트)
+- `core/stage_config.py` s06_context 의 18 fields 에 `"advanced": True` 박음 (cascade thresholds / microcompact / autocompact / sliding_window / intent_rules / rag_pd_* / chars_per_token / context_window / reranker / rerank_top_k). 외부 stage 도 자기 fields 에 같은 키 박을 수 있는 확장 포인트 — Frontend 가 자동으로 collapsible "Advanced settings" 섹션으로 격리.
+
+#### 메타 / 코멘트 정합
+- s04_tool description 에 "Strategy 카드 = 도구 발견 전략, s07_act 의 도구 실행 strategy 와 별개" 명시.
+- s03_prompt thinking_mode field description 에 "⚠ Strategy 카드 픽이 우선" 명시.
+
+#### 이식·프론트 동반 변경 (별도 레포)
+- xgen-frontend `packages/harness-store`: `StageField` 인터페이스에 `advanced?: boolean` 추가.
+- xgen-frontend `features/main-harness-stage-config`: `ConfigFieldsSection` 이 advanced flagged fields 를 collapsible 섹션으로 분리 렌더. RESOURCE_OWNED_FIELDS['s03_prompt'] 의 dead `prompt_id` → `system_prompt` 정정 (직접입력 textarea 와 Configuration 의 system_prompt 중복 자동 제거).
+- locale: capability emptyTitle "Could not load" 에러 톤 → "lazy 발행 — 직접 입력 가능" 안내 톤.
+
 ## [1.0.6] — 2026-04-30
 
 ### 🐛 도구 호출 후 합성 답변 미완 함정 수정

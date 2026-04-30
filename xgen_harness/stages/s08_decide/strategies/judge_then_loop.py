@@ -166,9 +166,18 @@ async def _llm_judge_fallback(state, get_param) -> dict:
     """raw LLM 호출로 평가. EvaluationStrategy 없을 때 폴백."""
     eval_prompt, selected_criteria = _build_evaluation_prompt(state, get_param)
 
+    # v1.0.7 — judge LLM 의 system prompt 사용자 override 지원. 미설정(None) 이면
+    # provider default 그대로. 박제 0 — 엔진은 시스템 메시지 안 주입, 외부에서만.
+    eval_system = get_param("evaluation_system_prompt", state, None)
+    eval_system_str: str | None = (
+        str(eval_system).strip() if isinstance(eval_system, str) and eval_system.strip() else None
+    )
     try:
         from ....core.llm_call import aux_call
-        eval_text = await aux_call(state, stage_id="s08_decide", prompt=eval_prompt)
+        eval_text = await aux_call(
+            state, stage_id="s08_decide", prompt=eval_prompt,
+            system=eval_system_str,
+        )
     except Exception as e:
         logger.warning("[judge] aux_call 실패: %s", e)
         return {"bypassed": True, "reason": f"evaluation failed: {e}"}

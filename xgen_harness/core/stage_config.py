@@ -227,7 +227,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "select",
                 "options": ["auto", "cot", "react", "none"],
                 "default": None,
-                "description": "auto: input_complexity 보고 simple→none / moderate→cot / complex→react 자동. cot: 단계별 계획 지시 추가. react: Thought→Action→Observation 루프 지시. none: 사고 모드 비활성. Strategy 카드(cot_planner/react/none) 픽이 있으면 그 값 우선.",
+                "description": "⚠ Strategy 카드(cot_planner/react/none) 픽이 우선 — 카드를 골랐으면 이 select 무시. 카드 미선택 시에만 이 값 사용. auto: input_complexity 보고 simple→none / moderate→cot / complex→react 자동 (s01 의 with_classification strategy 가 활성일 때만 실의미). cot: 단계별 계획 지시 추가. react: Thought→Action→Observation 루프. none: 비활성.",
             },
             {
                 "id": "planning_instruction_template",
@@ -259,11 +259,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s04_tool": {
-        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / 외부 entry_points).",
+        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / 외부 entry_points). Strategy 카드는 도구 발견 방식 (progressive_3level / eager_load / capability_auto / none) — s07_act 의 도구 실행 strategy 와 별개.",
         "when_to_use": "외부 도구·RAG 컬렉션·capability 중 하나 이상 필요. 도구 공급 = ToolSource 단일 채널.",
         "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
         "cost_hint": "low",
-        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / external entry_points).",
+        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / external entry_points). Strategy cards control tool discovery — distinct from s07_act execution strategy.",
         "icon": "🔧",
         "fields": [
             # v0.25.0 — 단일 도구 공급 경로. source_id → 허용 도구 이름 리스트.
@@ -382,6 +382,7 @@ STAGE_CONFIGS: dict[str, dict] = {
         "fields": [
             {
                 "id": "context_window",
+                "advanced": True,
                 "label": "컨텍스트 윈도우",
                 "type": "number",
                 "min": 10000,
@@ -410,6 +411,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "rerank_top_k",
+                "advanced": True,
                 "label": "리랭크 상위 K",
                 "type": "number",
                 "min": 1,
@@ -419,6 +421,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "reranker",
+                "advanced": True,
                 "label": "리랭커 활성",
                 "type": "toggle",
                 "default": None,
@@ -479,6 +482,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "rag_pd_mode",
+                "advanced": True,
                 "label": "RAG Progressive Disclosure",
                 "type": "select",
                 "options": ["eager", "progressive"],
@@ -487,6 +491,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "rag_ingestion_mode",
+                "advanced": True,
                 "label": "RAG 주입 방식 (v0.11.18+)",
                 "type": "select",
                 "options": ["system_prompt", "tool_only", "both"],
@@ -495,6 +500,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "chars_per_token",
+                "advanced": True,
                 "label": "토큰 당 문자 수 (언어별 조정, v0.11.20+)",
                 "type": "number",
                 "min": 1,
@@ -504,6 +510,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "rag_pd_snippet_size",
+                "advanced": True,
                 "label": "RAG PD snippet 크기 (자)",
                 "type": "number",
                 "min": 40,
@@ -552,6 +559,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "context_collapse_threshold",
+                "advanced": True,
                 "label": "L4 Collapse 임계 (%)",
                 "type": "slider",
                 "min": 50,
@@ -562,6 +570,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "context_collapse_keep_tail",
+                "advanced": True,
                 "label": "L4 보존 tail 메시지 수",
                 "type": "number",
                 "min": 1,
@@ -571,6 +580,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "microcompact_threshold",
+                "advanced": True,
                 "label": "L3 Microcompact 임계 (%)",
                 "type": "slider",
                 "min": 50,
@@ -581,6 +591,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "microcompact_keep_recent",
+                "advanced": True,
                 "label": "L3 유지 tool_result 개수",
                 "type": "number",
                 "min": 1,
@@ -590,6 +601,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "autocompact_threshold",
+                "advanced": True,
                 "label": "L5 Autocompact 임계 (%)",
                 "type": "slider",
                 "min": 50,
@@ -600,6 +612,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "autocompact_keep_tail",
+                "advanced": True,
                 "label": "L5 보존 tail 메시지 수",
                 "type": "number",
                 "min": 1,
@@ -610,6 +623,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             # v0.29.2 — sliding_window strategy 의 윈도우 크기 (코드는 이미 read 중).
             {
                 "id": "window_size",
+                "advanced": True,
                 "label": "Sliding Window 크기 (메시지 수)",
                 "type": "number",
                 "min": 1,
@@ -620,6 +634,7 @@ STAGE_CONFIGS: dict[str, dict] = {
             # v1.0 — Intent Routing 흡수 (구 s05_strategy)
             {
                 "id": "intent_rules",
+                "advanced": True,
                 "label": "Intent Routing 규칙 (JSON)",
                 "type": "textarea",
                 "placeholder": '예: [{"keywords":["상품","product"],"filter":{"file_name":"products.csv"}}]',
@@ -758,6 +773,13 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "text",
                 "default": None,
                 "description": "register_evaluation_prompt_template() 으로 등록한 이름. 기본 'default'.",
+            },
+            {
+                "id": "evaluation_system_prompt",
+                "label": "평가 LLM system prompt (선택)",
+                "type": "textarea",
+                "default": None,
+                "description": "judge LLM 호출 시 사용할 system prompt. 비워두면 provider default. 평가관 톤·출력 규약을 사용자 도메인에 맞게 박을 때 사용.",
             },
         ],
         "behavior": [

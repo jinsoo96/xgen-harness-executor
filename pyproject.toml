@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.0.6"
+version = "1.0.7"
 description = "XGEN Harness v1.0 — 10-stage 고결화 (BREAKING). s05_strategy 분해 / s08_judge·s10_save 격하 / 번호 시프트 / s05_policy 일반 순번 진입 + 4훅. 4 신규 레지스트리 (prompt_templates / evaluation_criteria / output_formatters / persist_defaults). 마이그레이션 가이드: docs/harness/2026-04-29-stage-consolidation-v1.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}

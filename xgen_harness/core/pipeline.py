@@ -195,12 +195,22 @@ class Pipeline:
                         if s00_stage is not None:
                             await self._invoke_main_call(state, s00_stage)
 
-                        # v0.17.0 — main_call 직후 pre_tool / post_response 훅
-                        hook = "pre_tool" if state.pending_tool_calls else "post_response"
-                        await self._invoke_policy_gate(state, policy_stage, hook)
+                        # v1.0.7 — main_call 직후 두 훅 독립 호출.
+                        # 이전 (v0.17.0) 은 `pre_tool if pending else post_response` 로
+                        # 둘 중 하나만 호출 — 도구 호출 + 응답 텍스트 동반 케이스에서
+                        # POST_RESPONSE (ContentGuard 응답 검증) 가 누락. 두 훅의 의미는
+                        # 독립적: POST_RESPONSE 는 last_assistant_text 검증, PRE_TOOL 은
+                        # pending_tool_calls 의 도구별 선행조건 검증.
+                        await self._invoke_policy_gate(state, policy_stage, "post_response")
                         if state.policy_block_reason:
                             state.loop_decision = "complete"
                             break
+
+                        if state.pending_tool_calls:
+                            await self._invoke_policy_gate(state, policy_stage, "pre_tool")
+                            if state.policy_block_reason:
+                                state.loop_decision = "complete"
+                                break
 
                     if self._planner_skips(stage, state):
                         await self._emit_bypass(stage, state, reason=self._planner_skip_reason(stage, state))
