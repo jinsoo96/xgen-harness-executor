@@ -135,16 +135,10 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 20,
                 "default": None,
             },
-            # v0.29.1 — embedding_search 전략 임계 3종 노출 (코드는 이미 read 중인데
+            # v0.29.1 — embedding_search 전략 임계 2종 노출 (코드는 이미 read 중인데
             # UI 통로가 없어 사용자가 못 박던 것 — audit 로 발견).
-            {
-                "id": "memory_collection",
-                "label": "메모리 컬렉션",
-                "type": "select",
-                "options_source": "rag-collections",
-                "default": None,
-                "description": "embedding_search 전략에서 검색할 컬렉션. 기본 'memory'. xgen-documents 에 미리 컬렉션이 있어야 함.",
-            },
+            # v1.0.8 — memory_collection UI 필드 제거 (실제 안 쓰임). 코드는
+            # get_param("memory_collection", state, "memory") fallback 으로 그대로 동작.
             {
                 "id": "memory_top_k",
                 "label": "메모리 검색 상위 K",

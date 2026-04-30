@@ -5,6 +5,19 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] — 2026-05-01
+
+### 🧹 s02_history.memory_collection UI 필드 제거 (dead UI)
+
+- `core/stage_config.py` s02_history.fields 에서 `memory_collection` 항목 제거.
+  v0.29.1 audit 때 "embedding_search 전략 임계 3종" 으로 노출했으나 실제 사용자 시나리오에서
+  안 쓰여서 /harness 페이지의 이력 stage 클릭 시 죽은 dropdown 노출만 됨.
+- 코드 동작 변경 없음 — `s02_history/stage.py:87` 의
+  `get_param("memory_collection", state, "memory")` fallback 으로 default `"memory"`
+  collection 이름이 그대로 들어감. embedding_search strategy 가 필요한 사용자는
+  xgen-documents 에 `memory` 라는 collection 만 미리 만들어두면 동일하게 동작.
+- `memory_top_k` / `memory_score_threshold` 필드는 유지.
+
 ## [1.0.7] — 2026-04-30
 
 ### 🔍 Stage UI 정합성 일괄 audit + dead/ambiguous 제거
