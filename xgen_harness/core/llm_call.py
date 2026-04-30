@@ -270,7 +270,7 @@ async def _single_call(
             })
             if state.event_emitter:
                 # v1.0 — tool_source 자동 채움 (state.metadata['tool_source_of'] 는 s04_tool 이 채움).
-                # 사용자가 UI 에서 어떤 채널 (mcp/builtin/xgen_node/rag/synthesized/외부) 의 도구인지 즉시 식별.
+                # 사용자가 UI 에서 어떤 채널 (mcp/builtin/xgen_node/rag/외부) 의 도구인지 즉시 식별.
                 _src = (state.metadata.get("tool_source_of") or {}).get(event.tool_name, "")
                 await state.event_emitter.emit(ToolCallEvent(
                     tool_use_id=event.tool_use_id,

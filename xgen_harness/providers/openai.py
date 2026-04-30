@@ -596,8 +596,8 @@ def _convert_tools(tools: list[dict]) -> list[dict]:
     """Anthropic tool 정의 → OpenAI function 정의
 
     v0.26.2 — input_schema 가 ``{"type":"object"}`` 처럼 properties 누락 시
-    OpenAI 가 ``"object schema missing properties"`` 로 400 거부함. 합성 도구
-    (SynthesizedToolSource) 등 input_schema 가 단순한 케이스를 보정.
+    OpenAI 가 ``"object schema missing properties"`` 로 400 거부함. input_schema
+    가 단순한 케이스를 보정.
     v0.26.13 — Tavily 같은 MCP 도구의 type 배열 / anyOf-null / $ref 패턴 정규화.
     """
     oai_tools = []

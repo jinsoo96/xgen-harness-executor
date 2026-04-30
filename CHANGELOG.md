@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] — 2026-04-30
+
+### 🧹 Dead trigger 코드 일괄 청소
+
+#### `harness_mode='selected'` 제거 (캔버스 회귀 유산)
+- `core/config.py`: `is_selected()` property + 코멘트 정리. 이제 `harness_mode` 는 `'autonomous' | 'off'` 2 값.
+- `stages/s00_harness/stage.py`: selected 분기 (pinned_chosen/strategies/params 적용 흐름) 30 LOC 제거. PlanningCard 핀 버튼 → harness_mode='selected' 자동 전환 흐름 폐기. 핀 흐름이 다시 필요해지면 별도 stage 로 분리.
+
+#### Tool Synthesis 인프라 제거 (자동 trigger 미연결)
+- 자동 도구 합성 trigger 가 어디에도 묶여있지 않은 채로 인프라만 살아있어 dead chain 이었다 — Planner/ToolSelect 어디에도 `synthesize_and_register` 호출처 없음, 외부 caller 도 0건.
+- `tools/synthesis.py` 파일 삭제 (334 LOC) — `SynthesizedTool` / `SynthesizedToolSource` / `synthesize_and_register` / NOMGraph 변환 / 갤러리 upsert 등.
+- `tools/__init__.py`: `_preload_manifest_once` + `XGEN_HARNESS_PRELOAD_MANIFEST` env + `_MANIFEST_PRELOADED` 플래그 제거 (synthesis 도구 복원 전용).
+- `events/types.py` / `core/llm_call.py` / `core/stage_config.py` / `providers/openai.py` / `compile/local_manifest.py`: "synthesized" 라벨 코멘트 5 곳 정리.
+
+#### 이식·프론트 동반 변경 (별도 레포)
+- xgen-workflow `controller/workflow/endpoints/harness.py`: `POST /auto-synthesize` endpoint + `HarnessSynthesizedToolDict` / `HarnessAutoSynthesizeRequest` 클래스 (143 LOC) 제거.
+- xgen-frontend `packages/harness-store`: `pinned_strategies` 필드 + `setPinnedStrategy` action + 'selected' 자동 전환 로직 제거. 구 레코드의 `harness_mode='selected'` → `'autonomous'` 마이그레이션.
+- xgen-frontend `features/main-harness-stage-config`: 'Selected' ModeChip 제거 (3개 → 2개), locale 의 `selectedTitle/Sub/Label` / `pinned*` / `noPins` / `noPinned` 키 제거.
+- xgen-frontend `features/main-harness-chat`: locale 의 `pinHint` / `unpinHint` 제거.
+
+진짜 자가증식 도구 루프가 필요해지면 Planner / ToolSelect 에 trigger hook 추가 후 별도 endpoint 로 부활.
+
 ## [1.0.4] — 2026-04-30
 
 ### 🛡 Policy Gate emit 본체 + decide defaults 레지스트리화

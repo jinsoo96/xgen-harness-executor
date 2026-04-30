@@ -259,11 +259,11 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s04_tool": {
-        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / synthesized / 외부 entry_points).",
+        "description_ko": "에이전트가 쓸 도구를 고릅니다. 모든 도구는 ToolSource 한 경로로 들어옵니다 (MCP / Custom API / xgen 노드 / 외부 entry_points).",
         "when_to_use": "외부 도구·RAG 컬렉션·capability 중 하나 이상 필요. 도구 공급 = ToolSource 단일 채널.",
         "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
         "cost_hint": "low",
-        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / synthesized / external entry_points).",
+        "description_en": "Select tools. All tools flow through a single ToolSource channel (MCP / Custom API / xgen nodes / external entry_points).",
         "icon": "🔧",
         "fields": [
             # v0.25.0 — 단일 도구 공급 경로. source_id → 허용 도구 이름 리스트.

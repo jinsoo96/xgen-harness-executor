@@ -143,9 +143,9 @@ class HarnessConfig:
     # v0.14.0: s00_harness 가 본문 LLM 호출을 소유하므로 사실상 항상 True 가
     # 권장되는 상태. harness_mode 로 세분화:
     #   - "autonomous": Planner LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립
-    #   - "selected":   Planner LLM skip, 사용자 핀(pinned_chosen/strategies/params) 그대로
     #   - "off":        전체 Stage 실행 (레거시 noop 동작과 동일)
     # 빈 문자열이면 use_planner=True → "autonomous", False → "off" 로 해석.
+    # v1.0.5: "selected" (사용자 핀 hard-pin) 모드 제거 — 캔버스 회귀 유산.
     use_planner: bool = False
     harness_mode: str = ""
 
@@ -162,12 +162,9 @@ class HarnessConfig:
 
     # v0.25.3 — harness_mode 리터럴 비교를 쓰는 Stage / Strategy 가 늘어나면서
     # 문자열을 여기저기 하드코딩하면 새 모드(예: "safe_mode") 도입 시 추적 범위가 커짐.
-    # HarnessConfig 에 헬퍼 3 개를 박제해서 도메인 언어를 캡슐화.
+    # HarnessConfig 에 헬퍼를 박제해서 도메인 언어를 캡슐화.
     def is_autonomous(self) -> bool:
         return str(self.harness_mode or "").lower() == "autonomous"
-
-    def is_selected(self) -> bool:
-        return str(self.harness_mode or "").lower() == "selected"
 
     def is_off(self) -> bool:
         return str(self.harness_mode or "").lower() == "off"

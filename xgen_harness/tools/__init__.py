@@ -1,10 +1,10 @@
 """
 xgen-harness 도구 패키지 — ToolSource 레지스트리 (단일 도구 공급 채널).
 
-v0.25.0 이후 엔진은 도구를 **`ToolSource` 한 경로로만** 얻는다. MCP 세션, Custom
-API, xgen 워크플로우 노드, 사용자가 합성한 synthesized tool 등 모든 공급원이 이
-Protocol 뒤에 감춰진다. 엔진 특수 분기 0, 이식/외부 플러그인이 자기 소스를
-``register_tool_source()`` + entry_points 로 합류시킨다.
+v0.25.0 이후 엔진은 도구를 **`ToolSource` 한 경로로만` 얻는다. MCP 세션, Custom
+API, xgen 워크플로우 노드 등 모든 공급원이 이 Protocol 뒤에 감춰진다. 엔진 특수
+분기 0, 이식/외부 플러그인이 자기 소스를 ``register_tool_source()`` + entry_points
+로 합류시킨다. (v1.0.5: synthesized tool 인프라는 dead trigger 라 제거됨.)
 
 Usage (이식/외부)::
 
@@ -48,17 +48,12 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import logging
-import os
 from typing import Any, Iterator, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger("harness.tools")
 
 _TOOL_SOURCES: list = []
 _ENTRY_POINTS_DISCOVERED = False
-_MANIFEST_PRELOADED = False
-
-# v0.16.3 — 매니페스트 파일 경로 env. 자세한 내용은 _preload_manifest_once() 참조.
-ENV_PRELOAD_MANIFEST = "XGEN_HARNESS_PRELOAD_MANIFEST"
 
 # v0.25.0 — 현재 실행 컨텍스트의 HTTP 요청 헤더. ToolSource 가 user/auth 관련
 # 헤더를 downstream 호출에 전파할 수 있게 한다. 엔진 ``/api/harness/tool-sources``
@@ -123,20 +118,17 @@ def register_tool_source(source: ToolSource) -> None:
 def get_tool_sources() -> list:
     """등록된 모든 도구 소스 반환 (복사본).
 
-    첫 호출 시 ``xgen_harness.tool_sources`` entry_points 자동 스캔 +
-    ``XGEN_HARNESS_PRELOAD_MANIFEST`` env 의 LocalManifest 자동 로드.
+    첫 호출 시 ``xgen_harness.tool_sources`` entry_points 자동 스캔.
     """
     _discover_from_entry_points_once()
-    _preload_manifest_once()
     return list(_TOOL_SOURCES)
 
 
 def clear_tool_sources() -> None:
     """테스트용: 등록된 도구 소스 초기화."""
-    global _ENTRY_POINTS_DISCOVERED, _MANIFEST_PRELOADED
+    global _ENTRY_POINTS_DISCOVERED
     _TOOL_SOURCES.clear()
     _ENTRY_POINTS_DISCOVERED = False
-    _MANIFEST_PRELOADED = False
 
 
 # ─── UI / API 메타 헬퍼 ────────────────────────────────────────────────────
@@ -292,35 +284,6 @@ def _register_entry_point_result(result: Any) -> None:
         for item in result:
             if isinstance(item, ToolSource):
                 register_tool_source(item)
-
-
-def _preload_manifest_once() -> None:
-    """``XGEN_HARNESS_PRELOAD_MANIFEST`` env 의 LocalManifest 파일 자동 로드.
-
-    여러 경로는 OS path separator (``os.pathsep``) 로 구분. Tool Synthesis
-    Loop 로 만든 도구 번들을 다른 프로세스/인스턴스에 그대로 주입.
-    """
-    global _MANIFEST_PRELOADED
-    if _MANIFEST_PRELOADED:
-        return
-    _MANIFEST_PRELOADED = True
-    env_val = os.environ.get(ENV_PRELOAD_MANIFEST, "").strip()
-    if not env_val:
-        return
-    paths = [p.strip() for p in env_val.split(os.pathsep) if p.strip()]
-    try:
-        from ..tools.synthesis import load_synthesized_from_gallery
-    except Exception as e:
-        logger.debug("[tools] preload: synthesis import failed: %s", e)
-        return
-    for p in paths:
-        try:
-            restored = load_synthesized_from_gallery(p)
-            for tool in restored:
-                register_tool_source(tool.as_source())
-            logger.info("[tools] preload manifest %s: %d tools", p, len(restored))
-        except Exception as e:
-            logger.warning("[tools] preload %s failed: %s", p, e)
 
 
 # ──────────────────────────────────────────────────────────────────────

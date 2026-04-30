@@ -101,36 +101,8 @@ class HarnessStage(Stage):
                 "skipped_count": 0,
             }
 
-        # selected: Planner LLM 호출 생략, 사용자 핀(chosen/strategies/params) 그대로 사용
-        if harness_mode == "selected":
-            pinned_chosen = list((state.config.stage_params.get("s00_harness") or {}).get("pinned_chosen") or [])
-            pinned_strategies = dict((state.config.stage_params.get("s00_harness") or {}).get("pinned_strategies") or {})
-            pinned_params = dict((state.config.stage_params.get("s00_harness") or {}).get("pinned_params") or {})
-            plan = HarnessPlan(
-                chosen=pinned_chosen,
-                skipped={},
-                params=pinned_params,
-                strategies=pinned_strategies,
-                reasoning="harness_mode=selected — 사용자 핀 그대로 적용",
-                source="user_pinned",
-                done=False,
-            )
-            state.metadata["harness_plan"] = plan.to_dict()
-            self._merge_plan_into_config(state, plan)
-            if state.event_emitter:
-                await state.event_emitter.emit(PlanningEvent(
-                    chosen=list(plan.chosen), skipped={}, params=dict(plan.params),
-                    strategies=dict(plan.strategies), reasoning=plan.reasoning,
-                    planner_model="", source=plan.source,
-                    iteration=getattr(state, "loop_iteration", 0), done=False,
-                ))
-            return {
-                "planner_source": plan.source,
-                "chosen": list(plan.chosen),
-                "skipped": {},
-                "reasoning": plan.reasoning,
-                "iteration": getattr(state, "loop_iteration", 0),
-            }
+        # v1.0.5 — "selected" (사용자 핀 hard-pin) 모드 제거. 캔버스 회귀 유산이라
+        # 자율주행 정신과 충돌. 핀 흐름이 다시 필요해지면 별도 stage 로 분리.
 
         # ━━━━ 1. Plan 생성 (autonomous) ━━━━
         planner = HarnessPlanner()

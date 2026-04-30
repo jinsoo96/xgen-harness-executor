@@ -1,14 +1,14 @@
 """
-Local Manifest — 갤러리/플러그인/Tool Synthesis 공용 로컬 매니페스트 (v0.16.1).
+Local Manifest — 갤러리/플러그인 공용 로컬 매니페스트 (v0.16.1).
 
 이 모듈은 **단일 진실 소스**. 과거:
-  - `tools/synthesis.py` 가 `{"version":"0.1", "nodes":[...]}` 를 자기 스키마로 박제
-  - `core/node_plugin.py` 가 `NodePluginManifest` 별도 스키마
-같은 도메인(NOMNode 묶음을 JSON 으로 교환) 이 두 스키마로 갈라져 drift 위험 발생.
+  - `core/node_plugin.py` 가 `NodePluginManifest` 별도 스키마로 분기
+같은 도메인(NOMNode 묶음을 JSON 으로 교환) 이 여러 스키마로 갈라져 drift 위험 발생.
 **feedback_no_hardcoding_extensibility 에 따라 즉시 통합**.
 
 모든 로컬 매니페스트는 이 모듈의 `LocalManifest` 로만 생성·저장·로드·upsert.
-synthesis / node_plugin / gallery 3 모듈이 이걸 공통 호출.
+node_plugin / gallery 모듈이 이걸 공통 호출.
+(v1.0.5: tools/synthesis.py 제거됨 — 더 이상 그쪽 caller 는 없음.)
 
 스키마:
   {
