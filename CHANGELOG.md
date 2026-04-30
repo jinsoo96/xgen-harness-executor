@@ -5,6 +5,18 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] — 2026-04-30
+
+### 🐛 도구 호출 후 합성 답변 미완 함정 수정
+
+**증상**: LLM 이 "CSV 파일을 읽어보겠습니다" 같은 짧은 인트로 + 도구 호출 → 도구 실행 → **답변 합성 없이 종료**. 사용자에겐 인트로 텍스트만 도달.
+
+**원인**: `ThresholdDecide` 의 종료 판정이 `last_assistant_text` 가 비어있지 않으면 즉시 `LOOP_COMPLETE` 반환. 도구 호출 직전의 짧은 인트로가 `last_assistant_text` 에 박혀있어 다음 iter (도구 결과 합성) 가 발생 안 함. `_needs_synthesis_kick` safeguard 가 한 번 더 LLM 호출하지만 `tool_definitions=[]` 도구 비활성 + 컨텍스트 빈약으로 또 짧게 흘리고 끝남.
+
+**수정**: `stages/strategies/_decide.py` ThresholdDecide.decide() 에 새 분기 추가 — `tools_executed_count > 0 + final_output 빔 + last_assistant_text < 200자` 면 `LOOP_CONTINUE` 로 다음 iter 강제 진입. `_SHORT_INTRO_THRESHOLD` 200 은 pipeline.\_needs_synthesis_kick safeguard 와 같은 임계 (정책 일관).
+
+테스트: 4 케이스 PASS (도구후 짧은인트로 / 정상 긴답변 / 도구無 / pending tool).
+
 ## [1.0.5] — 2026-04-30
 
 ### 🧹 Dead trigger 코드 일괄 청소

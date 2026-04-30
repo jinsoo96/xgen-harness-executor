@@ -103,6 +103,23 @@ class ThresholdDecide(DecideStrategy):
                     "reason": f"재시도 한도 도달 ({retry_count}/{max_retries}, 점수 {validation_score:.2f})",
                 }
 
+        # v1.0.6 — 도구 호출 직후 합성 답변 미완 케이스 우선 식별.
+        # 도구가 실행됐고 (tools_executed_count > 0) + 최종 답변이 비어있고 +
+        # last_assistant_text 가 짧은 인트로(< 200자)이면 그 텍스트는 도구 호출
+        # 직전의 인트로일 가능성이 높음 — 합성 답변은 아직 안 만들어진 상태.
+        # 이 케이스를 CONTINUE 로 흘려야 다음 iter 에서 LLM 이 도구 결과를 보고
+        # 답변을 합성. 200자 임계는 pipeline._needs_synthesis_kick 의 safeguard
+        # 와 동일 (`_SHORT_INTRO_THRESHOLD`). 두 곳이 같은 정책을 공유한다는 의미.
+        tools_run = int(getattr(state, "tools_executed_count", 0) or 0)
+        last_text_len = len(getattr(state, "last_assistant_text", "") or "")
+        final_out = str(getattr(state, "final_output", "") or "")
+        _SHORT_INTRO_THRESHOLD = 200
+        if tools_run > 0 and not final_out and last_text_len < _SHORT_INTRO_THRESHOLD:
+            return {
+                "decision": LOOP_CONTINUE,
+                "reason": f"도구 결과 합성 필요 (실행={tools_run}, 인트로={last_text_len}자)",
+            }
+
         # 텍스트 응답 있음 → complete
         if getattr(state, "last_assistant_text", ""):
             return {"decision": LOOP_COMPLETE, "reason": "응답 생성 완료"}
