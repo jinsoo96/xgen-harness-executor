@@ -5,6 +5,55 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] — 2026-05-01
+
+### 🏗 Plugin Registration API 정리 + s06 god-class 분해 + runtime_defaults 인프라
+
+#### Top-level register_* API (외부 plugin 단일 진입)
+- `xgen_harness/__init__.py`: 30+ register_* / get_* / list_* / Protocol 함수를
+  top-level export. 외부 패키지가 `from xgen_harness.core.phase_registry import ...`
+  같이 깊은 모듈 경로를 알 필요 없이 `from xgen_harness import register_phase` 한 줄로 사용.
+- 새 export: `register_runtime_default`, `get_runtime_default`, `resolve_with_default`,
+  `list_runtime_defaults`, `register_phase`, `register_orchestrator`, `register_service`,
+  `register_env_mapping`, `register_strategy`, `register_node_plugin`, `register_provider`,
+  `register_node_adapter`, `register_fan_out_strategy`, `register_decide_defaults`,
+  `register_model_pricing`, `register_preset`, `register_capability_discovery_defaults`,
+  `register_output_formatter`, `register_persist_defaults`, `register_identity`,
+  `register_rules`, `register_thinking_mode`, `register_evaluation_criterion`,
+  `register_evaluation_prompt_template`, `register_judge_defaults`, `register_term_expander`,
+  `register_search_alias`, `TermExpander`, `available_guards`, `describe_guards`,
+  `build_guard_chain`. 기존 `register_stage`/`register_tool_source`/`register_guard`/
+  `register_xgen_node_resolver`/`register_sandbox_verifier` 와 함께 entry_points 그룹과
+  1:1 매핑.
+
+#### runtime_defaults registry (sentinel 폴백 인프라)
+- 새 모듈 `core/runtime_defaults.py` (118 LOC, 16 floor 사전 등록).
+  엔진은 정책 default 를 박지 않지만(이식측 책임), 정책 sentinel(None) 이 산술/비교
+  위치까지 흘러가면 TypeError 크래시 → 안전 바닥(safety floor) 으로 폴백.
+- 16 floor: max_iterations / max_retries / max_tool_rounds / validation_threshold /
+  synthesis_intro_threshold_chars / max_pending_tool_results / context_window /
+  max_tokens / thinking_budget_tokens / temperature / cascade_l3/l4/l5_threshold_pct /
+  compaction_threshold_pct / microcompact_threshold_pct / context_collapse_threshold_pct /
+  autocompact_threshold_pct.
+- `register_runtime_default(key, value)` — 외부 plugin 이 도메인 floor override.
+- `core/llm_call.py` / `core/pipeline.py` / `stages/s06_context/stage.py` 의 sentinel
+  폴백을 `resolve_with_default` 헬퍼로 통일.
+
+#### s06_context god-class 분해 (mixin 패턴)
+- 새 모듈 `stages/s06_context/cascade.py` — `CascadeCompactionMixin` (327 LOC):
+  L3 microcompact / L4 collapse_overlay / L5 autocompact_llm + cascade dispatcher.
+- 새 모듈 `stages/s06_context/intent.py` — `IntentRoutingMixin` (62 LOC):
+  stage_param `intent_rules` → `auto_metadata_filter` 자동 결정.
+- `ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage)` 다중 상속으로
+  본 클래스는 dispatcher + RAG/DB fetch + token budget compaction 만.
+
+#### term_expansion 단일 정의 (god-class 정리)
+- `tools/term_expansion.py` 신설 — `TermExpander` Protocol + `register_term_expander` /
+  `register_search_alias` / `expand_query_terms` / `_load_entry_points_once` 단일 정의.
+- `tools/builtin.py` 는 위 모듈에서 re-export 만 (기존 자체 정의 155 LOC 삭제).
+  외부 호환 보장 — `from xgen_harness.tools.builtin import register_term_expander`
+  여전히 작동.
+
 ## [1.0.8] — 2026-05-01
 
 ### 🧹 s02_history.memory_collection UI 필드 제거 (dead UI)

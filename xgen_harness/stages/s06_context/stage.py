@@ -15,13 +15,37 @@ import logging
 from ...core.stage import Stage, StrategyInfo
 from ...core.state import PipelineState
 from ...core.service_registry import get_service_url
+from ...core.runtime_defaults import resolve_with_default
+from .cascade import CascadeCompactionMixin
+from .intent import IntentRoutingMixin
 
 logger = logging.getLogger("harness.stage.context")
 
 CHARS_PER_TOKEN = 3  # 평균 추정 (영어 ≈ 4, 한국어 ≈ 1.5~2). stage_param chars_per_token 으로 override.
 
 
-class ContextStage(Stage):
+def _pct_threshold(value, runtime_default_key: str) -> float:
+    """percent stage_param → 0.0~1.0 비율 변환.
+
+    사용자가 stage_param 에 0~100 percentage 로 박으면 ratio 로 변환.
+    None 이면 runtime_defaults 의 floor 사용 (외부 register_runtime_default
+    로 override 가능). floor 도 없으면 0 → 해당 strategy 비활성.
+    """
+    pct = resolve_with_default(value, runtime_default_key, 0)
+    try:
+        return float(pct) / 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
+    """RAG / DB / 컨텍스트 압축 — 책임은 Mixin 두 개에 분산.
+
+    - `CascadeCompactionMixin`: L3 microcompact / L4 collapse / L5 autocompact + cascade dispatcher
+    - `IntentRoutingMixin`: stage_param `intent_rules` → `auto_metadata_filter` 자동 결정
+    - 본 클래스: 위 책임을 호출하는 dispatcher + RAG/DB fetch + token budget compaction
+    """
+
 
     @property
     def stage_id(self) -> str:
@@ -343,15 +367,26 @@ class ContextStage(Stage):
                 )
 
         # ── 3. 토큰 예산 관리 ──
-        # v0.11.20 — context_window 는 getattr 로 방어 (HarnessConfig 이전 버전 호환).
-        context_window = self.get_param(
-            "context_window", state, getattr(config, "context_window", 200_000)
+        # v1.0.x — getattr default 는 attribute 부재일 때만 발동. config 에 None 으로
+        # 박혀있으면 None 흘러감 → 산술 TypeError. resolve_with_default 로 sentinel 폴백
+        # 명시. context_window / max_tokens / thinking_budget_tokens 는 runtime_defaults
+        # 레지스트리에 등록되어 있어 외부 패키지가 register_runtime_default(...) 로 override.
+        context_window = resolve_with_default(
+            self.get_param("context_window", state, None) or getattr(config, "context_window", None),
+            "context_window",
         )
-        max_tokens = getattr(config, "max_tokens", 8192) if config else 8192
-        available_tokens = context_window - max_tokens
+        max_tokens = resolve_with_default(
+            getattr(config, "max_tokens", None) if config else None,
+            "max_tokens",
+        )
+        available_tokens = int(context_window) - int(max_tokens)
 
         if config and getattr(config, "thinking_enabled", False):
-            available_tokens -= getattr(config, "thinking_budget_tokens", 0)
+            thinking_budget = resolve_with_default(
+                getattr(config, "thinking_budget_tokens", None),
+                "thinking_budget_tokens",
+            )
+            available_tokens -= int(thinking_budget)
 
         total_chars = len(state.system_prompt)
         for msg in state.messages:

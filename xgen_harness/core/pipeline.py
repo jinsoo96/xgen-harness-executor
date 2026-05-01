@@ -145,12 +145,15 @@ class Pipeline:
             # if-else 하드코딩 제거. 외부 orchestrator 도 replan_per_iter/max_iterations_override
             # 를 선언만 하면 엔진이 동일하게 존중.
             from .orchestrator_registry import get_orchestrator
+            from .runtime_defaults import resolve_with_default
             orch_hint = (state.metadata.get("orchestrator_hint") or "").strip().lower()
             orch_spec = get_orchestrator(orch_hint) or get_orchestrator("iterative")
+            # 정책 default 는 이식측 owns. None 일 때 엔진 안전 바닥(safety floor) 으로
+            # 폴백 — 외부 플러그인이 register_runtime_default("max_iterations", N) 로 override.
             effective_max_iter = (
                 orch_spec.max_iterations_override
                 if orch_spec and orch_spec.max_iterations_override is not None
-                else self.config.max_iterations
+                else resolve_with_default(self.config.max_iterations, "max_iterations")
             )
             replan_per_iter = bool(orch_spec.replan_per_iter) if orch_spec else True
             logger.info(

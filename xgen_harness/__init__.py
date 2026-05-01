@@ -18,10 +18,23 @@ Usage:
 from .core.pipeline import Pipeline
 from .core.state import PipelineState, TokenUsage
 from .core.config import HarnessConfig, ALL_STAGES, REQUIRED_STAGES
-from .core.presets import PRESETS, Preset, get_preset, apply_preset, list_presets
+from .core.presets import PRESETS, Preset, get_preset, apply_preset, list_presets, register_preset
 from .core.stage import Stage, StageDescription, StrategyInfo
 from .core.stage_io import StageInput, StageOutput, STAGE_IO_SPECS, get_stage_io
 from .core.registry import ArtifactRegistry, register_stage
+# v1.0.9 — register_* 인프라 단일 진입 (외부 plugin 이 모듈 깊이 알 필요 없도록).
+# 모든 plugin 그룹은 entry_points 와 1:1 매핑되며 import 시 발견 + register_* 로 즉시 호출도 가능.
+from .core.runtime_defaults import (
+    register_runtime_default,
+    get_runtime_default,
+    resolve_with_default,
+    list_runtime_defaults,
+)
+from .core.phase_registry import register_phase
+from .core.orchestrator_registry import register_orchestrator
+from .core.service_registry import register_service, register_env_mapping
+from .core.strategy_resolver import register_strategy
+from .core.node_plugin import register_node_plugin
 from .events.emitter import EventEmitter
 from .events.types import (
     HarnessEvent,
@@ -71,6 +84,30 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 from .tools import ToolSource, register_tool_source, get_tool_sources
+# v1.0.9 — term expansion (search_tools query 확장 메커니즘)
+from .tools.term_expansion import (
+    TermExpander,
+    register_term_expander,
+    register_search_alias,
+)
+from .providers import register_provider
+from .adapters.node_adapters import register_node_adapter
+from .orchestrator.multi_agent_planner import register_fan_out_strategy
+from .stages.strategies._decide import register_decide_defaults
+from .stages.strategies.token_tracker import register_model_pricing
+from .stages.s03_prompt.stage import (
+    register_identity,
+    register_rules,
+    register_thinking_mode,
+)
+from .stages.s04_tool.stage import register_capability_discovery_defaults
+from .stages.s08_decide.strategies.judge_then_loop import (
+    register_evaluation_criterion,
+    register_evaluation_prompt_template,
+    register_judge_defaults,
+)
+from .stages.s09_finalize.stage import register_output_formatter
+from .stages.s09_finalize.strategies.persist import register_persist_defaults
 # v0.17.0 — Policy Gate: ABC/인프라만 노출. 구체 Guard 클래스(TokenBudgetGuard,
 # ToolPreconditionGuard 등)는 top-level 에 두지 않는다 — 외부 코드가 이름에
 # 결합되지 않도록. 구체 Guard 는 entry_points 로만 발견·사용.
@@ -329,4 +366,40 @@ __all__ = [
     "NOMGraph",
     "snapshot_current_registry_as_nom",
     "compile_nom_graph",
+    # v1.0.9 — Plugin Registration API (entry_points 16 그룹과 1:1 매핑).
+    # 외부 패키지가 import 시점에 자기 도메인 자원을 등록하는 단일 진입.
+    # 깊은 모듈 경로(예: from xgen_harness.core.phase_registry import ...) 대신
+    # `from xgen_harness import register_phase` 한 줄로 사용.
+    "register_runtime_default",
+    "get_runtime_default",
+    "resolve_with_default",
+    "list_runtime_defaults",
+    "register_phase",
+    "register_orchestrator",
+    "register_service",
+    "register_env_mapping",
+    "register_strategy",
+    "register_node_plugin",
+    "register_provider",
+    "register_node_adapter",
+    "register_fan_out_strategy",
+    "register_decide_defaults",
+    "register_model_pricing",
+    "register_preset",
+    "register_capability_discovery_defaults",
+    "register_output_formatter",
+    "register_persist_defaults",
+    "register_identity",
+    "register_rules",
+    "register_thinking_mode",
+    "register_evaluation_criterion",
+    "register_evaluation_prompt_template",
+    "register_judge_defaults",
+    "register_term_expander",
+    "register_search_alias",
+    "TermExpander",
+    "register_guard",
+    "available_guards",
+    "describe_guards",
+    "build_guard_chain",
 ]

@@ -202,10 +202,21 @@ async def _single_call(
         v = params.get(name)
         return v if v is not None else default
 
-    max_tokens = int(_param("max_tokens", config.max_tokens if config else 8192))
+    # v1.0.x — config 의 sentinel(None) 은 runtime_defaults 의 안전 바닥으로 폴백.
+    # 외부 패키지가 register_runtime_default("max_tokens", N) 로 도메인 floor 설정.
+    from .runtime_defaults import resolve_with_default
+    cfg_max_tokens = resolve_with_default(config.max_tokens if config else None, "max_tokens")
+    cfg_thinking_budget = resolve_with_default(
+        config.thinking_budget_tokens if config else None, "thinking_budget_tokens", 10000,
+    )
+
+    max_tokens = int(_param("max_tokens", cfg_max_tokens))
     thinking_enabled = bool(_param("thinking_enabled", config.thinking_enabled if config else False))
-    thinking_budget = int(_param("thinking_budget", config.thinking_budget_tokens if config else 10000))
-    temperature = config.temperature if config else 0.7
+    thinking_budget = int(_param("thinking_budget", cfg_thinking_budget))
+    # temperature 는 정책 sentinel — None 이면 runtime default (0.7. 도메인이 strict 면
+    # register_runtime_default('temperature', 0.0) 으로 override).
+    temperature_raw = (config.temperature if config else None)
+    temperature = temperature_raw if temperature_raw is not None else resolve_with_default(None, "temperature", 0.7)
 
     thinking = None
     if thinking_enabled and provider.supports_thinking():
