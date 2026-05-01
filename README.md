@@ -2,7 +2,7 @@
 
 # xgen-harness
 
-LLM 에이전트 실행기입니다. 워크플로우를 코드로 짜지 않고 `HarnessConfig` 한 객체로 선언하면, 13개 Stage 가 정해진 순서로 실행합니다.
+LLM 에이전트 실행기입니다. 워크플로우를 코드로 짜지 않고 `HarnessConfig` 한 객체로 선언하면, 10개 Stage 가 정해진 순서로 실행합니다.
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
@@ -24,11 +24,11 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 
 | 용어 | 뜻 | 본문에서 |
 |---|---|---|
-| **Stage** | 요청 처리의 한 구간 (입력 정규화 / 도구 카탈로그 / LLM 호출 / 응답 평가 ···). 13개가 정해진 순서로 실행 | s00 ~ s11 |
-| **Strategy** | 한 Stage 안에서 골라 끼우는 구현체. 예: 응답 평가 = `llm_judge` 또는 `rule_based` | `active_strategies` |
+| **Stage** | 요청 처리의 한 구간 (입력 정규화 / 도구 카탈로그 / LLM 호출 / 응답 평가 ···). 10개가 정해진 순서로 실행 | s00 ~ s09 |
+| **Strategy** | 한 Stage 안에서 골라 끼우는 구현체. 예: 루프 결정 = `threshold` / `judge_then_loop` / `always_pass` | `active_strategies` |
 | **ToolSource** | LLM 이 부를 도구를 한 곳에서 모으는 통로. MCP 서버·캔버스 노드·파이썬 함수 모두 같은 인터페이스로 들어옴 | `register_tool_source()` |
 | **Capability** | "RAG 검색", "웹 검색" 같이 **무슨 능력이 필요하다** 만 선언하면 도구가 자동 매칭 | `capabilities=[...]` |
-| **Orchestrator** | 13 Stage 사이클을 어떻게 반복할지의 패턴 (`linear` / `iterative` / `dag` ···) | `orchestrator_hint` |
+| **Orchestrator** | 10 Stage 사이클을 어떻게 반복할지의 패턴 (`linear` / `iterative` / `dag` ···) | `orchestrator_hint` |
 | **Guard** | "이 도구 부르기 전엔 반드시 검색을 먼저 해라" 같은 규칙을 코드 수정 없이 데이터로 선언 | Policy Gate |
 
 ---
@@ -47,18 +47,23 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 
 ## 어떻게 돌아가는가
 
-요청이 들어오면 13개 Stage 가 **초기화 → 에이전트 루프 → 종료** 세 그룹으로 나뉘어 순차 실행됩니다. 각 Stage 는 자기 담당 영역(도구·정책·컨텍스트·예산) 만 LLM 에게 보여주고 다음 Stage 로 `PipelineState` 객체를 넘깁니다.
+요청이 들어오면 10개 Stage 가 **초기화 → 에이전트 루프 → 종료** 세 그룹으로 나뉘어 순차 실행됩니다. 각 Stage 는 자기 담당 영역(도구·정책·컨텍스트·예산) 만 LLM 에게 보여주고 다음 Stage 로 `PipelineState` 객체를 넘깁니다.
 
 ```
-[ ingress · 1회 ]                       [ agent loop · max_iterations 회 ]              [ egress · 1회 ]
+[ ingress · 1회 ]                  [ agent loop · max_iterations 회 ]   [ egress · 1회 ]
 
-  s00 ─ s01 ─ s02 ─ s03 ─ s04   ─▶   s05 ─ s06 ─ s07 ─ s08 ─ s09  ─┐   ─▶   s10 ─ s11
-  ──────────────────────────────         ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
-  LLM 핸들 owner / 입력 / 히스토리 /        계획 / 컨텍스트 / 본문호출 /     │       DB 기록 / 최종 응답
-  프롬프트·citation / 도구 카탈로그         judge / 루프 결정                │
-                                       ◀─── orchestrator hint 분기 ─────┘
-                                            (linear · iterative · plan_execute · react · dag)
+  s00 ─ s01 ─ s02 ─ s03 ─ s04  ─▶  s05 ─ s06 ─ s07 ─ s08  ─┐  ─▶  s09
+  ──────────────────────────────       ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
+  LLM 핸들 owner / 입력 / 히스토리 /     정책 / 컨텍스트 /        │     최종 응답 + 메트릭스
+  프롬프트·citation / 도구 카탈로그      도구실행 / 루프결정+judge │     + (선택) DB 저장
+                                  ◀─── orchestrator hint ───┘
+                                       (linear · iterative · plan_execute · react · dag)
 ```
+
+> **v1.0 통합 (2026-04-29~30)**: 이전 13 Stage 에서 4개 흡수 후 10 Stage 로 정리.
+> `s05_strategy` 분해 (CoT/ReAct → s03 / capability matcher → s04 / intent_routing → s06) ·
+> `s08_judge` → `s08_decide.judge_then_loop` strategy · `s10_save` → `s09_finalize.persist` strategy ·
+> `s12_publish` 빈 슬롯 제거. 외부 swap-in 슬롯은 strategy 격하로 보존.
 
 ### 알아두면 좋은 4 가지
 
@@ -73,26 +78,26 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 HarnessConfig + user_input
     │
     ▼
-PipelineState  ◀──────────  EventEmitter (17 이벤트, SSE 스트림)
+PipelineState  ◀──────────  EventEmitter (SSE 스트림)
     │
     │   ── ingress ──
-    ├─ s00  LLM 핸들 owner / transport(streaming|batch) 선정
+    ├─ s00  LLM 핸들 owner / transport(streaming|batch) 선정 + Planner (Auto 모드)
     ├─ s01  사용자 입력 정규화 · multimodal 추출
-    ├─ s02  같은 interaction 의 이전 turn 로드
-    ├─ s03  system_prompt 주입 + citation
-    ├─ s04  ToolSource → tool_definitions 합성 (UI 가 selected_tools 로 필터)
+    ├─ s02  같은 interaction 의 이전 turn 로드 (선택: embedding_search)
+    ├─ s03  system_prompt 주입 + citation + thinking_mode (CoT/ReAct/none, 구 s05_strategy 흡수)
+    ├─ s04  ToolSource → tool_definitions 합성 + Capability 자동 발견 (구 s05_strategy 흡수)
     │
     │   ── agent loop (orchestrator_hint 가 결정한 횟수만큼) ──
-    ├─ s05_strategy   CoT / ReAct / Capability 계획
-    ├─ s05_policy     (옵션) Guard 체인 — pre_main / pre_tool / post_response / loop_boundary
-    ├─ s06            RAG · 온톨로지 · DB → 컨텍스트 주입 + 압축 (microcompact / cascade / …)
-    ├─ s07            본문 LLM 호출 + tool_use multi-turn   (s00 dispatcher 경유)
-    ├─ s08            응답 품질 judge (llm_judge | rule_based | none)
-    ├─ s09            judge 결과 → loop_decision (continue / complete)
+    ├─ s05_policy   (옵션) Guard 체인 — pre_main / pre_tool / post_response / loop_boundary
+    ├─ s06          RAG · 온톨로지 · DB → 컨텍스트 주입 + 압축 (microcompact / cascade / …)
+    │                + Intent Routing (구 s05_strategy 흡수)
+    ├─ s07_act      tool_use multi-turn 도구 실행 (s00 본문 호출 결과 기반)
+    ├─ s08_decide   루프 계속 / 종료 결정 + (선택) judge_then_loop strategy 로 응답 평가
+    │                ※ 구 s08_judge 가 strategy 로 격하
     │
     │   ── egress ──
-    ├─ s10  DB 실행 기록 (이식측 hook)
-    └─ s11  최종 응답 + MetricsEvent  →  state.final_output
+    └─ s09_finalize 최종 응답 + MetricsEvent + (선택) persist strategy 로 DB 기록
+                    ※ 구 s10_save / s11_finalize 통합
 ```
 
 `HarnessConfig.harness_mode` 가 이 사이클의 자율도를 결정합니다 (`off` / `selected` / `autonomous`). 자세한 내용은 다음 섹션입니다.
@@ -103,7 +108,7 @@ PipelineState  ◀──────────  EventEmitter (17 이벤트, SS
 
 | 모드 | `harness_mode` | 동작 | 언제 쓰나 |
 |---|---|---|---|
-| **Off** (기본) | `"off"` | 13 Stage 정해진 순서, Plan 안 만듦, 본문 LLM 1회 | 빠른 단발 Q&A |
+| **Off** (기본) | `"off"` | 10 Stage 정해진 순서, Plan 안 만듦, 본문 LLM 1회 | 빠른 단발 Q&A |
 | **Selected** | `"selected"` + `active_strategies={...}` | 사용자 핀 한 부분만 hard-pin, 나머지 Planner 자율 | 일부만 강제 |
 | **Auto** | `"autonomous"` | Planner LLM 이 Stage / Strategy / 도구 / orchestrator_hint 자율 결정 | 복잡 요청 · RAG · 멀티턴 도구 |
 
@@ -116,15 +121,15 @@ assert config.is_autonomous() is True   # v0.25.3 helper
 config = HarnessConfig(
     harness_mode="selected",
     active_strategies={
-        "s06_context": "microcompact",   # RAG 압축 전략 핀
-        "s08_judge":   "rule_based",
+        "s06_context": "microcompact",       # RAG 압축 전략 핀
+        "s08_decide":  "judge_then_loop",    # 응답 품질 평가 활성 (구 s08_judge stage 격하)
     },
 )
 ```
 
 ---
 
-## 13 Stage 표
+## 10 Stage 표
 
 각 Stage 는 자기 담당 영역(capability / 도구 / 리소스)만 LLM 에게 점진적으로 보여주고, Auto 모드에서는 Planner LLM 이 그 중에서 골라 씁니다.
 
@@ -132,34 +137,41 @@ config = HarnessConfig(
 
 | # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 0 | **s00_harness** | LLM 핸들 owner + 본문호출 dispatcher (모드별 책임) | `strategy`(transport), `max_tokens`, `thinking_enabled`, `thinking_budget` | `streaming`* / `batch` |
+| 0 | **s00_harness** | LLM 핸들 owner + 본문호출 dispatcher (모드별 책임) | `strategy`(transport), `max_tokens`, `thinking_enabled`, `thinking_budget` | `streaming`* / `batch` · Artifacts: `default` / `multi_agent` |
 | 1 | **s01_input** ✱ | 사용자 입력 정규화, multimodal 추출 | (없음 — top-level config.user_input) | `default`* / `with_classification` |
-| 2 | **s02_history** | 같은 interaction 이전 turn 로드 | `max_history` | `default`* / `embedding_search` |
-| 3 | **s03_prompt** | system_prompt 주입 + citation | `system_prompt`, `prompt_id`, `include_rules`, `citation_mode`, `citation_auto_doc_tokens`, `citation_auto_prod_tokens` | `section_priority`* |
-| 4 | **s04_tool** | LLM 노출 도구 카탈로그 — **ToolSource 단일 채널** | `selected_tools`, `tool_source_filters` (UI 가 주입) | `progressive_3level`* / `eager_load` / `none` |
+| 2 | **s02_history** | 같은 interaction 이전 turn 로드 | `max_history`, `memory_top_k`, `memory_score_threshold` | `default`* / `embedding_search` / `none` |
+| 3 | **s03_prompt** | system_prompt 주입 + citation + thinking_mode (CoT/ReAct, 구 s05_strategy 흡수) | `system_prompt`, `include_rules`, `citation_mode`, `thinking_mode`, `identity_template`, `rules_template` | `section_priority`* / `cot_planner` / `react` / `none` |
+| 4 | **s04_tool** | LLM 노출 도구 카탈로그 — **ToolSource 단일 채널** + Capability 자동 발견 (구 s05_strategy 흡수) | `selected_tools`, `tool_source_filters`, `rag_collections`, `force_tool_use`, `capability_top_k`, `capability_min_score` | `progressive_3level`* / `eager_load` / `capability_auto` / `none` |
 
 ### 에이전트 루프 그룹 (loop · `max_iterations` 회)
 
 | # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 5 | **s05_strategy** | 계획 모드 결정 (cot/react/capability) | `planning_mode`, `intent_rules` | `cot_planner`* / `react` / `capability` / `none` |
-| 5 | **s05_policy** ◆ | Guard 체인 × 4 훅 포인트 (옵트인) | `guards: [{name, params}]` | — (Guard 합성) |
-| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 | `rag_collections`, `folders`, `files`, `db_connections`, `ontology_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `strategy`(compactor), cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
-| 7 | **s07_act** | 본문 LLM 호출 + tool_use multi-turn | `timeout`, `result_budget`, `tool_result_preview_threshold`, `tool_result_preview_size` | `default`* / `parallel_read` |
-| 8 | **s08_judge** | 응답 품질 평가 (0~1) | `threshold`, `criteria` | `llm_judge`* / `rule_based` / `none` |
-| 9 | **s09_decide** ✱ | judge 결과 → loop_decision | `max_retries` (max_iterations 은 top-level config) | `threshold`* / `always_pass` |
+| 5 | **s05_policy** | Guard 체인 × 4 훅 포인트 (`guards` 비면 자동 bypass) | `guards: [{name, params}]` | — (Guard 합성, Strategy 카드 0) |
+| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 + Intent Routing (구 s05_strategy 흡수) | `rag_collections`, `folders`, `files`, `db_connections`, `ontology_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `intent_rules`, cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
+| 7 | **s07_act** | 도구 실행 (read 병렬 / write 직렬) | `timeout`, `result_budget`, `tool_result_preview_threshold`, `tool_result_preview_size` | `default`* / `parallel_read` / `strict_no_error` |
+| 8 | **s08_decide** ✱ | 루프 계속 / 종료 결정 + (선택) 응답 품질 평가 (구 s08_judge 흡수) | `max_retries`, `judge_enabled`, `judge_threshold`, `criteria`, `evaluation_strategy`, `evaluation_prompt_template`, `evaluation_system_prompt` | `threshold`* / `judge_then_loop` / `always_pass` |
 
 ### 종료 그룹 (egress · 1 회)
 
 | # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
-| 10 | **s10_save** | DB 실행 기록 (이식측 hook) | `save_enabled` | `default`* / `noop` |
-| 11 | **s11_finalize** ✱ | 최종 응답 + MetricsEvent | `output_format` (text/markdown/json) | `default`* / `format_json` |
+| 9 | **s09_finalize** ✱ | 최종 응답 + MetricsEvent + (선택) DB 기록 (구 s10_save 흡수) | `output_format` (text/markdown/json), `save_enabled`, `table_name`, `input_text_cap`, `output_text_cap` | `default`* / `persist` / `noop` |
 
-`✱` = `REQUIRED_STAGES` (비활성화 불가) · `◆` = 옵트인 (registry-only, role 로 호출됨) · `*` = 기본 strategy
+`✱` = `REQUIRED_STAGES` (비활성화 불가) · `*` = 기본 strategy
+
+> v1.0 BREAKING (2026-04-29~30): `s05_strategy` 분해 / `s08_judge` → strategy 격하 / `s10_save` → strategy 격하 / `s12_publish` 제거 / 번호 시프트 (`s09_decide`→`s08_decide`, `s11_finalize`→`s09_finalize`). 외부 swap-in 슬롯은 strategy 로 보존.
 
 > **최근 변경 — 한눈에**:
 >
+> - **v1.0.9 (2026-05-01) — Plugin Registration API 정리 + s06 god-class 분해 + runtime_defaults 인프라**:
+>   - 30+ `register_*` / `get_*` / `list_*` 함수 **top-level export** (entry_points 16 그룹과 1:1 매핑). 외부 plugin 이 깊은 모듈 경로 알 필요 없이 `from xgen_harness import register_phase` 한 줄로.
+>   - `core/runtime_defaults.py` 신설 — 16 안전 바닥(safety floor) 사전 등록. 정책 sentinel(None) → `register_runtime_default()` override 가능.
+>   - `s06_context` god-class 분해 — `CascadeCompactionMixin` (L3/L4/L5) + `IntentRoutingMixin` 별도 모듈.
+>   - `tools/term_expansion.py` 단일 정의화 — `tools/builtin.py` 의 자체 정의 155 LOC 삭제 후 re-export.
+> - **v1.0.0 ~ v1.0.8 (2026-04-29~05-01) — 11→10 stage 고결화 BREAKING + 후속 패치**:
+>   - 4 stage 흡수: `s05_strategy` 분해 / `s08_judge` → strategy / `s10_save` → strategy / `s12_publish` 제거.
+>   - v1.0.4 Policy Gate emit 본체 + decide_defaults 레지스트리 · v1.0.5 selected 모드 + synthesis 인프라 dead trigger 청소 · v1.0.6 도구 호출 후 합성 답변 미완 함정 fix · v1.0.7 PRE_MAIN/POST_RESPONSE 훅 독립 호출 + judge system prompt + advanced flag · v1.0.8 s02_history.memory_collection dead UI 제거.
 > - **v0.26.x 패치 사이클** (production 라이브 검증 → 발견 → 즉시 fix): `s06_context.files` 부활 (v0.26.1, frontend UI 와 wiring 일치) · OpenAI strict schema 호환 (v0.26.2) · `s10_save` 컬럼명 정합 (v0.26.3) · batch transport 응답 누락 fix (v0.26.4) · Anthropic thinking max_tokens 자동 보정 (v0.26.5) · DAG orchestrator init TypeError fix (v0.26.6) · `max_iter=1` + 도구 활성 빈응답 보강 (v0.26.7) · DAG sub-Pipeline `DoneEvent` forward 누수 fix (v0.26.10, 후속 노드 이벤트 누락 차단).
 > - **v0.26.0 — Dead UI 정리**: 사용자 클릭이 LLM 환경에 안 박히던 stage_param 정리. `s01_input.provider` (글로벌 ConfigPanel 와 중복) · `s02_history.memory_source` (코드 미read) · `s09_decide.max_iterations` (top-level config 만 작동) 3건 제거. Label-only 라 동일 동작이던 `s03_prompt.simple` strategy 제거. `s04_tool.none` / `s10_save.noop` 는 분기 코드 신규 구현해 진짜 short-circuit. EventEmitter queue 1000→8000 + drop 카운터.
 >   - ⚠ `s06_context.files` 도 v0.26.0 에선 같이 제거됐으나, frontend UI 가 잔존해 클릭 무효화되는 문제로 **v0.26.1 에서 부활** (`metadata_filter.file_name` 자동 라우팅).
