@@ -73,28 +73,13 @@ class Pipeline:
         `register_stage()` 나 entry_points 로 등록된 외부 플러그인 Stage 도
         함께 반영됩니다. 테스트/격리가 필요하면 registry 를 명시 전달하세요.
 
-        v0.12.0 — `config.use_planner=True` 면 s00_harness (Planner 메타 스테이지)
-        를 ingress 최상단에 prepend. Planner 가 없을 때 기본 파이프라인 그대로.
+        v1.1.0 — Planner 항상 OFF 직선 흐름. harness_mode/use_planner 제거.
+        s00_harness Stage 자체는 레지스트리에 남아있되 ingress 최상단 prepend 안 함.
+        본문 LLM 호출(main_call)은 Phase B 에서 s00 인스턴스를 통해 그대로 호출.
         """
         from .registry import _get_default_registry
         reg = registry or _get_default_registry()
         stages = reg.build_pipeline_stages(config)
-
-        # v0.14.0/v0.16.6 — "orchestrator_planner" role Stage (예: s00_harness) 를
-        # ingress 최상단에 prepend. 이름 리터럴 대신 **role 검색** 으로 전환.
-        # 외부 기여자가 자기 Planner Stage 를 `role == "orchestrator_planner"` 로
-        # 선언하면 Pipeline 코드 변경 0 으로 대체 가능.
-        mode = getattr(config, "harness_mode", "") or ("autonomous" if config.use_planner else "off")
-        if mode != "off":
-            planner_stage = _find_role_in_registry(reg, config, ROLE_ORCHESTRATOR_PLANNER)
-            if planner_stage is not None:
-                # 기존 stages 에서 같은 stage_id 제거 후 최상단 prepend.
-                stages = [s for s in stages if s.stage_id != planner_stage.stage_id]
-                stages.insert(0, planner_stage)
-                logger.info("[Pipeline] Planner 주입 (mode=%s, stage_id=%s)", mode, planner_stage.stage_id)
-            else:
-                logger.warning("[Pipeline] orchestrator_planner role Stage 미등록 — 기본 파이프라인으로 진행")
-
         return cls(config, stages, event_emitter)
 
     async def run(self, state: PipelineState) -> PipelineState:
@@ -127,17 +112,9 @@ class Pipeline:
                     continue
                 await self._execute_stage(stage, state)
 
-            # Phase B: Agentic Loop — v0.13.0 iterative planning / v0.15.3 orchestrator_hint 분기
-            # 매 iter 시작에 s00_harness 를 다시 호출해 **Plan 을 갱신**. 이전 iter 의
-            # 결과(tool_results / validation_score / rag_context / messages)를 s00 이
-            # 카탈로그 + 누적 state 로 다시 보고 "이제 뭐 해야 할지" 재결정. 첫 iter 는
-            # Phase A 에서 이미 s00 실행했으므로 skip (loop_iteration == 0 → 1 전환 직후).
-            #
-            # v0.15.3 — orchestrator_hint (Plan 이 제시) 가 loop 행동을 조정:
-            #   linear       : 1회만 돌고 즉시 종료 (단발 Q&A)
-            #   iterative    : 기본. 매 iter replan
-            #   plan_execute : 첫 Plan 고수. replan 생략, 반복은 함
-            #   react / dag  : 엔진 no-op (이식측 dispatcher 위임)
+            # Phase B: Agentic Loop — v1.1.0 직선 흐름.
+            # Planner OFF 고정으로 매 iter replan 분기 dead. 본문 LLM 호출은
+            # main_actor role Stage 직전에 s00.main_call 로만 위임.
             s00_stage = self._find_loop_s00()
             # v0.17.0 — Policy Gate (role="policy_gate") 인스턴스. 없으면 훅 no-op.
             policy_stage = self._find_role_stage(ROLE_POLICY_GATE)
@@ -165,19 +142,7 @@ class Pipeline:
                 state.loop_iteration += 1
                 logger.info("[Pipeline] Loop iteration %d", state.loop_iteration)
 
-                # iterative replan — 2번째 iter 부터. replan_per_iter=False 면 생략.
-                # Plan 이 done 플래그를 세우면 즉시 종료 (공통).
-                if (
-                    state.loop_iteration > 1
-                    and s00_stage is not None
-                    and replan_per_iter
-                ):
-                    await self._execute_stage(s00_stage, state)
-                    plan = state.metadata.get("harness_plan") or {}
-                    if plan.get("done"):
-                        logger.info("[Pipeline] Planner 가 done 선언 — Phase B 종료")
-                        state.loop_decision = "complete"
-                        break
+                # v1.1.0 — iterative replan dead code 제거 (Planner 항상 OFF).
 
                 for stage in self.loop_stages:
                     # v0.17.0 — Policy Gate 는 loop 순서에서 skip. Pipeline 이 3 훅에 별도 호출.

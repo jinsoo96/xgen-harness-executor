@@ -138,36 +138,21 @@ class HarnessConfig:
     # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
     verbose_events: bool = False
 
-    # --- Harness Planner (v0.12.0 → v0.14.0 확장) ---
-    # use_planner: 레거시 bool. True 면 s00_harness 가 ingress 최상단에 주입됨.
-    # v0.14.0: s00_harness 가 본문 LLM 호출을 소유하므로 사실상 항상 True 가
-    # 권장되는 상태. harness_mode 로 세분화:
-    #   - "autonomous": Planner LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립
-    #   - "off":        전체 Stage 실행 (레거시 noop 동작과 동일)
-    # 빈 문자열이면 use_planner=True → "autonomous", False → "off" 로 해석.
-    # v1.0.5: "selected" (사용자 핀 hard-pin) 모드 제거 — 캔버스 회귀 유산.
-    use_planner: bool = False
-    harness_mode: str = ""
+    # --- Judge LLM (v1.1.0+) ---
+    # s08_decide 의 judge_then_loop 가 사용하는 별도 평가 모델. 미지정(빈 문자열) 시
+    # 본문 provider/model 재사용 — backward compat. 사용자 의도: "Judge 가 자기 답을
+    # 자기가 평가하는 약점" 을 더 강한/저렴한 모델로 분리 평가 가능하게.
+    judge_provider: str = ""
+    judge_model: str = ""
 
     # 레거시 호환
     preset: str = ""
 
     def __post_init__(self) -> None:
-        """빈 provider 는 레지스트리 기반 기본값. harness_mode 미지정 시 use_planner 에서 파생."""
+        """빈 provider 는 레지스트리 기반 기본값."""
         if not self.provider:
             from ..providers import get_default_provider
             self.provider = get_default_provider()
-        if not self.harness_mode:
-            self.harness_mode = "autonomous" if self.use_planner else "off"
-
-    # v0.25.3 — harness_mode 리터럴 비교를 쓰는 Stage / Strategy 가 늘어나면서
-    # 문자열을 여기저기 하드코딩하면 새 모드(예: "safe_mode") 도입 시 추적 범위가 커짐.
-    # HarnessConfig 에 헬퍼를 박제해서 도메인 언어를 캡슐화.
-    def is_autonomous(self) -> bool:
-        return str(self.harness_mode or "").lower() == "autonomous"
-
-    def is_off(self) -> bool:
-        return str(self.harness_mode or "").lower() == "off"
 
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록.
@@ -380,8 +365,10 @@ class HarnessConfig:
             strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
-            use_planner=bool(harness_config.get("use_planner", False)),
-            harness_mode=str(harness_config.get("harness_mode", "") or ""),
+            # v1.1.0 — harness_mode/use_planner 제거 (Planner OFF 직선 흐름 고정).
+            # 기존 DB row 의 두 키는 from_dict 가 fields() 화이트리스트로 자동 무시.
+            judge_provider=str(harness_config.get("judge_provider", "") or ""),
+            judge_model=str(harness_config.get("judge_model", "") or ""),
             # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
             context_window=_safe_int(
                 harness_config.get("context_window"), default=200_000, minimum=1024,

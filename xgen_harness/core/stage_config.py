@@ -64,10 +64,10 @@ def canonical_stage_id_map(d: dict) -> dict:
 
 STAGE_CONFIGS: dict[str, dict] = {
     "s00_harness": {
-        "description_ko": "Harness 통제탑 — Provider 초기화 + Planner + 본문 LLM 호출(streaming/batch) + iterative replan 을 모두 소유합니다 (v0.14.0 재귀적 자율주행).",
-        "description_en": "Harness control tower — owns provider init + planner + main LLM call (streaming/batch) + iterative replan.",
-        "when_to_use": "기본 활성. LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립.",
-        "when_to_skip": "harness_mode='off' 일 때 skip (단순 파이프라인 모드).",
+        "description_ko": "Harness 통제탑 — Provider 초기화 + 본문 LLM 호출(streaming/batch) 을 소유합니다 (v1.1.0: Planner OFF 직선 흐름 고정).",
+        "description_en": "Harness control tower — owns provider init + main LLM call (streaming/batch).",
+        "when_to_use": "항상 활성. main_actor 직전 main_call 로 본문 LLM 호출.",
+        "when_to_skip": "비활성 권장 X — main_call 누락 시 본문 응답 불가.",
         "cost_hint": "medium",
         "icon": "🎯",
         "fields": [

@@ -76,14 +76,12 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
 
         # ── 1. RAG 컬렉션 + folders 확장 ──
         rag_collections: list[str] = list(self.get_param("rag_collections", state, []) or [])
-        # v0.25.2 — config.rag_collections 폴백은 **autonomous 모드에서만** 허용.
-        # 사용자가 UI 에서 컬렉션을 명시 비워 저장한 경우 (selected/off 모드), 자동 폴백으로
-        # 전체 문서 기반 답변이 나가면 안 된다. v0.25.3 은 리터럴 비교 대신
-        # HarnessConfig.is_autonomous() 헬퍼로 도메인 언어 캡슐화.
+        # v1.1.0 — harness_mode 제거에 따른 폴백 단순화.
+        # stage_params 의 rag_collections 가 비어있으면 항상 config.rag_collections 폴백.
+        # 사용자가 UI 에서 명시 비워 저장하면 stage_params 가 빈 list 로 들어와도
+        # config.rag_collections 자체가 비어있을 것 (양쪽이 같은 store 필드를 공유).
         if not rag_collections and hasattr(config, 'rag_collections'):
-            is_auto = bool(getattr(config, 'is_autonomous', lambda: True)())
-            if is_auto:
-                rag_collections = list(getattr(config, 'rag_collections', []) or [])
+            rag_collections = list(getattr(config, 'rag_collections', []) or [])
 
         # folders → 해당 폴더 안의 컬렉션 자동 추가 (DocumentService.list_collections 위임)
         folders: list[str] = list(self.get_param("folders", state, []) or [])
