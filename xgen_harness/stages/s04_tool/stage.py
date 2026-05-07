@@ -201,6 +201,24 @@ class ToolIndexStage(Stage):
             tool_index = [ti for ti in tool_index if ti.get("name") != "discover_tools"]
             logger.info("[Tool Index] discover_tools excluded (not in builtin_tools)")
 
+        # v1.1.1 — fetch_pd 는 strategy 무관 항상 등록.
+        #   PD progressive (s06_context.rag_pd_mode='progressive' / s07 tool_result preview) 가
+        #   default ON 인 환경에서 LLM 이 lazy fetch 못 하면 정보 누락. 사용자가 도구 화이트리스트
+        #   비우거나 EagerLoadDiscovery 골라도 fetch_pd 만은 보장. 이전엔 ProgressiveDiscovery
+        #   안에서만 등록해 strategy 갈음 시 누락되던 회귀.
+        from ...tools.builtin import FetchPDTool
+        if not any(td.get("name") == "fetch_pd" for td in augmented_defs):
+            fetch_pd = FetchPDTool(state)
+            augmented_defs.append(fetch_pd.to_api_format())
+            tool_index.append({
+                "name": fetch_pd.name,
+                "description": (fetch_pd.description[:120] if hasattr(fetch_pd, "description") else ""),
+                "category": "system",
+            })
+            if hasattr(state, "metadata"):
+                state.metadata.setdefault("tool_registry", {})["fetch_pd"] = fetch_pd
+            logger.info("[Tool Index] fetch_pd builtin registered (strategy-agnostic)")
+
         state.tool_definitions = augmented_defs
         state.tool_index = tool_index
 

@@ -480,8 +480,11 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "RAG Progressive Disclosure",
                 "type": "select",
                 "options": ["eager", "progressive"],
-                "default": None,
-                "description": "eager: 청크 본문 전체를 system_prompt 에 주입 (기존). progressive: 인덱스 한 줄 + snippet 만 주입, 본문은 pd_stores 에 보관 — LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 것만 pull (Claude Code 패턴)",
+                # v1.1.1 — default progressive. eager 는 캔버스 정보검색 노드와 동일 동작이라
+                # 하네스 차별화 0. progressive 면 인덱스만 노출 → fetch_pd lazy fetch.
+                # 이식측 PORT_POLICY_DEFAULTS 와 정합.
+                "default": "progressive",
+                "description": "eager: 청크 본문 전체를 system_prompt 에 주입. progressive (기본): 인덱스 한 줄 + snippet 만 주입, 본문은 pd_stores 에 보관 — LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 것만 pull (Claude Code 패턴)",
             },
             {
                 "id": "rag_ingestion_mode",

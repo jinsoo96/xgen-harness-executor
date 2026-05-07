@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.1.0"
-description = "XGEN Harness v1.1.0 — harness_mode/use_planner 제거 (BREAKING) + Planner OFF 직선 흐름 고정 + Judge LLM 별도 모델 옵션. autonomous Plan 분기 dead code 제거. judge_provider/judge_model 신규 필드 (s08_decide.judge_then_loop 가 본문 LLM 과 다른 모델로 평가 가능)."
+version = "1.1.1"
+description = "XGEN Harness v1.1.1 — RAG Progressive Disclosure default ON (rag_pd_mode='progressive') + fetch_pd 빌트인 strategy 무관 항상 등록. 캔버스 정보검색 노드와 명확 차별화: 인덱스만 1차 노출 → LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 청크만 lazy fetch (Claude Code 패턴)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
