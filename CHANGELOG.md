@@ -5,6 +5,42 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.4] — 2026-05-09
+
+### 🚨 R3 회귀 fix — system_prompt 에 박힌 컬렉션 안내 강제
+
+사용자 호소: "assort 컬렉션 박았는데 LLM 이 rag_search 안 부르고 'DB 연결 정보 알려달라' 답함. 컨텍스트 연동 안 되네"
+
+#### 회귀 원인 (v1.4.0 R3 부작용)
+- v1.4 R3 에서 `rag_tool_mode='tool'` default → s06_context 자체 검색 비활성 → `state.rag_context` 빈 채로 s03_prompt 진입
+- s03_prompt 의 `<reference_documents>` 섹션은 `if state.rag_context:` 조건 하에 렌더 → 빈 컬렉션 == 섹션 미렌더
+- = LLM 이 system_prompt 에 "사용자가 자료를 첨부했음" 안내 자체를 못 받음
+- → "주문 데이터" 같은 도메인 질의 시 LLM 이 DB 도구 (mcp_DatabaseLoader / mcp_postgresql_mcp) 우선 추론
+
+#### fix
+- `s03_prompt/stage.py`: `rag_collections` / `ontology_collections` 박혀있으면 (state.rag_context 와 무관) `<reference_resources>` 섹션 강제 추가:
+  ```
+  <reference_resources>
+  사용자가 답변에 참조할 자료를 첨부했습니다. 사용자 질문이 이 자료의 내용과 관련되어 보이면 다음 도구를 우선 호출해 검색하세요.
+  - RAG 컬렉션 (rag_search 도구로 검색):
+    · assort
+  - 지식 그래프 (query_graph 도구로 검색):
+    · masahoe
+  </reference_resources>
+  ```
+- `tools/rag_tool.py:RAGSearchTool.description`: "uploaded documents" 추상 → "user-attached / Call FIRST if the question could plausibly be answered" 강조
+
+#### Cross-stage 인지 메커니즘 (실효 보강)
+`Stage.get_param` 은 stage_id 격리 (`state.config.stage_params.get(self.stage_id, {})`) 라
+이식측이 `stage_params["s04_tool"]["rag_collections"]` / `["ontology_collections"]` 로 주입하면
+s03_prompt 의 `self.get_param("rag_collections")` 는 빈 결과. 따라서 두 보강:
+- `s04_tool/stage.py`: `rag_collections` 와 isomorphic 으로 `ontology_collections` 도 `state.metadata["ontology_collections"]` 로 cache (rag 는 v1.4.0 부터 박혀있었음)
+- `s03_prompt/stage.py`: 1차 `self.get_param` 빈 결과 시 2차 `state.metadata` 폴백 (rag 와 ontology 둘 다)
+
+s04 가 s03 보다 먼저 실행 (v1.4.0 order swap: s04=3 / s03=4) 이므로 s03 진입 시점에 metadata 가 이미 채워져 있음.
+
+엔진 동작 변경 0 (system_prompt 안내만 강화 — LLM 이 컬렉션 존재 인지하고 도구 우선 호출).
+
 ## [1.5.3] — 2026-05-08
 
 ### 📊 EventLog 디버깅 친화 강화 (사용자 호소: "디버깅 가능할 정도 / 정책 안 먹힘 / 도구 선택 안 보임")

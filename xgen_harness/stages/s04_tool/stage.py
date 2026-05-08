@@ -324,6 +324,8 @@ class ToolIndexStage(Stage):
         # 도구로 호출 (rag_search 와 isomorphic). 'context'/'both' 명시 시 백워드.
         ontology_collections: list[str] = self.get_param("ontology_collections", state, []) or []
         if ontology_collections:
+            # v1.5.4 — s03_prompt 가 cross-stage 로 인지하도록 metadata cache (rag 와 isomorphic).
+            state.metadata["ontology_collections"] = ontology_collections
             ontology_tool_mode: str = self.get_param("ontology_tool_mode", state, "tool")
             if ontology_tool_mode in ("tool", "both"):
                 _services_o = state.metadata.get("services")

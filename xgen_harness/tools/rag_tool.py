@@ -57,10 +57,16 @@ class RAGSearchTool(Tool):
     @property
     def description(self) -> str:
         collections_str = ", ".join(self._collections)
+        # v1.5.4 — 사용자가 컬렉션 박은 의도를 LLM 이 명확히 인지하도록 강조.
+        # 이전엔 "uploaded documents" 추상 표현이라 LLM 이 "주문 데이터" 같은 도메인 질의에
+        # DB 도구로 추론해버리던 회귀. 이제 "사용자가 박은 자료" 임을 명시 + 우선 호출 안내.
         return (
-            f"Search through document collections for relevant information. "
-            f"Available collections: [{collections_str}]. "
-            f"Use this when you need to find specific information from uploaded documents."
+            f"Search the user-attached document collections (RAG). The user has explicitly "
+            f"attached these collections to ground the answer: [{collections_str}]. "
+            f"Call this tool FIRST if the user's question could plausibly be answered by "
+            f"information in these collections (e.g. domain-specific data, organization "
+            f"records, internal knowledge). Returns indexed snippets — fetch full content "
+            f"with fetch_pd(kind='rag', id='<id>') if needed."
         )
 
     @property

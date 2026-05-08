@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.5.3"
-description = "XGEN Harness v1.5.3 — EventLog 디버깅 친화 강화. (1) ToolDeferredEvent 항상 emit (selected_tools 비어도) — 도구 선택 결과 가시. (2) s05_policy 진입 시 활성 가드 list 를 verbose 이벤트로 emit — '정책 안 먹힘' 디버깅 정보 표면화. 동작 변경 0 (가시성만)."
+version = "1.5.4"
+description = "XGEN Harness v1.5.4 — R3 회귀 fix. v1.4 R3 에서 rag_tool_mode='tool' default 라 s06 자체 검색 비활성 → state.rag_context 빈 → s03_prompt 의 <reference_documents> 섹션 미렌더 → LLM 이 사용자가 컬렉션 박은 사실 자체를 모르고 'DB 연결 알려달라' 답하던 회귀. fix: rag_collections / ontology_collections 박혀있으면 <reference_resources> 섹션 강제 + RAGSearchTool description 에 'user-attached / Call FIRST if 우선 호출' 강조."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

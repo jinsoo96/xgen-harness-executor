@@ -211,6 +211,46 @@ class SystemPromptStage(Stage):
             rag_section = f"<reference_documents>\n{state.rag_context}\n</reference_documents>"
             sections.append((SECTION_PRIORITIES["rag"], "rag", rag_section))
 
+        # v1.5.4 — R3 회귀 fix. rag_tool_mode='tool' (default) 일 때 state.rag_context 가
+        # 비어 있고 <reference_documents> 섹션이 미렌더되어 LLM 이 "참조 자료 있음" 사실
+        # 자체를 모르고 DB 도구로 추론하던 회귀 (사용자 호소: "assort 컬렉션 박았는데
+        # rag_search 안 부르고 DB 연결 알려달라고 답"). 박힌 컬렉션 list 를 명시하고
+        # 도구 우선 사용 안내를 system_prompt 에 박는다.
+        rag_collections_attached = list(
+            self.get_param("rag_collections", state, []) or []
+        )
+        # s04 가 rag_collections 를 stage_param 에 두는 경로 (rag/ontology) — s06 진입 전
+        # state.metadata 에 노출됨. 둘 다 fallback.
+        if not rag_collections_attached:
+            rag_collections_attached = list(
+                state.metadata.get("rag_collections") or []
+            )
+        ontology_collections_attached = list(
+            self.get_param("ontology_collections", state, []) or []
+        )
+        if not ontology_collections_attached:
+            ontology_collections_attached = list(
+                state.metadata.get("ontology_collections") or []
+            )
+        if rag_collections_attached or ontology_collections_attached:
+            lines: list[str] = ["<reference_resources>"]
+            lines.append(
+                "사용자가 답변에 참조할 자료를 첨부했습니다. 사용자 질문이 이 자료의 "
+                "내용과 관련되어 보이면 다음 도구를 우선 호출해 검색하세요."
+            )
+            if rag_collections_attached:
+                lines.append("- RAG 컬렉션 (rag_search 도구로 검색):")
+                for col in rag_collections_attached:
+                    lines.append(f"  · {col}")
+            if ontology_collections_attached:
+                lines.append("- 지식 그래프 (query_graph 도구로 검색):")
+                for col in ontology_collections_attached:
+                    lines.append(f"  · {col}")
+            lines.append("</reference_resources>")
+            ref_section = "\n".join(lines)
+            # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
+            sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
+
         # 5. Citation — 문서 인용 형식 지시
         # citation_mode 우선, 하위 호환으로 citation_enabled 도 여전히 읽습니다.
         #   - off      : 인용 지시 없음
