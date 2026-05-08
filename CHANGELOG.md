@@ -5,6 +5,22 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-05-08
+
+### 📝 stage_config.py UI 동작방식 박스 텍스트 v1.4 정합 갱신
+
+v1.4.0 commit 에서 코드 동작은 모두 변경됐으나 (eager/deferred 분리 / ToolSearch 빌트인 / R3 RAG 도구 위임 / cascade 자동 압축), `stage_config.py` 의 `description_ko` / `behavior` 텍스트는 v1.0 시점 그대로였음. UI 의 "동작 방식" 박스가 옛 동작 (Level 1/2/3 / `DocumentService.search` 등) 을 설명해서 사용자 혼란. 텍스트만 갱신.
+
+#### s04_tool
+- `description_ko`: "Strategy 카드는 progressive_3level / eager_load / capability_auto / none" → "selected_tools 명시 도구만 eager / 나머지 deferred / LLM 이 ToolSearch 로 명시 승격 (Claude Code 정합)" + R3 RAG 도구 위임 안내
+- `behavior` 7 항목 → 11 항목으로 재작성 (deferred 분리 / ToolSearch / search_tools / discover_tools / fetch_pd / rag_search 빌트인 / R3 / progressive PD)
+
+#### s06_context
+- `description_ko`: "RAG 검색 → 컨텍스트로 주입 / 압축" → "참조 리소스 선택만 / 검색은 도구로 위임 (R3) / cascade 자동 압축"
+- `behavior` 7 항목 → 10 항목으로 재작성 (Cascade L3/L4/L5 / R3 도구 위임 / progressive PD / 5종 PD 공유 인프라)
+
+엔진 코드 동작은 v1.4.0 그대로 — 행동 변경 없음 (patch). UI 표면 안내가 실 동작 정합되도록만 정정.
+
 ## [1.4.0] — 2026-05-08
 
 ### 🚨 BREAKING — Claude Code 정합 deferred tools + UI 표면 대청소 + R3 RAG 도구 위임
