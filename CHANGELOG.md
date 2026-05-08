@@ -5,6 +5,25 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] — 2026-05-08
+
+### 📝 Stage Configuration fields description 친화 톤 재작성 (patch)
+
+v1.5.1 에서 stage 의 description_ko / behavior 까지는 갈음했지만, 각 stage 의 **Configuration fields** 의 `description` 텍스트는 여전히 기술 키워드 잔존. 사용자 호소: "설정 fields description 이 뭔 소리지 모름".
+
+- s07_act: result_budget / preview_threshold / preview_size description 친화 톤
+- s08_decide: max_retries / judge_enabled / judge_threshold / criteria / evaluation_strategy / evaluation_prompt_template / evaluation_system_prompt 7 개 모두
+- s09_finalize: save_enabled / table_name / input_text_cap / output_text_cap 4 개
+
+기술 키워드 제거 매트릭스:
+- `judge_then_loop strategy` / `Strategy 카드 'X' 픽` → "켜면 / 활성화하면" 같은 자연어
+- `register_evaluation_criterion()` / `entry_points(xgen_harness.X)` → "외부 플러그인으로 추가 가능"
+- `harness_execution_log` / `PERSIST_DEFAULTS['X'] override` → "데이터베이스에 영구 저장 / 비우면 기본값"
+- `pd_stores` / `fetch_pd(kind='X')` → "별도 저장소에 보존 / LLM 이 필요할 때 다시 조회"
+- `Claude Code L1 패턴` → 이름 노출 X
+
+엔진 동작 변경 0 (텍스트만).
+
 ## [1.5.1] — 2026-05-08
 
 ### 📝 9 Stage UI 텍스트 사용자 친화 톤 재작성 (patch)

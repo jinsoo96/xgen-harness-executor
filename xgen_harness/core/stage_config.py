@@ -676,7 +676,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 200000,
                 "step": 5000,
                 "default": None,
-                "description": "여러 도구 결과의 합계 상한 (2차 방어). 개별 결과는 preview_threshold 로 통제",
+                "description": "여러 도구 결과 글자 수의 합계 상한. 합계가 이를 넘으면 추가로 줄여 컨텍스트 비용 절감 (개별 결과는 별도 임계값으로 통제).",
             },
             {
                 "id": "tool_result_preview_threshold",
@@ -686,7 +686,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 200000,
                 "step": 1000,
                 "default": None,
-                "description": "개별 결과가 이 크기를 넘으면 preview 만 messages 에 흘리고 원본은 pd_stores 로 보존 (Claude Code L1 패턴)",
+                "description": "개별 도구 결과가 이 크기를 넘으면 미리보기로 자동 압축됩니다. 원본은 별도 저장소에 보존되어 LLM 이 필요할 때 다시 조회 가능.",
             },
             {
                 "id": "tool_result_preview_size",
@@ -696,7 +696,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 16384,
                 "step": 256,
                 "default": None,
-                "description": "preview 로 남길 첫 N 자. LLM 은 fetch_pd(kind='tool_result', id=<tool_use_id>) 로 원본 조회",
+                "description": "압축할 때 남길 글자 수. LLM 은 별도 조회 도구로 원본을 다시 가져올 수 있습니다.",
             },
         ],
         "behavior": [
@@ -729,7 +729,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 0,
                 "max": 10,
                 "default": None,
-                "description": "검증 점수 미달 시 LLM 답변 재시도 한도. 비용/토큰/콘텐츠 정책 같은 다른 종료 조건은 s05_policy 의 guards 로 선언.",
+                "description": "응답 품질 평가 점수가 기준 미달일 때 LLM 답변을 다시 시도하는 최대 횟수. 비용/반복/콘텐츠 정책 같은 다른 종료 조건은 정책 단계의 가드로 설정합니다.",
             },
             # v1.0 — s08_judge 격하 흡수 (judge_then_loop strategy 활성 시만 의미)
             {
@@ -737,7 +737,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "응답 품질 평가 (judge) 활성",
                 "type": "toggle",
                 "default": None,
-                "description": "켜면 매 루프 응답 후 독립 LLM 호출로 품질 평가. Strategy 카드 'judge_then_loop' 픽으로도 동일 효과. 추가 LLM 비용 발생.",
+                "description": "켜면 매 응답 후 별도 LLM 으로 품질 점수를 매기고, 기준 미달이면 재시도합니다. 추가 LLM 비용이 발생합니다.",
             },
             {
                 "id": "judge_threshold",
@@ -747,7 +747,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "max": 1,
                 "step": 0.05,
                 "default": None,
-                "description": "judge_then_loop strategy 시 점수 < threshold 이면 retry.",
+                "description": "품질 평가 점수가 이 값 미만이면 답변을 다시 시도합니다 (0~1 범위, 1 에 가까울수록 엄격).",
             },
             {
                 "id": "criteria",
@@ -755,7 +755,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "multi_select",
                 "options": ["relevance", "completeness", "accuracy", "clarity"],
                 "default": ["relevance", "completeness", "accuracy", "clarity"],
-                "description": "judge_then_loop strategy 시 사용. register_evaluation_criterion() 또는 entry_points(xgen_harness.evaluation_criteria) 로 외부 등록 추가.",
+                "description": "품질 평가에 사용할 항목 (관련성 / 완성도 / 정확성 / 명확성). 외부 플러그인으로 항목 추가 가능.",
             },
             {
                 "id": "evaluation_strategy",
@@ -763,21 +763,21 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "type": "select",
                 "options": ["llm_judge", "rule_based", "none"],
                 "default": None,
-                "description": "judge_then_loop 활성일 때 사용할 EvaluationStrategy. 'none' 이면 평가 skip.",
+                "description": "평가 방식: llm_judge (LLM 으로 점수 매김) / rule_based (규칙 기반) / none (평가 안 함).",
             },
             {
                 "id": "evaluation_prompt_template",
                 "label": "평가 프롬프트 템플릿 이름",
                 "type": "text",
                 "default": None,
-                "description": "register_evaluation_prompt_template() 으로 등록한 이름. 기본 'default'.",
+                "description": "평가 프롬프트 템플릿 이름. 비워두면 기본 템플릿 사용. 외부 플러그인으로 커스텀 템플릿 등록 가능.",
             },
             {
                 "id": "evaluation_system_prompt",
                 "label": "평가 LLM system prompt (선택)",
                 "type": "textarea",
                 "default": None,
-                "description": "judge LLM 호출 시 사용할 system prompt. 비워두면 provider default. 평가관 톤·출력 규약을 사용자 도메인에 맞게 박을 때 사용.",
+                "description": "평가 LLM 의 시스템 프롬프트. 비우면 기본값 사용. 평가 톤이나 출력 형식을 도메인에 맞게 조정할 때 사용합니다.",
             },
         ],
         "behavior": [
@@ -813,14 +813,14 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "label": "DB 저장 활성화",
                 "type": "toggle",
                 "default": None,
-                "description": "켜면 harness_execution_log 에 기록. Strategy 카드 'persist' 픽으로도 동일 효과.",
+                "description": "켜면 실행 결과를 데이터베이스에 영구 저장합니다 (질문 / 답변 / 도구 호출 / 메트릭).",
             },
             {
                 "id": "table_name",
                 "label": "저장 테이블명",
                 "type": "text",
                 "default": None,
-                "description": "save 활성 시 사용할 DB 테이블명. PERSIST_DEFAULTS['table_name'] override.",
+                "description": "저장할 데이터베이스 테이블명. 비워두면 기본 테이블 사용.",
             },
             {
                 "id": "input_text_cap",
@@ -829,7 +829,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 100,
                 "max": 100_000,
                 "default": None,
-                "description": "DB 저장 시 input_text 최대 길이. PERSIST_DEFAULTS['input_text_cap'] override.",
+                "description": "데이터베이스에 저장할 사용자 질문 텍스트 최대 길이 (글자 수). 초과 시 잘림.",
             },
             {
                 "id": "output_text_cap",
@@ -838,7 +838,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "min": 1_000,
                 "max": 1_000_000,
                 "default": None,
-                "description": "DB 저장 시 output_text 최대 길이. PERSIST_DEFAULTS['output_text_cap'] override.",
+                "description": "데이터베이스에 저장할 응답 텍스트 최대 길이 (글자 수). 초과 시 잘림.",
             },
         ],
         "behavior": [
