@@ -164,7 +164,11 @@ class SystemPromptStage(Stage):
 
     @property
     def order(self) -> int:
-        return 3
+        # v1.2.0 — s04_tool 가 ingress 의 도구 카탈로그를 먼저 채우도록 s03 을 뒤로 민다.
+        # 기존 (order=3) 에서는 _build_tool_index_section 이 항상 빈 tool_index 를 봐서
+        # <available_tools> 섹션이 사실상 미렌더 → progressive disclosure 의 system_prompt
+        # 측 가시성이 죽어있던 회귀. 이제 s04 → s03 순으로 ingress 가 흐른다.
+        return 4
 
     async def execute(self, state: PipelineState) -> dict:
         config = state.config
@@ -193,8 +197,11 @@ class SystemPromptStage(Stage):
             sections.append((SECTION_PRIORITIES["rules"], "rules", self._default_rules(state)))
 
         # 3. Tool Index — Level 1 메타데이터 (progressive disclosure)
-        if state.tool_index:
-            tool_section = self._build_tool_index_section(state.tool_index)
+        # v1.2.0 — eager (tool_index) + deferred (state.deferred_tools) 두 그룹 표시.
+        # eager 는 곧바로 호출 가능 / deferred 는 ToolSearch 로 승격 후 호출.
+        deferred_list = getattr(state, "deferred_tools", None) or []
+        if state.tool_index or deferred_list:
+            tool_section = self._build_tool_index_section(state.tool_index, deferred_list)
             sections.append((SECTION_PRIORITIES["tools"], "tools", tool_section))
 
         # 4. RAG Context — v0.9.0+: 실행은 s06_context 가 단독 담당.
@@ -458,10 +465,19 @@ class SystemPromptStage(Stage):
             name = "default"
         return DEFAULT_RULES.get(name, DEFAULT_RULES["default"])
 
-    def _build_tool_index_section(self, tool_index: list[dict]) -> str:
-        """Progressive Disclosure Level 1: 도구 메타데이터만 포함"""
+    def _build_tool_index_section(
+        self,
+        tool_index: list[dict],
+        deferred_list: list[dict] | None = None,
+    ) -> str:
+        """Progressive Disclosure Level 1 (v1.2.0 Claude Code 정합).
+
+        eager 도구는 ``<available_tools>`` 섹션에 즉시 호출 가능 도구로 노출.
+        deferred 도구가 있으면 ``<deferred_tools>`` 섹션을 별도 추가 — 이름만
+        나열하고 LLM 이 ``ToolSearch(names=[...])`` 빌트인으로 승격해야 호출 가능.
+        """
         lines = ["<available_tools>"]
-        for tool in tool_index:
+        for tool in tool_index or []:
             name = tool.get("name", "unknown")
             desc = tool.get("description", "")
             category = tool.get("category", "")
@@ -469,21 +485,29 @@ class SystemPromptStage(Stage):
             if category:
                 line += f" [{category}]"
             lines.append(line)
-
         lines.append("</available_tools>")
         lines.append(
             "\nTo learn more about a specific tool's parameters, "
             "use the discover_tools function with the tool name."
         )
+
+        if deferred_list:
+            lines.append("\n<deferred_tools>")
+            lines.append(
+                "These tools are NOT loaded yet — schemas are hidden to save context. "
+                "Call ToolSearch(names=[\"tool1\",\"tool2\"]) to load specific tools "
+                "before invoking them. Only load what you actually need."
+            )
+            for tool in deferred_list:
+                name = tool.get("name", "unknown")
+                desc = tool.get("description", "")
+                line = f"- {name}: {desc}" if desc else f"- {name}"
+                lines.append(line)
+            lines.append("</deferred_tools>")
+
         return "\n".join(lines)
 
     def list_strategies(self) -> list[StrategyInfo]:
-        # v1.0 — section_priority(조립 방식) + Planning 카드 (사고 모드, 구 s05_strategy 흡수).
-        # 카드 픽 → STRATEGY_CARD_TO_MODE 로 thinking_mode 자동 결정.
-        # 카드 미픽 → stage_params.thinking_mode (default=auto) 폴백.
-        return [
-            StrategyInfo("section_priority", "우선순위 기반 섹션 조립", is_default=True),
-            StrategyInfo("cot_planner", "Chain-of-Thought 사고 지시 주입"),
-            StrategyInfo("react", "ReAct (Reason+Act) 프레임워크 지시 주입"),
-            StrategyInfo("none", "사고 모드 비활성 — planning 섹션 생략"),
-        ]
+        # v1.4.0 — 사용자 픽 카드 hide. 사고 모드는 LLM 자율.
+        # 코드 (section_priority/cot_planner/react/none) 보존 — active_strategies 직접 셋 가능.
+        return []

@@ -35,10 +35,20 @@ class RAGSearchTool(Tool):
         collections: list[str],
         default_top_k: int = 4,
         doc_service: Optional[Any] = None,
+        state_ref: Optional[Any] = None,
+        progressive: bool = True,
+        snippet_size: int = 120,
     ):
+        # v1.4.0 R3 — progressive PD 지원. state_ref 가 주입되고 progressive=True 면
+        # 결과 본문을 state.pd_stores["rag"][rid] 에 보관, LLM 에게는 인덱스+snippet 만
+        # 반환. LLM 이 fetch_pd(kind='rag', id='<rid>') 로 본문 lazy fetch. s06 의 자체
+        # 검색이 progressive 모드로 동작하던 것과 isomorphic — 이제 도구 호출 경로에서도.
         self._collections = collections
         self._default_top_k = default_top_k
         self._doc_service = doc_service
+        self._state = state_ref
+        self._progressive = progressive
+        self._snippet_size = snippet_size
 
     @property
     def name(self) -> str:
@@ -124,10 +134,11 @@ class RAGSearchTool(Tool):
     async def _search_documents(
         self, query: str, collection_name: str, top_k: int,
     ) -> str:
-        """주입된 DocumentService.search() 로 검색 → [DOC_N] 포맷 문자열 반환.
+        """주입된 DocumentService.search() 로 검색.
 
-        v0.11.25 — 엔진은 xgen-documents API 스키마를 직접 몰라야 한다.
-        httpx 경로는 제거됐다. DocumentService 가 없으면 ToolError.
+        progressive=True + state_ref 주입 시: 본문은 pd_stores["rag"] 에 보관,
+        반환은 인덱스+snippet 만. LLM 이 fetch_pd(kind='rag', id=...) 로 본문 pull.
+        그렇지 않으면 [DOC_N] 포맷 문자열 (eager — 기존 v1.3.x 까지).
         """
         from ..errors import ToolError
         if self._doc_service is None or not hasattr(self._doc_service, "search"):
@@ -142,7 +153,50 @@ class RAGSearchTool(Tool):
         ) or []
         if not results:
             return ""
+
+        if self._progressive and self._state is not None and hasattr(self._state, "pd_store"):
+            return self._format_progressive(results, collection_name)
         return self._format_results(results)
+
+    def _format_progressive(self, results: list, collection_name: str) -> str:
+        """v1.4.0 R3 — 결과를 pd_stores 에 박고 인덱스+snippet 만 반환."""
+        from ..utils.docs import extract_source, extract_text, extract_score
+        lines: list[str] = []
+        for i, doc in enumerate(results, 1):
+            if not isinstance(doc, dict):
+                continue
+            text = extract_text(doc) or doc.get("chunk_text", "") or ""
+            source = extract_source(doc) or doc.get("file_name", "") or ""
+            score = extract_score(doc)
+            rid = f"{collection_name}#{i}"
+            snippet = (text[: self._snippet_size] + "…") if len(text) > self._snippet_size else text
+            snippet = snippet.replace("\n", " ")
+            score_str = f"{score:.3f}" if isinstance(score, (int, float)) else "-"
+            lines.append(f"[{i}] id={rid} · {source} ({score_str}) · {snippet}")
+            try:
+                self._state.pd_store(
+                    kind="rag",
+                    resource_id=rid,
+                    preview=snippet,
+                    full=text,
+                    meta={
+                        "collection": collection_name,
+                        "index": i,
+                        "source": source,
+                        "score": score,
+                        "chars": len(text),
+                    },
+                )
+            except Exception as e:
+                logger.debug("[RAG Tool] pd_store failed for %s: %s", rid, e)
+        if not lines:
+            return ""
+        lines.append("")
+        lines.append(
+            "(본문이 필요하면 fetch_pd(kind='rag', id='<위 id>') 호출. "
+            f"예: fetch_pd(kind='rag', id='{collection_name}#1'))"
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def _format_results(results: list) -> str:

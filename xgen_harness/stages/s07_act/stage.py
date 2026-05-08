@@ -476,18 +476,6 @@ class ExecuteStage(Stage):
         return f"Tool '{tool_name}' not found in registry."
 
     def list_strategies(self) -> list[StrategyInfo]:
-        return [
-            StrategyInfo(
-                "default",
-                "순차 실행 + 에러 허용 (한 도구 실패해도 다음 도구 진행, LLM 이 보고 판단)",
-                is_default=True,
-            ),
-            StrategyInfo(
-                "parallel_read",
-                "읽기 도구 병렬 + 쓰기 도구 직렬 — 도구가 readOnlyHint 선언 시 자동 분기. 응답 빠름.",
-            ),
-            StrategyInfo(
-                "strict_no_error",
-                "에러 비허용 — 도구 1개라도 실패하면 즉시 중단 표시. 신뢰성 우선.",
-            ),
-        ]
+        # v1.4.0 — 사용자 픽 카드 hide. 도구 실행 흐름은 default (순차+에러 허용) 로 고정.
+        # 코드 (default/parallel_read/strict_no_error) 보존.
+        return []

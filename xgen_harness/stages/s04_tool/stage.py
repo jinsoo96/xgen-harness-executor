@@ -68,7 +68,10 @@ class ToolIndexStage(Stage):
 
     @property
     def order(self) -> int:
-        return 4
+        # v1.2.0 — s03_prompt 보다 먼저 실행되어 도구 카탈로그를 먼저 채운다.
+        # 그래야 s03 의 <available_tools> 섹션이 진짜로 렌더되고, eager/deferred 분리
+        # 메타가 system_prompt 에 반영된다 (Claude Code 스타일 deferred tools).
+        return 3
 
     async def execute(self, state: PipelineState) -> dict:
         # v0.26.0 — strategy="none" 분기 (D6 fix).
@@ -117,23 +120,33 @@ class ToolIndexStage(Stage):
             disc_result = await self._discover_and_bind_capabilities(state)
             cap_result["discovery"] = disc_result
 
-        # ─── 1. ToolSource 수집 (단일 공급 채널) ──────────────────────
+        # ─── 1. ToolSource 수집 — eager/deferred 분리 (v1.2.0 Claude Code 정합) ─
+        # 사용자가 명시한 selected_tools 화이트리스트 안의 도구만 eager (full schema 가
+        # tools= 인자에 박힘). 나머지는 deferred (이름+1줄 desc 만 system_prompt 노출 +
+        # schema 는 state.tool_schemas 캐시). LLM 이 ToolSearch(names=[...]) 로 승격
+        # 호출하면 다음 llm_call 의 tools= 에 자동 합류.
+        # selected_tools 가 전혀 명시되지 않은 경우 = 모든 도구 eager (회귀 0).
         existing_names = {td.get("name") for td in state.tool_definitions}
         source_tool_map: dict[str, str] = state.metadata.setdefault("tool_source_of", {})
-        collected = 0
+        collected = 0          # eager 합류 + deferred 합류 합계
+        eager_added = 0
+        deferred_added = 0
         sources_used: list[str] = []
+
+        # 명시적 화이트리스트 존재 여부. 없으면 모든 도구 eager (백워드 컴팻).
+        has_explicit_selection = bool(selected_tools_by_source) or (global_allow is not None)
 
         sources = get_tool_sources()
         await state.emit_verbose(StageSubstepEvent(
             stage_id=self.stage_id, substep="sources_discover_start",
-            meta={"source_count": len(sources)},
+            meta={"source_count": len(sources), "explicit_selection": has_explicit_selection},
         ))
 
         for src in sources:
             sid = getattr(src, "source_id", None) or type(src).__name__
-            allow = selected_tools_by_source.get(sid)
-            # 빈 리스트 = 명시적으로 비활성
-            if allow is not None and len(allow) == 0:
+            sub_allow = selected_tools_by_source.get(sid)
+            # 빈 리스트 = 그 source 자체를 카탈로그에서 완전 제외 (eager 도 deferred 도 X)
+            if sub_allow is not None and len(sub_allow) == 0:
                 continue
             filter_params = tool_source_filters.get(sid)
 
@@ -150,10 +163,6 @@ class ToolIndexStage(Stage):
                 nm = t.get("name")
                 if not nm or nm in existing_names:
                     continue
-                if allow is not None and nm not in allow:
-                    continue
-                if global_allow is not None and nm not in global_allow:
-                    continue
                 td = {
                     "name": nm,
                     "description": t.get("description", "") or "",
@@ -167,7 +176,38 @@ class ToolIndexStage(Stage):
                 tags = t.get("tags")
                 if tags:
                     td.setdefault("metadata", {})["tags"] = list(tags)
-                state.tool_definitions.append(td)
+
+                # eager / deferred 결정.
+                # - has_explicit_selection=False  → 모두 eager
+                # - global_allow 명시            → 그 안에 있으면 eager, 아니면 deferred
+                # - sub_allow 명시              → 그 안에 있으면 eager, 아니면 deferred
+                # - 둘 다 명시 안 된 source 는 selected 명시 X 로 간주 → deferred
+                if not has_explicit_selection:
+                    is_eager = True
+                else:
+                    is_eager = False
+                    if global_allow is not None and nm in global_allow:
+                        is_eager = True
+                    if sub_allow is not None and nm in sub_allow:
+                        is_eager = True
+
+                # schema 캐시는 항상 채움 — ToolSearch / discover_tools 가 조회.
+                state.tool_schemas[nm] = td
+
+                if is_eager:
+                    state.tool_definitions.append(td)
+                    eager_added += 1
+                else:
+                    short_desc = (td["description"] or "")[:120]
+                    if len(td["description"] or "") > 120:
+                        short_desc = short_desc.rsplit(" ", 1)[0] + "..."
+                    state.deferred_tools.append({
+                        "name": nm,
+                        "description": short_desc,
+                        "category": "deferred",
+                    })
+                    deferred_added += 1
+
                 source_tool_map[nm] = sid
                 existing_names.add(nm)
                 collected += 1
@@ -176,12 +216,28 @@ class ToolIndexStage(Stage):
 
         await state.emit_verbose(StageSubstepEvent(
             stage_id=self.stage_id, substep="sources_discover_complete",
-            meta={"tools_collected": collected, "sources_used": sources_used},
+            meta={
+                "tools_collected": collected,
+                "eager_count": eager_added,
+                "deferred_count": deferred_added,
+                "sources_used": sources_used,
+            },
         ))
 
+        # v1.2.0 — 분류 결과 ToolDeferredEvent 로 외부 보고.
+        if has_explicit_selection and (eager_added or deferred_added):
+            from ...events.types import ToolDeferredEvent
+            await state.emit_verbose(ToolDeferredEvent(
+                eager_count=eager_added,
+                deferred_count=deferred_added,
+                eager_names=[td.get("name") for td in state.tool_definitions if td.get("name")],
+            ))
+
         if collected:
-            logger.info("[Tool Index] tool_sources: %d tool(s) from %d source(s)",
-                        collected, len(sources_used))
+            logger.info(
+                "[Tool Index] tool_sources: %d tool(s) from %d source(s) — eager=%d deferred=%d",
+                collected, len(sources_used), eager_added, deferred_added,
+            )
 
         # ─── 2. Strategy 디스패치 (progressive_3level / eager_load / none) ─
         selected_builtins: list[str] = self.get_param(
@@ -229,14 +285,28 @@ class ToolIndexStage(Stage):
             logger.info("[Tool Index] RAG collections: %s (top_k=%d)",
                         rag_collections, rag_top_k)
 
-            rag_tool_mode: str = self.get_param("rag_tool_mode", state, "both")
+            # v1.4.0 R3 — default 'both' → 'tool'. s06 자체 검색 안 하고 LLM 이 도구로 호출.
+            # 'context' (s06 만 검색, 도구 등록 X) / 'both' (둘 다) 는 백워드 호환 유지.
+            rag_tool_mode: str = self.get_param("rag_tool_mode", state, "tool")
             if rag_tool_mode in ("tool", "both"):
                 _services = state.metadata.get("services")
                 _doc_service = getattr(_services, "documents", None) if _services else None
+                # v1.4.0 R3 — state 주입 + progressive PD 활성. RAGSearchTool 이
+                # 검색 결과 본문을 pd_stores["rag"] 에 박고, LLM 에 인덱스+snippet
+                # 만 반환. LLM 이 fetch_pd(kind='rag', id=...) 로 본문 lazy fetch.
+                rag_pd_mode_for_tool = str(
+                    self.get_param("rag_pd_mode", state, "progressive") or "progressive"
+                ).strip().lower()
+                rag_pd_snippet_for_tool = int(
+                    self.get_param("rag_pd_snippet_size", state, 120) or 120
+                )
                 rag_tool = RAGSearchTool(
                     collections=rag_collections,
                     default_top_k=rag_top_k,
                     doc_service=_doc_service,
+                    state_ref=state,
+                    progressive=(rag_pd_mode_for_tool == "progressive"),
+                    snippet_size=rag_pd_snippet_for_tool,
                 )
                 if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
                     state.tool_definitions.append(rag_tool.to_api_format())
@@ -406,11 +476,6 @@ class ToolIndexStage(Stage):
         return not (has_tools or has_rag or has_sources or has_caps or has_builtins)
 
     def list_strategies(self) -> list[StrategyInfo]:
-        # v1.0 — capability_auto 카드 추가 (구 s05_strategy 흡수).
-        # capability_auto 픽 → 자연어 intent 로 capability 후보 자동 발견·바인딩.
-        return [
-            StrategyInfo("progressive_3level", "3단계 점진적 디스커버리", is_default=True),
-            StrategyInfo("eager_load", "모든 도구 스키마를 즉시 로드"),
-            StrategyInfo("capability_auto", "자연어 intent → capability 자동 발견·바인딩"),
-            StrategyInfo("none", "도구 인덱싱 비활성화"),
-        ]
+        # v1.4.0 — 사용자 픽 카드 hide. progressive_3level + ToolSearch 가 default.
+        # 코드 (progressive_3level/eager_load/capability_auto/none) 보존 — active_strategies 직접 셋 가능.
+        return []

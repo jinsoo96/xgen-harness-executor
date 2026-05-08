@@ -5,6 +5,44 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-05-08
+
+### 🚨 BREAKING — Claude Code 정합 deferred tools + UI 표면 대청소 + R3 RAG 도구 위임
+
+#### Stage order swap (s04 → s03)
+- `s04_tool.order = 3` (was 4), `s03_prompt.order = 4` (was 3). ingress phase 안에서 도구 카탈로그를 먼저 채우고 system_prompt 가 그 결과를 본다. 기존엔 `_build_tool_index_section` 이 항상 빈 `state.tool_index` 를 봐서 `<available_tools>` 섹션이 미렌더되던 회귀 fix.
+
+#### Claude Code 스타일 deferred tools (v1.2.0 통합)
+- `s04_tool` 가 `selected_tools` 화이트리스트 기준으로 도구를 **eager** (Anthropic API `tools=` 인자에 박힘) / **deferred** (이름+1줄 desc 만 system_prompt 노출) 로 분리.
+- `state.tool_schemas` 에 모든 도구 (eager+deferred) full schema 캐시.
+- 신규 빌트인 `ToolSearch(names=[...])` — deferred 도구를 명시 이름으로 schema 합류 → 다음 turn `tools=` 에 자동 누적 (dynamic catalogue). `select:a,b` 문자열 형식도 자동 파싱 (Claude Code 정합).
+- `search_tools` (≥12 도구) 의 결과 안내에 ToolSearch 합류 흐름 명시 — keyword 검색 → 합류 자연스럽게 연결.
+- `state.tool.deferred` / `state.tool.loaded_names` 필드 신규 + property shim.
+- `ToolDeferredEvent` / `ToolLoadedEvent` 신규.
+
+#### 사용자 픽 strategy 카드 4 stage hide
+- `s01_input.list_strategies()` → `[]` (분류는 LLM 자율)
+- `s03_prompt.list_strategies()` → `[]` (사고 패턴 자율)
+- `s04_tool.list_strategies()` → `[]` (progressive_3level + ToolSearch 가 default)
+- `s07_act.list_strategies()` → `[]` (sequential default)
+- `s06_context.list_strategies()` → `[cascade]` 1개만 (압력별 L3→L4→L5 자동 에스컬레이션)
+- 코드 경로 (with_classification / cot_planner / react / eager_load / capability_auto / token_budget / sliding_window / microcompact / context_collapse_overlay / autocompact_llm / parallel_read / strict_no_error) 모두 보존 — 외부 plugin 또는 `active_strategies` 직접 셋으로 강제 가능. UI 표면만 단순화.
+
+#### R3 — s06 RAG 자체 검색 → s04 rag_search 도구 위임
+- `rag_tool_mode` default `'both'` → `'tool'`. `s06_context` 가 `rag_collections` 박혀있어도 자체 `doc_service.search` 호출 안 함. `s04_tool` 가 등록한 `rag_search` 빌트인이 LLM 손에 노출 → LLM 이 도구로 직접 호출.
+- `RAGSearchTool` 에 progressive PD 신규 — `state_ref` + `progressive=True` + `snippet_size=120`. 검색 결과 본문은 `state.pd_stores["rag"]` 에 보관, LLM 에는 인덱스+snippet 만 반환. LLM 이 `fetch_pd(kind='rag', id=...)` 로 본문 lazy fetch.
+- s06 의 책임 재정의: ❌ RAG 검색 (도구로 위임) / ✅ 참조 컬렉션 선택 + history 압축 (cascade).
+
+#### Deprecated 자동 정규화 (백워드 호환 무성의 X — 엄밀 cleanup)
+- `DEPRECATED_STRATEGIES_BY_STAGE` / `DEPRECATED_STAGE_PARAM_VALUES` 맵 신규.
+- `_normalize_active_strategies()` / `_normalize_stage_params()` 함수.
+- **`HarnessConfig.__post_init__` 에서 강제 호출** — 모든 인스턴스화 경로 (`cls(**kwargs)` / `from_dict` / `from_workflow` / 이식측 직접 `cls(**config_kwargs)`) 통과. DB 의 옛 워크플로우 row 가 `token_budget` / `eager_load` / `cot_planner` / `parallel_read` 등 박고 있어도 실행 시점에 자동으로 `cascade` / `''` (default 폴백) 로 정규화.
+- `rag_tool_mode: 'both'/'context'` → `'tool'`, `rag_pd_mode: 'eager'` → `'progressive'` 도 동일 정규화.
+
+#### 비고
+- s06 의 자체 RAG 검색 코드 (`if rag_collections and state.user_input` 블록) 는 보존 — `rag_tool_mode == 'context'` 또는 `'both'` 명시 시 백워드 호환 동작.
+- 도구 5종 PD (tool_result / rag / history / db_schema / gallery) 모두 default 로 적용 — 사용자가 카드/설정 안 박아도 자동.
+
 ## [1.0.9] — 2026-05-01
 
 ### 🏗 Plugin Registration API 정리 + s06 god-class 분해 + runtime_defaults 인프라

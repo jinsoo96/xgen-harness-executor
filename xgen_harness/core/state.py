@@ -45,9 +45,16 @@ class ToolGroup:
     새 코드는 `state.tool.definitions` 를 선호. 외부 기여자가 ToolGroup 을 서브클래싱해
     인덱스 구조나 캐시 정책을 커스터마이즈할 수 있도록 독립 dataclass 유지.
     """
-    definitions: list[dict[str, Any]] = field(default_factory=list)   # Anthropic API 포맷
-    index: list[dict[str, str]] = field(default_factory=list)         # Level 1 메타데이터
-    schemas: dict[str, dict] = field(default_factory=dict)            # Level 2 (on-demand)
+    definitions: list[dict[str, Any]] = field(default_factory=list)   # Anthropic API 포맷 (eager — tools= 인자에 박힘)
+    index: list[dict[str, str]] = field(default_factory=list)         # Level 1 메타데이터 (system_prompt 노출)
+    schemas: dict[str, dict] = field(default_factory=dict)            # Level 2 (on-demand) — 모든 도구 full schema 캐시
+    # v1.2.0 — Claude Code 스타일 deferred 카탈로그.
+    # eager (definitions) 에는 사용자 명시 selected_tools + 시스템 빌트인만 들어가고,
+    # 나머지 도구는 여기 이름+1줄 desc 만 노출된다. LLM 이 ToolSearch 빌트인으로
+    # names 를 지정해 schema 를 schemas 캐시에서 꺼내 definitions 에 합류시키면
+    # 다음 llm_call 의 tools= 에 자연스럽게 누적된다 (dynamic catalogue).
+    deferred: list[dict[str, str]] = field(default_factory=list)
+    loaded_names: set[str] = field(default_factory=set)
     pending_calls: list[dict[str, Any]] = field(default_factory=list)
     results: list[dict[str, Any]] = field(default_factory=list)
     executed_count: int = 0
@@ -191,6 +198,18 @@ class PipelineState:
     @tool_schemas.setter
     def tool_schemas(self, value: dict[str, dict]) -> None:
         self.tool.schemas = value
+
+    @property
+    def deferred_tools(self) -> list[dict[str, str]]:
+        return self.tool.deferred
+
+    @deferred_tools.setter
+    def deferred_tools(self, value: list[dict[str, str]]) -> None:
+        self.tool.deferred = value
+
+    @property
+    def loaded_tool_names(self) -> set[str]:
+        return self.tool.loaded_names
 
     @property
     def pending_tool_calls(self) -> list[dict[str, Any]]:

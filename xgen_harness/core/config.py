@@ -36,6 +36,103 @@ ALL_STAGES = [
 REQUIRED_STAGES: set[str] = {"s01_input", "s08_decide", "s09_finalize"}
 
 
+# ─── v1.4.0 — Deprecated strategy / stage_param 자동 정규화 ───────────────────
+# v1.4.0 BREAKING 에서 list_strategies() 가 빈 리스트로 좁혀진 stage 들의 옛 strategy
+# 이름이 DB workflow row 의 active_strategies 에 잔존할 수 있다. 사용자 픽 카드가
+# 사라진 상태에서 옛 이름이 dispatcher 로 흘러들어가면 동일 동작은 하지만 새 default
+# (cascade / progressive_3level / section_priority / default) 의 이점을 못 누린다.
+# `__post_init__` 에서 자동 정규화 — 모든 인스턴스화 경로 (cls(**), from_dict,
+# from_workflow, 이식측 직접 cls(**config_kwargs)) 가 통과한다.
+#
+# 빈 문자열 ("") 로 매핑하면 active_strategies 키 자체 삭제 → resolve_strategy 가
+# stage 의 default_impl 인자로 자동 폴백.
+DEPRECATED_STRATEGIES_BY_STAGE: dict[str, dict[str, str]] = {
+    "s01_input": {
+        "with_classification": "",   # v1.4.0 hide. LLM 자율 분류로.
+    },
+    "s03_prompt": {
+        "cot_planner": "",           # thinking 패턴 전부 hide. LLM 자율.
+        "react": "",
+        "none": "",
+    },
+    "s04_tool": {
+        "eager_load": "",            # progressive_3level + ToolSearch 가 default.
+        "capability_auto": "",       # 자동 capability discovery 도 hide.
+        "none": "",
+    },
+    "s06_context": {
+        # cascade 가 압력별 L3→L4→L5 자동 에스컬레이션. 옛 strategy 들 모두 cascade 로.
+        "token_budget": "cascade",
+        "sliding_window": "cascade",
+        "microcompact": "cascade",
+        "context_collapse_overlay": "cascade",
+        "autocompact_llm": "cascade",
+    },
+    "s07_act": {
+        "parallel_read": "",         # default (sequential) 로.
+        "strict_no_error": "",
+    },
+}
+
+# stage_params 측 deprecated value — UI 표면 단순화 정합. v1.4.0 default 로 강제 정규화.
+# 빈 dict 의 stage_id 는 정규화 없음.
+DEPRECATED_STAGE_PARAM_VALUES: dict[str, dict[str, dict[str, str]]] = {
+    "s04_tool": {
+        # rag_tool_mode 'both' / 'context' 모두 R3 의 'tool' (LLM 도구 위임) 로.
+        # 백워드 호환은 사용자가 의도적으로 stage_params 박은 경우만.
+        "rag_tool_mode": {"both": "tool", "context": "tool"},
+    },
+    "s06_context": {
+        # rag_pd_mode 'eager' (구 default) → 'progressive' (v1.1.1+ default).
+        "rag_pd_mode": {"eager": "progressive"},
+    },
+}
+
+
+def _normalize_active_strategies(active: dict[str, str]) -> dict[str, str]:
+    """deprecated strategy 이름을 새 default 로 정규화 (v1.4.0).
+
+    빈 문자열로 매핑되면 키 자체 삭제 → stage 의 default_impl 폴백.
+    list_strategies 가 살아있는 stage (s02 / s05 / s08 / s09) 는 영향 없음.
+    """
+    if not isinstance(active, dict) or not active:
+        return active or {}
+    result: dict[str, str] = {}
+    for sid, name in active.items():
+        if not isinstance(name, str) or not name:
+            continue
+        mapping = DEPRECATED_STRATEGIES_BY_STAGE.get(sid)
+        if mapping is None:
+            result[sid] = name
+            continue
+        normalized = mapping.get(name, name)
+        if normalized:
+            result[sid] = normalized
+        # normalized == "" → 키 삭제 (default_impl 폴백)
+    return result
+
+
+def _normalize_stage_params(stage_params: dict) -> dict:
+    """deprecated stage_param value 를 v1.4.0 default 로 정규화."""
+    if not isinstance(stage_params, dict) or not stage_params:
+        return stage_params or {}
+    result: dict = {}
+    for sid, params in stage_params.items():
+        if not isinstance(params, dict):
+            result[sid] = params
+            continue
+        rules = DEPRECATED_STAGE_PARAM_VALUES.get(sid)
+        if rules is None:
+            result[sid] = params
+            continue
+        new_params = dict(params)
+        for field_id, value_map in rules.items():
+            if field_id in new_params and new_params[field_id] in value_map:
+                new_params[field_id] = value_map[new_params[field_id]]
+        result[sid] = new_params
+    return result
+
+
 def mark_stage_required(stage_id: str) -> None:
     """새 Stage 를 "비활성화 불가" 로 등록.
 
@@ -149,10 +246,21 @@ class HarnessConfig:
     preset: str = ""
 
     def __post_init__(self) -> None:
-        """빈 provider 는 레지스트리 기반 기본값."""
+        """빈 provider 는 레지스트리 기반 기본값.
+
+        v1.4.0 — deprecated strategy / stage_param 자동 정규화. 모든 인스턴스화
+        경로 (cls(**kwargs), from_dict, from_workflow, 이식측 직접 cls(**config_kwargs))
+        가 통과한다. DB 의 옛 워크플로우 row 가 token_budget / eager / both 같은 옛
+        값을 박고 있어도 실행 시점에 자동 cascade / progressive / tool 로 정규화.
+        """
         if not self.provider:
             from ..providers import get_default_provider
             self.provider = get_default_provider()
+        # v1.4.0 — deprecated 정규화. 옛 이름 → 새 default.
+        if self.active_strategies:
+            self.active_strategies = _normalize_active_strategies(self.active_strategies)
+        if self.stage_params:
+            self.stage_params = _normalize_stage_params(self.stage_params)
 
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록.

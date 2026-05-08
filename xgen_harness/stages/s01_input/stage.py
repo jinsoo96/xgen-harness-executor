@@ -152,7 +152,7 @@ class InputStage(Stage):
         return content_blocks
 
     def list_strategies(self) -> list[StrategyInfo]:
-        return [
-            StrategyInfo("default", "기본 입력 정규화", is_default=True),
-            StrategyInfo("with_classification", "입력 복잡도 자동 분류 포함"),
-        ]
+        # v1.4.0 — 사용자 픽 카드 hide. 분류는 LLM 자율 판단으로 충분.
+        # 코드 경로 (default / with_classification) 자체는 보존 — 외부 plugin 이
+        # active_strategies 직접 셋해서 강제 가능.
+        return []
