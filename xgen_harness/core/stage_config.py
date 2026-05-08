@@ -253,7 +253,7 @@ STAGE_CONFIGS: dict[str, dict] = {
         ],
     },
     "s04_tool": {
-        "description_ko": "에이전트가 쓸 도구를 고릅니다. 사용자가 selected_tools 로 명시한 도구만 즉시 호출 가능 (eager). 나머지는 이름+1줄만 LLM 에 노출되고 (deferred), LLM 이 ToolSearch(names=[...]) 로 명시 승격해야 호출 가능 — Claude Code 스타일 progressive disclosure (v1.4.0). RAG 컬렉션은 자체 검색하지 않고 rag_search 빌트인 도구로 LLM 이 직접 호출 (R3 위임).",
+        "description_ko": "에이전트가 쓸 도구를 고릅니다. 사용자가 selected_tools 로 명시한 도구만 즉시 호출 가능 (eager). 나머지는 이름+1줄만 LLM 에 노출되고 (deferred), LLM 이 ToolSearch(names=[...]) 로 명시 승격해야 호출 가능 — Claude Code 스타일 progressive disclosure (v1.4.0). RAG 컬렉션은 rag_search, GraphRAG 컬렉션은 query_graph 빌트인 도구로 LLM 이 직접 호출 (R3 위임 — v1.4.0 / v1.5.0).",
         "when_to_use": "외부 도구·RAG 컬렉션·capability 중 하나 이상 필요. 도구 공급 = ToolSource 단일 채널.",
         "when_to_skip": "LLM 내재 지식만으로 충분한 잡담·단순 QA·창작.",
         "cost_hint": "low",
@@ -363,6 +363,8 @@ STAGE_CONFIGS: dict[str, dict] = {
             "fetch_pd 빌트인: strategy 무관 항상 등록 — pd_stores 의 본문 lazy fetch",
             "RAG (rag_collections 박힘) → s04 가 rag_search 빌트인을 LLM 손에 노출 (R3 — s06 자체 검색 비활성)",
             "rag_search 결과는 progressive PD — 본문은 pd_stores['rag'] 보관, LLM 에는 인덱스+snippet 만 (fetch_pd 로 본문 pull)",
+            "Ontology / GraphRAG (ontology_collections 박힘) → s04 가 query_graph 빌트인 노출 (v1.5.0 R3) — 빌드된 그래프만 백엔드 multi_turn_rag 로 SPARQL 탐색",
+            "query_graph 결과도 progressive PD — 본문은 pd_stores['graph'] 보관, fetch_pd(kind='graph') 로 lazy fetch",
             "확장: 외부 패키지가 entry_points(xgen_harness.tool_sources) 로 자기 소스 등록",
         ],
     },
@@ -371,7 +373,7 @@ STAGE_CONFIGS: dict[str, dict] = {
     #   intent_rules  → s06_context (RAG metadata 자동 라우팅)
     #   capability_*  → s04_tool (자연어 intent → capability 자동 발견)
     "s06_context": {
-        "description_ko": "참조 리소스 (RAG 컬렉션 · DB · 폴더 · GraphRAG) 를 선택합니다. v1.4.0 R3 — 검색 자체는 s04_tool 의 rag_search 빌트인 도구로 LLM 이 직접 호출 (자체 검색 비활성). 본문은 pd_stores['rag'] 보관 + LLM 은 fetch_pd 로 lazy fetch (progressive PD). 긴 대화는 cascade strategy 가 압력별 L3→L4→L5 자동 압축.",
+        "description_ko": "참조 리소스 (RAG 컬렉션 · DB · 폴더 · GraphRAG) 를 선택합니다. v1.4.0/v1.5.0 R3 — RAG 검색은 s04_tool 의 rag_search 빌트인, GraphRAG 검색은 query_graph 빌트인으로 LLM 이 직접 호출 (자체 자동 검색 비활성). 결과 본문은 pd_stores['rag'|'graph'] 보관, LLM 은 fetch_pd 로 lazy fetch. 긴 대화는 cascade strategy 가 압력별 L3→L4→L5 자동 압축.",
         "when_to_use": "참조 컬렉션 선택 · 긴 대화 자동 압축이 필요할 때. 검색 임계 / 압축 임계는 cascade 가 자동 결정.",
         "when_to_skip": "짧은 단일 메시지 + 컨텍스트 자료 없음.",
         "cost_hint": "medium",
@@ -649,9 +651,10 @@ STAGE_CONFIGS: dict[str, dict] = {
             "L4 context_collapse: 중간 메시지 overlay, 원본은 pd_stores['history'] 에 보관 (비파괴)",
             "L5 autocompact: child LLM 9-section summary, 회로 차단 (autocompact_failures)",
             "RAG 검색은 도구로 위임 (R3, v1.4.0) — s06 자체 doc_service.search 호출 안 함",
-            "사용자가 컬렉션을 박으면 s04_tool 이 rag_search 빌트인을 LLM 손에 노출 → LLM 이 직접 호출",
-            "rag_search 결과는 progressive PD — 본문은 pd_stores['rag'] 보관, LLM 은 fetch_pd(kind='rag', id=...) 로 lazy fetch",
-            "백워드 호환: rag_tool_mode='context'/'both' 명시 시 자체 검색도 동작 (default='tool')",
+            "Ontology / GraphRAG 도 도구로 위임 (R3, v1.5.0) — s06 자체 ontology_query 자동 호출 안 함",
+            "사용자가 컬렉션을 박으면 s04_tool 이 rag_search / query_graph 빌트인을 LLM 손에 노출 → LLM 이 결정해서 호출",
+            "결과는 progressive PD — 본문은 pd_stores['rag'|'graph'] 보관, LLM 은 fetch_pd 로 lazy fetch",
+            "백워드 호환: rag_tool_mode / ontology_tool_mode='context' 또는 'both' 명시 시 자체 검색도 동작 (default 둘 다 'tool')",
             "5종 PD (tool_result / rag / history / db_schema / gallery) 가 모두 같은 pd_stores + fetch_pd 인프라 공유",
             "확장: 외부 패키지가 entry_points(xgen_harness.context_strategies) 로 자기 압축 strategy 등록",
         ],

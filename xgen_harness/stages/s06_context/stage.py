@@ -323,9 +323,16 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
                 meta={"chunks": results.get("rag_chunks", 0)},
             ))
 
-        # ── 1.5 Ontology / GraphRAG — DocumentService.ontology_query 위임 ──
+        # ── 1.5 Ontology / GraphRAG — v1.5.0 R3: 도구 위임 (자체 자동 호출 비활성)
+        # rag_tool_mode 패턴 정합 — ontology_tool_mode default 'tool' 이면 s04 가
+        # query_graph 빌트인 등록해 LLM 이 호출 결정. s06 자체 자동 호출은 'context'
+        # 또는 'both' 명시 시만 (백워드 호환).
         ontology_collections: list[str] = list(self.get_param("ontology_collections", state, []) or [])
-        if ontology_collections and state.user_input:
+        ontology_tool_mode = str(
+            self.get_param("ontology_tool_mode", state, "tool") or "tool"
+        ).strip().lower()
+        if (ontology_collections and state.user_input
+                and ontology_tool_mode in ("context", "both")):
             services = state.metadata.get("services")
             doc_service = getattr(services, "documents", None) if services else None
             if doc_service and hasattr(doc_service, "ontology_query"):

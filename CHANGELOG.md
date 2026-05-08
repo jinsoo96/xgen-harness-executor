@@ -5,6 +5,40 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-05-08
+
+### 🚨 BREAKING — Ontology / GraphRAG R3 도구 위임 (RAG 와 isomorphic)
+
+v1.4.0 R3 가 RAG 측만 도구 위임으로 정합화하고 Ontology / GraphRAG 측은 옛 자동 사전 검색 그대로였음. 사용자 지적: "온톨로지 GraphRAG 의 검색 로직은 복잡한데 (multi_turn_rag 의 child LLM ReAct 멀티턴) 그걸 매 턴 자동으로 호출하는 게 말이 되냐". 정확. v1.5.0 = ontology 도 같은 R3 정신.
+
+#### 신규 빌트인 — `tools/ontology_tool.py:QueryGraphTool`
+- `query_graph(question, collection)` — backend `multi_turn_rag.query()` 위임
+- progressive PD: 본문은 `state.pd_stores["graph"]` 에 보관, LLM 에는 인덱스+snippet 만 (200자 default)
+- LLM 은 `fetch_pd(kind='graph', id='<col>::<hash>')` 로 본문 lazy fetch
+
+#### s04_tool/stage.py
+- `ontology_collections` + `ontology_tool_mode` stage_param 받아서 `query_graph` 빌트인 등록
+- DocumentService.ontology_query 가용 시에만 등록 (없으면 graceful skip)
+- rag_search 등록과 isomorphic 패턴 — 코드 흐름 통일
+
+#### s06_context/stage.py
+- `ontology_query` 자동 호출 (line 326-348) 을 `ontology_tool_mode in ('context','both')` 일 때만 실행
+- default `'tool'` 이면 SKIP — s04 가 등록한 빌트인이 LLM 손에 있어 LLM 이 결정해서 호출
+- 백워드 호환: 사용자가 명시적으로 `context` / `both` 박으면 자체 호출 동작 (기존 흐름)
+
+#### 효과 (v1.4.0 R3 와 동일)
+| 항목 | v1.4 (RAG 측만) | v1.5 (Ontology 측도) |
+|---|---|---|
+| 매 턴 자동 호출 | ❌ (RAG 도구화 후 자율) | ❌ (Ontology 도 자율) |
+| LLM 자율성 (호출 결정) | ✅ | ✅ |
+| Progressive PD | ✅ rag | ✅ rag + graph |
+| pd_stores kind | `tool_result` / `rag` / `history` / `db_schema` / `gallery` | + `graph` 신규 |
+
+#### 비고
+- 백엔드 `multi_turn_rag` (child ReAct) 그대로 유지 — 캔버스 호환 영향 0
+- 이중 LLM 호출 자체는 잔존하지만 LLM 이 호출 결정 → 비용 폭증 X (질문이 그래프 무관하면 호출 안 함)
+- 빌드 안 된 컬렉션 박힌 경우 백엔드가 unavailable / 빈 결과 반환 → LLM 이 처리. 사용자가 "빌드된 것만" 박도록 frontend 옵션 source 필터는 v1.5.x 후속
+
 ## [1.4.1] — 2026-05-08
 
 ### 📝 stage_config.py UI 동작방식 박스 텍스트 v1.4 정합 갱신

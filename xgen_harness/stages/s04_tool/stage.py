@@ -34,6 +34,7 @@ from ...core.state import PipelineState
 from ...events.types import StageSubstepEvent
 from ...tools import get_tool_sources
 from ...tools.rag_tool import RAGSearchTool
+from ...tools.ontology_tool import QueryGraphTool
 
 logger = logging.getLogger("harness.stage.tool_index")
 
@@ -314,6 +315,38 @@ class ToolIndexStage(Stage):
                     state.metadata.setdefault("tool_registry", {})["rag_search"] = rag_tool
                     logger.info("[Tool Index] rag_search tool registered (mode=%s)",
                                 rag_tool_mode)
+
+        # ─── 3.5 Ontology / GraphRAG 도구 등록 (v1.5.0 R3) ─────────────
+        # 사용자가 박은 ontology_collections 를 query_graph 빌트인 도구로 노출.
+        # ontology_tool_mode default 'tool' — s06_context 자체 자동 호출 X, LLM 이
+        # 도구로 호출 (rag_search 와 isomorphic). 'context'/'both' 명시 시 백워드.
+        ontology_collections: list[str] = self.get_param("ontology_collections", state, []) or []
+        if ontology_collections:
+            ontology_tool_mode: str = self.get_param("ontology_tool_mode", state, "tool")
+            if ontology_tool_mode in ("tool", "both"):
+                _services_o = state.metadata.get("services")
+                _doc_service_o = getattr(_services_o, "documents", None) if _services_o else None
+                if _doc_service_o is not None and hasattr(_doc_service_o, "ontology_query"):
+                    graph_tool = QueryGraphTool(
+                        collections=list(ontology_collections),
+                        doc_service=_doc_service_o,
+                        state_ref=state,
+                        progressive=True,
+                        snippet_size=int(self.get_param("rag_pd_snippet_size", state, 200) or 200),
+                    )
+                    if not any(td.get("name") == "query_graph" for td in state.tool_definitions):
+                        state.tool_definitions.append(graph_tool.to_api_format())
+                        tool_index.append(graph_tool.to_index_entry())
+                        state.metadata.setdefault("tool_registry", {})["query_graph"] = graph_tool
+                        logger.info(
+                            "[Tool Index] query_graph tool registered (mode=%s, collections=%s)",
+                            ontology_tool_mode, ontology_collections,
+                        )
+                else:
+                    logger.info(
+                        "[Tool Index] ontology_collections present (%s) but DocumentService.ontology_query unavailable — query_graph not registered",
+                        ontology_collections,
+                    )
 
         # ─── 4. force_tool_use (v0.11.19) ──────────────────────────────
         force_tool_use = bool(self.get_param("force_tool_use", state, False))
