@@ -5,6 +5,28 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-05-08
+
+### 📝 9 Stage UI 텍스트 사용자 친화 톤 재작성 (patch)
+
+v1.4.1 / v1.5.0 에서 stage_config.py 의 description_ko / behavior 갱신했지만 여전히 버전 명시 (v1.X.0 / R3) / 코드 path (`pd_stores` / `fetch_pd` / `state.*` / `s06_context.*`) / 영어 약어 (Cascade L3/L4/L5 / microcompact / autocompact / progressive disclosure / ToolSearch) 잔존. 일반 사용자가 "뭔 소린지 모름" 호소.
+
+전 9 stage (s00~s09) 의 `description_ko` / `behavior` 항목을 일반 사용자가 읽을 수 있는 자연어 한국어로 재작성:
+
+| Stage | 변경 |
+|---|---|
+| s00_harness | "Harness 통제탑 / Provider / streaming/batch / Planner OFF" → "에이전트가 답변할 때 LLM 모델을 호출합니다 / 일시 오류 시 자동 재시도" |
+| s01_input | "content block 정규화" → "LLM 이 이해하는 형식으로 변환" |
+| s02_history | "harness_execution_log → execution_io → chat_session 폴백" → "여러 저장소 자동 폴백 (실행 로그 → 입출력 기록 → 채팅 세션)" |
+| s03_prompt | "Identity → Rules → Planning → Tools → RAG → History" → "역할 → 규칙 → 사고 모드 → 도구 안내 → 참고 자료 → 대화 이력" |
+| s04_tool | "selected_tools / eager / deferred / ToolSearch / progressive disclosure" → "명시 선택한 도구 / 그 외 도구는 이름만 보이고 에이전트가 필요할 때 직접 불러옴" |
+| s06_context | "Cascade L3→L4→L5 / pd_stores / fetch_pd / R3" → "단계적 자동 압축 / 검색 결과는 요약만 먼저, 본문은 필요할 때 다시 가져옴" |
+| s07_act | "L1 Tool Result Budget / preview_threshold / pd_stores / discover_tools" → "큰 도구 결과는 미리보기로 줄이고 원본은 별도 보관" |
+| s08_decide | "judge_then_loop strategy / Policy Gate block" → "비용/반복 한도 시 종료 / 품질 평가 점수 미달이면 재시도" |
+| s09_finalize | "MetricsEvent / DoneEvent / persist strategy / harness_execution_log" → "토큰 사용량 / 비용 / 소요 시간 통계 발행 / 옵션: 데이터베이스에 영구 저장" |
+
+엔진 동작 변경 0 (텍스트만). 외부 기여자용 detail (entry_points / 플러그인 등록) 은 한 줄 정도로 압축 보존.
+
 ## [1.5.0] — 2026-05-08
 
 ### 🚨 BREAKING — Ontology / GraphRAG R3 도구 위임 (RAG 와 isomorphic)
