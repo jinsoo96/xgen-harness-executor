@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.5.2"
-description = "XGEN Harness v1.5.2 — Stage Configuration fields 의 description 텍스트를 사용자 친화 톤으로 재작성 (patch). s07_act / s08_decide / s09_finalize 의 field description 에 잔존하던 기술 키워드 (judge_then_loop strategy / register_evaluation_criterion / harness_execution_log / PERSIST_DEFAULTS / pd_stores / fetch_pd 등) 모두 자연어로. 동작 변경 0."
+version = "1.5.3"
+description = "XGEN Harness v1.5.3 — EventLog 디버깅 친화 강화. (1) ToolDeferredEvent 항상 emit (selected_tools 비어도) — 도구 선택 결과 가시. (2) s05_policy 진입 시 활성 가드 list 를 verbose 이벤트로 emit — '정책 안 먹힘' 디버깅 정보 표면화. 동작 변경 0 (가시성만)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

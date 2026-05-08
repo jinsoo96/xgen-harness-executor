@@ -5,6 +5,14 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] — 2026-05-08
+
+### 📊 EventLog 디버깅 친화 강화 (사용자 호소: "디버깅 가능할 정도 / 정책 안 먹힘 / 도구 선택 안 보임")
+
+- **s04_tool**: `ToolDeferredEvent` emit 조건에서 `has_explicit_selection` 제거 — selected_tools 비어있어도 도구 발견 시 항상 emit. eager / deferred 카운트가 EventLog 에 항상 노출.
+- **s05_policy**: stage.execute 진입 시 활성 가드 list 를 `StageSubstepEvent(substep="guards_active")` 로 emit. "정책 안 먹힘" 호소 정합 — 어떤 가드가 박혀있는지 사용자가 EventLog 에서 즉시 확인.
+- 동작 변경 0 (이벤트 가시성만 강화).
+
 ## [1.5.2] — 2026-05-08
 
 ### 📝 Stage Configuration fields description 친화 톤 재작성 (patch)

@@ -225,8 +225,10 @@ class ToolIndexStage(Stage):
             },
         ))
 
-        # v1.2.0 — 분류 결과 ToolDeferredEvent 로 외부 보고.
-        if has_explicit_selection and (eager_added or deferred_added):
+        # v1.2.0 / v1.5.3 — 분류 결과 ToolDeferredEvent 로 외부 보고.
+        # 사용자 디버깅 needs 정합 — 도구 선택 결과는 selected_tools 비어있어도 항상 emit.
+        # has_explicit_selection 조건 제거 — eager 든 deferred 든 도구 발견 했으면 EventLog 에.
+        if eager_added or deferred_added:
             from ...events.types import ToolDeferredEvent
             await state.emit_verbose(ToolDeferredEvent(
                 eager_count=eager_added,
