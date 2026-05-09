@@ -712,3 +712,352 @@ class CompactTool(Tool):
         if len(joined) <= limit:
             return joined
         return joined[:limit] + f"\n... [truncated from {len(joined):,} chars — no summarizer available]"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# v1.6 신규 빌트인 — Pack 3 (사용자 PD 정신: policy / prompt / collection 도구화)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class CheckPolicyTool(Tool):
+    """v1.6 — Policy self-check 빌트인.
+
+    LLM 이 민감 도구 호출 전 정책 (가드 / 예산 / 콘텐츠) 통과 여부 사전 검증.
+    s05_policy guards 와 동일 검증 로직 재사용 — registry 의 Guard 인스턴스에
+    같은 인터페이스로 위임.
+
+    호출 예:
+      check_policy(action="mcp_database_loader", args={"connection": "prod_postgres"})
+        → {"allowed": true, "reasons": []}  또는  {"allowed": false, "reasons": ["..."]}
+    """
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "check_policy"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Self-check: 호출하려는 action 이 활성 정책 (가드 / 예산 / 콘텐츠) "
+            "통과하는지 사전 검증. 민감 도구 호출 전 (e.g. 외부 API / DB write) "
+            "정책 위반 risk 확인용."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "호출하려는 도구 이름"},
+                "args": {"type": "object", "description": "호출 인자 (정책 검증용)"},
+            },
+            "required": ["action"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "policy"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        action = input_data.get("action", "")
+        args = input_data.get("args") or {}
+
+        # state.config 의 stage_params.s05_policy.guards 받아 검증
+        config = getattr(self._state, "config", None)
+        if not config or not hasattr(config, "stage_params"):
+            return ToolResult.success(
+                "no policy configured", allowed=True, reasons=[],
+            )
+        guards = (config.stage_params or {}).get("s05_policy", {}).get("guards") or []
+        guard_names = [g.get("name") for g in guards if isinstance(g, dict) and g.get("name")]
+        if not guard_names:
+            return ToolResult.success(
+                "no guards active", allowed=True, reasons=[],
+            )
+
+        # 가드 별 PRE_TOOL 시점 invoke 시뮬레이션 — 실패시 reason 수집
+        reasons: list[str] = []
+        try:
+            from ..stages.strategies.guard import _GUARD_REGISTRY
+        except Exception:
+            return ToolResult.success(
+                "guard registry unavailable", allowed=True, reasons=[],
+            )
+        for g in guards:
+            gname = g.get("name") if isinstance(g, dict) else None
+            if not gname:
+                continue
+            cls = _GUARD_REGISTRY.get(gname)
+            if not cls:
+                continue
+            try:
+                inst = cls(g.get("params") or {})
+                # 간단 self-check — content / args 만 검증 (실 PRE_TOOL hook 흉내)
+                if hasattr(inst, "check_action"):
+                    res = inst.check_action(action=action, args=args)
+                    if not res.get("allowed", True):
+                        reasons.append(f"{gname}: {res.get('reason') or 'blocked'}")
+            except Exception:
+                continue
+
+        return ToolResult.success(
+            "policy check completed",
+            allowed=not reasons,
+            reasons=reasons,
+            active_guards=guard_names,
+        )
+
+
+class DiscoverPromptTool(Tool):
+    """v1.6 — Prompt template lazy load 빌트인.
+
+    s03_prompt 의 DEFAULT_IDENTITIES / DEFAULT_RULES / THINKING_MODE_TEMPLATES 외
+    register_*() / entry_points 로 등록된 외부 prompt template 의 본문 + 메타를
+    LLM 이 lazy load 가능. progressive_3level 의 prompt isomorphic.
+
+    호출 예:
+      discover_prompt(template_type="identity", name="legal_advisor")
+        → {"name": ..., "template": "..."}
+    """
+
+    @property
+    def name(self) -> str:
+        return "discover_prompt"
+
+    @property
+    def description(self) -> str:
+        return (
+            "외부 등록 prompt template (identity / rules / thinking_mode) 의 본문 + "
+            "메타 lazy load. name 미박으면 등록된 모든 template 의 list 반환."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "template_type": {
+                    "type": "string",
+                    "enum": ["identity", "rules", "thinking_mode"],
+                    "description": "어떤 종류의 template",
+                },
+                "name": {"type": "string", "description": "template 이름. 비워두면 list."},
+            },
+            "required": ["template_type"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "prompt"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        ttype = (input_data.get("template_type") or "").strip()
+        name = (input_data.get("name") or "").strip()
+
+        try:
+            from ..stages.s03_prompt.stage import (
+                DEFAULT_IDENTITIES, DEFAULT_RULES, THINKING_MODE_TEMPLATES,
+                _discover_prompt_templates_from_entry_points,
+            )
+            _discover_prompt_templates_from_entry_points()
+        except Exception as e:
+            return ToolResult.error(f"prompt registry import failed: {e}")
+
+        registry_map = {
+            "identity": DEFAULT_IDENTITIES,
+            "rules": DEFAULT_RULES,
+            "thinking_mode": THINKING_MODE_TEMPLATES,
+        }
+        reg = registry_map.get(ttype)
+        if reg is None:
+            return ToolResult.error(
+                f"unknown template_type: {ttype}. "
+                f"valid: {list(registry_map.keys())}"
+            )
+
+        if not name:
+            # list 모드
+            return ToolResult.success(
+                f"{len(reg)} {ttype} templates",
+                templates=list(reg.keys()),
+            )
+
+        if name not in reg:
+            return ToolResult.error(
+                f"template not found: {ttype}/{name}. "
+                f"available: {list(reg.keys())}"
+            )
+
+        return ToolResult.success(
+            f"loaded {ttype}/{name}",
+            name=name,
+            template_type=ttype,
+            content=reg[name],
+        )
+
+
+class DiscoverCollectionTool(Tool):
+    """v1.6 — RAG 컬렉션 sample documents / metadata lazy fetch 빌트인.
+
+    progressive_4level 의 컬렉션 isomorphic — 도구의 progressive_3level 정신을
+    자원 (컬렉션) 에 그대로:
+    - L1: <reference_resources> 의 메타 (name + description + total_documents)
+    - L2: discover_collection(name) → sample documents + 통계 (이 도구!)
+    - L3: rag_search(collection, query) → 인덱스 + snippet
+    - L4: fetch_pd(kind='rag', id=...) → 본문
+
+    호출 예:
+      discover_collection(name="assort", sample_size=3)
+        → {"name": ..., "description": ..., "total": ..., "samples": [...]}
+    """
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "discover_collection"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Lazy load: RAG 컬렉션의 sample documents + 통계 메타. <reference_resources> "
+            "의 메타가 부족하면 이 도구로 더 깊이 — sample 보고 적합도 판단 후 rag_search 호출."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "컬렉션 이름"},
+                "sample_size": {
+                    "type": "integer",
+                    "description": "sample 개수 (default 3, max 10)",
+                    "default": 3,
+                },
+            },
+            "required": ["name"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "retrieval"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        name = (input_data.get("name") or "").strip()
+        if not name:
+            return ToolResult.error("name 필수")
+        sample_size = max(1, min(int(input_data.get("sample_size") or 3), 10))
+
+        services = self._state.metadata.get("services") if hasattr(self._state, "metadata") else None
+        doc_service = getattr(services, "documents", None) if services else None
+        if not doc_service:
+            return ToolResult.error("DocumentService 미주입")
+
+        # 메타 cache 우선
+        meta = (self._state.metadata.get("rag_collections_meta") or {}).get(name) if hasattr(self._state, "metadata") else None
+        result_meta = dict(meta) if meta else {"name": name}
+        result_meta["name"] = name
+
+        # sample 검색 — 빈 query 또는 generic word 로 top_k=sample_size
+        try:
+            samples = await doc_service.search(
+                "", name, limit=sample_size, score_threshold=0.0,
+            ) or []
+        except Exception as e:
+            return ToolResult.success(
+                f"sample fetch failed but meta returned",
+                meta=result_meta,
+                samples_error=str(e)[:120],
+            )
+
+        sample_summaries = []
+        for r in samples[:sample_size]:
+            if not isinstance(r, dict):
+                continue
+            text = r.get("chunk_text") or r.get("text") or ""
+            sample_summaries.append({
+                "source": r.get("file_name") or r.get("source", ""),
+                "preview": text[:200],
+            })
+
+        return ToolResult.success(
+            f"collection {name}: {len(sample_summaries)} samples",
+            meta=result_meta,
+            samples=sample_summaries,
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# v1.6 — collection description enricher registry (default OFF)
+# ────────────────────────────────────────────────────────────────────────────
+
+_COLLECTION_ENRICHERS: list = []
+
+
+def register_collection_enricher(fn):
+    """컬렉션 description 빈 칸일 때 자동 생성하는 enricher 등록.
+
+    fn 시그니처: async def enrich(name: str, sample_docs: list[str]) -> str | None
+    여러 enricher 등록 가능 — 첫 비빈 결과 반환.
+
+    entry_points group: ``xgen_harness.collection_enrichers``
+    default OFF — 사용자가 명시 ON 시만 발동 (config.enrich_empty_descriptions=True
+    또는 register 호출).
+    """
+    if fn not in _COLLECTION_ENRICHERS:
+        _COLLECTION_ENRICHERS.append(fn)
+
+
+async def enrich_collection_description(name: str, sample_docs: list[str]) -> str | None:
+    """등록된 enricher 들 순서대로 호출. 첫 비빈 description 반환."""
+    for fn in _COLLECTION_ENRICHERS:
+        try:
+            result = fn(name, sample_docs)
+            if hasattr(result, "__await__"):
+                result = await result
+            if isinstance(result, str) and result.strip():
+                return result.strip()
+        except Exception:
+            continue
+    return None

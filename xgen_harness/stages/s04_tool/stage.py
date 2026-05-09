@@ -261,22 +261,28 @@ class ToolIndexStage(Stage):
             logger.info("[Tool Index] discover_tools excluded (not in builtin_tools)")
 
         # v1.1.1 — fetch_pd 는 strategy 무관 항상 등록.
-        #   PD progressive (s06_context.rag_pd_mode='progressive' / s07 tool_result preview) 가
-        #   default ON 인 환경에서 LLM 이 lazy fetch 못 하면 정보 누락. 사용자가 도구 화이트리스트
-        #   비우거나 EagerLoadDiscovery 골라도 fetch_pd 만은 보장. 이전엔 ProgressiveDiscovery
-        #   안에서만 등록해 strategy 갈음 시 누락되던 회귀.
-        from ...tools.builtin import FetchPDTool
-        if not any(td.get("name") == "fetch_pd" for td in augmented_defs):
-            fetch_pd = FetchPDTool(state)
-            augmented_defs.append(fetch_pd.to_api_format())
+        # v1.6 — check_policy / discover_prompt 도 strategy 무관 항상 등록 (사용자 정신:
+        # 시스템 빌트인 = 1단계 메타 도구 = LLM 항상 손에). discover_collection 은
+        # rag_collections 박혔을 때만 (조건부, Section 3 영역에서 등록).
+        from ...tools.builtin import FetchPDTool, CheckPolicyTool, DiscoverPromptTool
+        _STRATEGY_AGNOSTIC = [
+            ("fetch_pd", FetchPDTool, True),       # state_ref 필요
+            ("check_policy", CheckPolicyTool, True),
+            ("discover_prompt", DiscoverPromptTool, False),
+        ]
+        for tname, cls, needs_state in _STRATEGY_AGNOSTIC:
+            if any(td.get("name") == tname for td in augmented_defs):
+                continue
+            inst = cls(state) if needs_state else cls()
+            augmented_defs.append(inst.to_api_format())
             tool_index.append({
-                "name": fetch_pd.name,
-                "description": (fetch_pd.description[:120] if hasattr(fetch_pd, "description") else ""),
-                "category": "system",
+                "name": inst.name,
+                "description": (inst.description[:120] if hasattr(inst, "description") else ""),
+                "category": getattr(inst, "category", "system"),
             })
             if hasattr(state, "metadata"):
-                state.metadata.setdefault("tool_registry", {})["fetch_pd"] = fetch_pd
-            logger.info("[Tool Index] fetch_pd builtin registered (strategy-agnostic)")
+                state.metadata.setdefault("tool_registry", {})[tname] = inst
+            logger.info("[Tool Index] %s builtin registered (strategy-agnostic)", tname)
 
         state.tool_definitions = augmented_defs
         state.tool_index = tool_index
@@ -312,6 +318,30 @@ class ToolIndexStage(Stage):
                                 "total_documents": int(total) if total else 0,
                             }
                     if meta_map:
+                        # v1.6 — description 빈 칸 컬렉션 자동 enrich (default OFF, register 후 발동)
+                        from ...tools.builtin import enrich_collection_description, _COLLECTION_ENRICHERS
+                        if _COLLECTION_ENRICHERS:
+                            for cn, m in meta_map.items():
+                                if not m.get("description"):
+                                    try:
+                                        # sample documents 로 description 자동 생성 시도
+                                        samples = await _doc_service_meta.search(
+                                            "", cn, limit=3, score_threshold=0.0,
+                                        ) or []
+                                        sample_texts = [
+                                            (s.get("chunk_text") or s.get("text") or "")[:500]
+                                            for s in samples if isinstance(s, dict)
+                                        ]
+                                        new_desc = await enrich_collection_description(cn, sample_texts)
+                                        if new_desc:
+                                            m["description"] = new_desc
+                                            m["_enriched"] = True
+                                            logger.info(
+                                                "[Tool Index] collection %r description auto-enriched (%d chars)",
+                                                cn, len(new_desc),
+                                            )
+                                    except Exception as ee:
+                                        logger.debug("[Tool Index] enrich %r failed: %s", cn, ee)
                         state.metadata["rag_collections_meta"] = meta_map
                         logger.info(
                             "[Tool Index] rag_collections_meta cached: %d collections",
@@ -321,6 +351,20 @@ class ToolIndexStage(Stage):
                     logger.warning(
                         "[Tool Index] rag_collections_meta fetch failed: %s", e
                     )
+
+            # v1.6 — discover_collection 빌트인 (rag_collections 박혔을 때만 의미). progressive_4level
+            # 의 컬렉션 isomorphic — L2 sample documents lazy load.
+            from ...tools.builtin import DiscoverCollectionTool
+            if not any(td.get("name") == "discover_collection" for td in state.tool_definitions):
+                _disc = DiscoverCollectionTool(state)
+                state.tool_definitions.append(_disc.to_api_format())
+                state.tool_index.append({
+                    "name": _disc.name,
+                    "description": (_disc.description[:120] if hasattr(_disc, "description") else ""),
+                    "category": getattr(_disc, "category", "retrieval"),
+                })
+                state.metadata.setdefault("tool_registry", {})["discover_collection"] = _disc
+                logger.info("[Tool Index] discover_collection builtin registered (rag_collections present)")
 
             # v1.4.0 R3 — default 'both' → 'tool'. s06 자체 검색 안 하고 LLM 이 도구로 호출.
             # 'context' (s06 만 검색, 도구 등록 X) / 'both' (둘 다) 는 백워드 호환 유지.
