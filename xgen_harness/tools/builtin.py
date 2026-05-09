@@ -777,49 +777,96 @@ class CheckPolicyTool(Tool):
         action = input_data.get("action", "")
         args = input_data.get("args") or {}
 
-        # state.config 의 stage_params.s05_policy.guards 받아 검증
+        # state.config 의 stage_params.s05_policy.guards 받아 PRE_TOOL hook 시뮬레이션.
+        # Guard 의 진짜 인터페이스 = check(state, context) → GuardResult.
+        # PRE_TOOL hook 지원하는 Guard 만 평가 (TokenBudget / Iteration LOOP_BOUNDARY 만 = skip).
+        import logging as _logging
+        _log = _logging.getLogger("harness.tools.check_policy")
+
         config = getattr(self._state, "config", None)
         if not config or not hasattr(config, "stage_params"):
             return ToolResult.success(
                 "no policy configured", allowed=True, reasons=[],
             )
-        guards = (config.stage_params or {}).get("s05_policy", {}).get("guards") or []
-        guard_names = [g.get("name") for g in guards if isinstance(g, dict) and g.get("name")]
+        guards_cfg = (config.stage_params or {}).get("s05_policy", {}).get("guards") or []
+        guard_names = [g.get("name") for g in guards_cfg if isinstance(g, dict) and g.get("name")]
         if not guard_names:
             return ToolResult.success(
                 "no guards active", allowed=True, reasons=[],
             )
 
-        # 가드 별 PRE_TOOL 시점 invoke 시뮬레이션 — 실패시 reason 수집
-        reasons: list[str] = []
         try:
-            from ..stages.strategies.guard import _GUARD_REGISTRY
-        except Exception:
-            return ToolResult.success(
-                "guard registry unavailable", allowed=True, reasons=[],
+            from ..stages.strategies.guard import (
+                _GUARD_REGISTRY, GuardChain, HookPoint,
             )
-        for g in guards:
-            gname = g.get("name") if isinstance(g, dict) else None
+        except Exception as e:
+            return ToolResult.success(
+                f"guard registry unavailable: {e}",
+                allowed=True, reasons=[],
+            )
+
+        # Guard 인스턴스 빌드 — params 박음 + configure() 호출
+        instances = []
+        for g in guards_cfg:
+            if not isinstance(g, dict):
+                continue
+            gname = g.get("name")
             if not gname:
                 continue
             cls = _GUARD_REGISTRY.get(gname)
             if not cls:
                 continue
             try:
-                inst = cls(g.get("params") or {})
-                # 간단 self-check — content / args 만 검증 (실 PRE_TOOL hook 흉내)
-                if hasattr(inst, "check_action"):
-                    res = inst.check_action(action=action, args=args)
-                    if not res.get("allowed", True):
-                        reasons.append(f"{gname}: {res.get('reason') or 'blocked'}")
-            except Exception:
+                params = g.get("params") or {}
+                # 빌트인 Guard 들은 keyword args 또는 빈 ctor — 양쪽 시도
+                try:
+                    inst = cls(**params) if isinstance(params, dict) and params else cls()
+                except TypeError:
+                    inst = cls()
+                # Strategy.configure() 표준 hook
+                if hasattr(inst, "configure"):
+                    try:
+                        inst.configure(params if isinstance(params, dict) else {})
+                    except Exception:
+                        pass
+                instances.append(inst)
+            except Exception as e:
+                _log.warning("guard %s instantiate failed: %s", gname, e)
                 continue
 
+        if not instances:
+            return ToolResult.success(
+                "no instantiable guards", allowed=True, reasons=[],
+                active_guards=guard_names,
+            )
+
+        # PRE_TOOL hook + pending_tool_call 빌드 → GuardChain.invoke (모든 결과 수집)
+        chain = GuardChain(instances)
+        pending_tool_call = {"name": action, "input": args}
+        try:
+            results = chain.invoke(
+                HookPoint.PRE_TOOL, self._state,
+                pending_tool_call=pending_tool_call,
+                short_circuit=False,  # 모든 reason 수집
+            )
+        except Exception as e:
+            return ToolResult.success(
+                f"guard chain invoke failed: {e}",
+                allowed=True, reasons=[],
+                active_guards=guard_names,
+            )
+
+        reasons: list[str] = []
+        for r in results:
+            if not r.passed and r.severity == "block":
+                reasons.append(f"{r.guard_name}: {r.reason or 'blocked'}")
+
         return ToolResult.success(
-            "policy check completed",
+            f"policy check: {len(results)} guard(s) evaluated at PRE_TOOL hook",
             allowed=not reasons,
             reasons=reasons,
             active_guards=guard_names,
+            evaluated=len(results),
         )
 
 

@@ -251,11 +251,28 @@ class SystemPromptStage(Stage):
 
         if (rag_collections_attached or ontology_collections_attached
                 or db_connections_attached or files_attached):
-            # v1.5.6 — Anthropic Skills frontmatter Level 1 패턴 isomorphic.
-            # 메타 (지도) 만 노출 — name + description + total_documents.
+            # v1.6 — Anthropic Skills frontmatter Level 1 패턴 isomorphic.
+            # 메타 (지도) 만 노출 — name + description + total_documents 등.
             # 도구 이름 / 호출 가이던스는 박지 않음 — 도구는 system_prompt 의 <available_tools>
-            # 섹션과 도구 description (when_to_use 등) 통해 LLM 이 자율 발견. 강제 instruction X.
+            # 섹션과 도구 description 통해 LLM 이 자율 발견. 강제 instruction X.
+            #
+            # 풍부 메타 (Pack 2) — state.metadata 의 *_meta dict 에서 fetch:
+            #   rag_collections_meta:  {name → {description, total_documents}}
+            #   ontology_collections_meta: {name → {description, ...}}
+            #   db_connections_meta:   {name → {type, schema: {tables: [...]}}}
+            #   files_meta:            {name → {size, type, modified_at}}
+            #   mcp_sessions_meta:     {name → {tool_count, when_to_use}}
+            # 이식측이 state.metadata['*_meta'] 박으면 자동 풍부 노출. 안 박혀있어도 정상 동작.
             rag_meta = state.metadata.get("rag_collections_meta") or {}
+            onto_meta = state.metadata.get("ontology_collections_meta") or {}
+            db_meta = state.metadata.get("db_connections_meta") or {}
+            files_meta = state.metadata.get("files_meta") or {}
+
+            def _meta_dict(maybe_dict, default_name=""):
+                if isinstance(maybe_dict, dict):
+                    return maybe_dict
+                return {"name": str(maybe_dict) or default_name}
+
             lines: list[str] = ["<reference_resources>"]
             lines.append("사용자가 첨부한 자원입니다. 질문에 관련되면 활용하세요.")
             if rag_collections_attached:
@@ -273,20 +290,80 @@ class SystemPromptStage(Stage):
             if ontology_collections_attached:
                 lines.append("- 지식 그래프:")
                 for col in ontology_collections_attached:
-                    lines.append(f"  · {col}")
+                    m = onto_meta.get(col, {}) if isinstance(onto_meta.get(col), dict) else {}
+                    desc = (m.get("description") or "").strip()
+                    nodes = m.get("nodes") or m.get("node_count")
+                    line = f"  · {col}"
+                    if desc:
+                        line += f": {desc}"
+                    if nodes:
+                        line += f" ({nodes:,} nodes)" if isinstance(nodes, int) else f" ({nodes})"
+                    lines.append(line)
             if db_connections_attached:
                 lines.append("- DB 연결:")
                 for conn in db_connections_attached:
                     if isinstance(conn, dict):
                         cn = conn.get("name") or conn.get("connection_name") or str(conn)
-                        ct = conn.get("type") or conn.get("db_type") or ""
-                        lines.append(f"  · {cn}{f' ({ct})' if ct else ''}")
                     else:
-                        lines.append(f"  · {conn}")
+                        cn = str(conn)
+                    m = db_meta.get(cn, {}) if isinstance(db_meta.get(cn), dict) else (
+                        conn if isinstance(conn, dict) else {}
+                    )
+                    ct = m.get("type") or m.get("db_type") or ""
+                    schema = m.get("schema") or {}
+                    tables = schema.get("tables") if isinstance(schema, dict) else None
+                    line = f"  · {cn}"
+                    if ct:
+                        line += f" ({ct})"
+                    if tables and isinstance(tables, list):
+                        sample = ", ".join(str(t) for t in tables[:5])
+                        more = f", +{len(tables)-5}" if len(tables) > 5 else ""
+                        line += f" — tables: {sample}{more}"
+                    lines.append(line)
             if files_attached:
                 lines.append("- 파일:")
                 for fname in files_attached:
-                    lines.append(f"  · {fname}")
+                    if isinstance(fname, dict):
+                        fn = fname.get("name") or fname.get("file_name") or str(fname)
+                        m = fname
+                    else:
+                        fn = str(fname)
+                        m = files_meta.get(fn, {}) if isinstance(files_meta.get(fn), dict) else {}
+                    size = m.get("size") or m.get("file_size")
+                    ftype = m.get("type") or m.get("file_type") or ""
+                    line = f"  · {fn}"
+                    parts = []
+                    if size:
+                        # bytes → human
+                        try:
+                            sz = int(size)
+                            for unit in ("B", "KB", "MB", "GB"):
+                                if sz < 1024:
+                                    parts.append(f"{sz:.0f} {unit}" if unit == "B" else f"{sz:.1f} {unit}")
+                                    break
+                                sz /= 1024
+                        except Exception:
+                            parts.append(str(size))
+                    if ftype:
+                        parts.append(str(ftype).upper())
+                    if parts:
+                        line += " (" + " · ".join(parts) + ")"
+                    lines.append(line)
+            # MCP sessions 메타 (사용자가 mcp_sessions 박았으면 ToolSource 가 등록 + 메타 전달)
+            mcp_meta = state.metadata.get("mcp_sessions_meta") or {}
+            if mcp_meta:
+                lines.append("- MCP 세션:")
+                for sname, m in mcp_meta.items():
+                    if not isinstance(m, dict):
+                        m = {}
+                    tool_count = m.get("tool_count") or m.get("tools")
+                    when = m.get("when_to_use") or m.get("description") or ""
+                    line = f"  · {sname}"
+                    if tool_count:
+                        line += f" ({tool_count} 도구)"
+                    if when:
+                        line += f": {when[:80]}"
+                    lines.append(line)
             lines.append("</reference_resources>")
             ref_section = "\n".join(lines)
             # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
