@@ -38,6 +38,8 @@ from .core.node_plugin import register_node_plugin
 # v1.6 — Active policies registry + collection enricher registry
 from .core.active_policies import register_active_policy_renderer
 from .tools.builtin import register_collection_enricher
+# v1.7 — ResourceProvider 자동 인식 패턴 (자원 종별 자기 메타 fetch)
+from .core.resource_providers import register_resource_provider, ResourceProvider
 from .events.emitter import EventEmitter
 from .events.types import (
     HarnessEvent,

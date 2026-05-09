@@ -294,63 +294,21 @@ class ToolIndexStage(Stage):
             logger.info("[Tool Index] RAG collections: %s (top_k=%d)",
                         rag_collections, rag_top_k)
 
-            # v1.5.5 — 컬렉션 메타 (description / total_documents) 자동 fetch.
-            # Anthropic Skills frontmatter 패턴 isomorphic — name + description 만 메타 (지도).
-            # LLM 이 system_prompt 의 <reference_resources> 에서 풍부 메타 (지도) 보고
-            # rag_search 자율 호출 → 인덱스+snippet → fetch_pd 로 본문 lazy fetch.
-            _services_meta = state.metadata.get("services")
-            _doc_service_meta = (
-                getattr(_services_meta, "documents", None) if _services_meta else None
-            )
-            if _doc_service_meta and hasattr(_doc_service_meta, "list_collections"):
-                try:
-                    all_cols = await _doc_service_meta.list_collections() or []
-                    meta_map: dict = {}
-                    for c in all_cols:
-                        if not isinstance(c, dict):
-                            continue
-                        cn = c.get("collection_name")
-                        if cn and cn in rag_collections:
-                            desc = (c.get("description") or "").strip()
-                            total = c.get("total_documents") or c.get("document_count") or 0
-                            meta_map[cn] = {
-                                "description": desc,
-                                "total_documents": int(total) if total else 0,
-                            }
-                    if meta_map:
-                        # v1.6 — description 빈 칸 컬렉션 자동 enrich (default OFF, register 후 발동)
-                        from ...tools.builtin import enrich_collection_description, _COLLECTION_ENRICHERS
-                        if _COLLECTION_ENRICHERS:
-                            for cn, m in meta_map.items():
-                                if not m.get("description"):
-                                    try:
-                                        # sample documents 로 description 자동 생성 시도
-                                        samples = await _doc_service_meta.search(
-                                            "", cn, limit=3, score_threshold=0.0,
-                                        ) or []
-                                        sample_texts = [
-                                            (s.get("chunk_text") or s.get("text") or "")[:500]
-                                            for s in samples if isinstance(s, dict)
-                                        ]
-                                        new_desc = await enrich_collection_description(cn, sample_texts)
-                                        if new_desc:
-                                            m["description"] = new_desc
-                                            m["_enriched"] = True
-                                            logger.info(
-                                                "[Tool Index] collection %r description auto-enriched (%d chars)",
-                                                cn, len(new_desc),
-                                            )
-                                    except Exception as ee:
-                                        logger.debug("[Tool Index] enrich %r failed: %s", cn, ee)
-                        state.metadata["rag_collections_meta"] = meta_map
-                        logger.info(
-                            "[Tool Index] rag_collections_meta cached: %d collections",
-                            len(meta_map),
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "[Tool Index] rag_collections_meta fetch failed: %s", e
+            # v1.7 — ResourceProvider 패턴으로 메타 자동 인식.
+            # 등록된 모든 ResourceProvider 호출 → state.metadata['{kind}_meta'] 자동 cache.
+            # 빌트인 = RAG / Ontology (DocumentService 기반). 외부 wheel 이 DB / Files / MCP /
+            # 다른 자원 종 추가 = register_resource_provider() 또는 entry_points 1줄 등록.
+            # hardcoded fetch 코드 추가 X — 자원 종이 자기 메타 fetch 책임.
+            try:
+                from ...core.resource_providers import fetch_all_resource_meta
+                fetched = await fetch_all_resource_meta(state)
+                if fetched:
+                    logger.info(
+                        "[Tool Index] resource_providers fetched: %s",
+                        ", ".join(f"{k}={len(v)}" for k, v in fetched.items()),
                     )
+            except Exception as e:
+                logger.warning("[Tool Index] fetch_all_resource_meta failed: %s", e)
 
             # v1.6 — discover_collection 빌트인 (rag_collections 박혔을 때만 의미). progressive_4level
             # 의 컬렉션 isomorphic — L2 sample documents lazy load.
