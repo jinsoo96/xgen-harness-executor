@@ -232,24 +232,86 @@ class SystemPromptStage(Stage):
             ontology_collections_attached = list(
                 state.metadata.get("ontology_collections") or []
             )
-        if rag_collections_attached or ontology_collections_attached:
+        # v1.5.5 — db_connections / files 도 reference_resources 에 합류 (RAG/Ontology isomorphic).
+        # 사용자가 박은 모든 자원이 LLM 손에 메타로 노출되어 자율 판단 가능.
+        db_connections_attached = list(
+            self.get_param("db_connections", state, []) or []
+        )
+        if not db_connections_attached:
+            db_connections_attached = list(
+                state.metadata.get("db_connections") or []
+            )
+        files_attached = list(
+            self.get_param("files", state, []) or []
+        )
+        if not files_attached:
+            files_attached = list(
+                state.metadata.get("files") or []
+            )
+
+        if (rag_collections_attached or ontology_collections_attached
+                or db_connections_attached or files_attached):
             lines: list[str] = ["<reference_resources>"]
             lines.append(
-                "사용자가 답변에 참조할 자료를 첨부했습니다. 사용자 질문이 이 자료의 "
-                "내용과 관련되어 보이면 다음 도구를 우선 호출해 검색하세요."
+                "사용자가 답변에 참조할 자원을 첨부했습니다. 질문이 이 자원과 "
+                "관련되어 보이면 자연스럽게 활용해서 답하세요."
             )
             if rag_collections_attached:
-                lines.append("- RAG 컬렉션 (rag_search 도구로 검색):")
+                lines.append("- RAG 컬렉션 (rag_search 도구 또는 자동 검색 결과):")
                 for col in rag_collections_attached:
                     lines.append(f"  · {col}")
             if ontology_collections_attached:
-                lines.append("- 지식 그래프 (query_graph 도구로 검색):")
+                lines.append("- 지식 그래프 (query_graph 도구 또는 자동 결과):")
                 for col in ontology_collections_attached:
                     lines.append(f"  · {col}")
+            if db_connections_attached:
+                lines.append("- DB 연결 (외부 DB 도구 호출 시 connection 인자로 사용):")
+                for conn in db_connections_attached:
+                    if isinstance(conn, dict):
+                        cn = conn.get("name") or conn.get("connection_name") or str(conn)
+                        ct = conn.get("type") or conn.get("db_type") or ""
+                        lines.append(f"  · {cn}{f' ({ct})' if ct else ''}")
+                    else:
+                        lines.append(f"  · {conn}")
+            if files_attached:
+                lines.append("- 파일 (RAG 검색 시 metadata_filter.file_name 으로 자동 좁힘):")
+                for fname in files_attached:
+                    lines.append(f"  · {fname}")
             lines.append("</reference_resources>")
             ref_section = "\n".join(lines)
             # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
             sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
+
+        # v1.5.5 — Policy guards LLM 가시화. 사용자가 박은 가드 / 정책 한도가 system_prompt 에
+        # 노출되어 LLM 이 자기 제약을 인지하고 답 합성 (자율 점진 선택 정신).
+        # 강제 / 하드코딩 톤 X — 단순 메타 노출만.
+        active_policies_lines: list[str] = []
+        config = state.config
+        if config is not None:
+            if getattr(config, "max_iterations", None):
+                active_policies_lines.append(f"- 도구 호출 최대 {config.max_iterations}회")
+            if getattr(config, "cost_budget_usd", None):
+                active_policies_lines.append(f"- 비용 예산 ${config.cost_budget_usd:.2f}")
+            if getattr(config, "context_window", None):
+                active_policies_lines.append(f"- 컨텍스트 윈도우 {config.context_window:,} tokens")
+        # s05_policy.guards 는 자기 stage 가 아니므로 state.config.stage_params 직접 접근
+        s05_guards = []
+        if config is not None and hasattr(config, "stage_params"):
+            s05_guards = (config.stage_params or {}).get("s05_policy", {}).get("guards", []) or []
+        guard_names = [
+            g.get("name") for g in s05_guards
+            if isinstance(g, dict) and g.get("name")
+        ]
+        if guard_names:
+            active_policies_lines.append(f"- 활성 가드: {', '.join(guard_names)}")
+        if active_policies_lines:
+            policy_section = (
+                "<active_policies>\n"
+                + "\n".join(active_policies_lines)
+                + "\n</active_policies>"
+            )
+            # rules 다음 우선순위 — 행동 가이드 끝에 자기 제약 자연스럽게 합류
+            sections.append((SECTION_PRIORITIES["rules"] + 0.4, "active_policies", policy_section))
 
         # 5. Citation — 문서 인용 형식 지시
         # citation_mode 우선, 하위 호환으로 citation_enabled 도 여전히 읽습니다.

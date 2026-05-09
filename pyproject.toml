@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.5.4"
-description = "XGEN Harness v1.5.4 — R3 회귀 fix. v1.4 R3 에서 rag_tool_mode='tool' default 라 s06 자체 검색 비활성 → state.rag_context 빈 → s03_prompt 의 <reference_documents> 섹션 미렌더 → LLM 이 사용자가 컬렉션 박은 사실 자체를 모르고 'DB 연결 알려달라' 답하던 회귀. fix: rag_collections / ontology_collections 박혀있으면 <reference_resources> 섹션 강제 + RAGSearchTool description 에 'user-attached / Call FIRST if 우선 호출' 강조."
+version = "1.5.5"
+description = "XGEN Harness v1.5.5 — 자원/정책 LLM 가시화 강화. <reference_resources> 섹션에 db_connections / files 도 합류 (RAG/Ontology isomorphic, 사용자가 박은 모든 자원 LLM 손에 메타로 노출). 신규 <active_policies> 섹션 = max_iterations / cost_budget_usd / context_window / s05_policy.guards 노출 → LLM 이 자기 제약 인지하고 답 합성 (자율 점진 선택 정신). 강제 / 하드코딩 톤 X — 단순 메타 노출. 이식측은 rag_tool_mode 'tool' → 'both' default 동시 변경 (사용자 박은 컬렉션 자동 답변 합류 회복)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
