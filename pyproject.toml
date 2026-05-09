@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.6.0"
+version = "1.6.1"
 description = "XGEN Harness v1.6 — PD 완성 (3-tier isomorphic): data-driven tools 그룹화 (category 자기서술), <active_policies> register API, check_policy + discover_prompt + discover_collection 빌트인, collection description enricher (default OFF)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
