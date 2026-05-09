@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.5.5"
-description = "XGEN Harness v1.5.5 — <reference_resources> 메타 풍부화 (name + description + total_documents 자동 fetch) + <active_policies> 신규 섹션 (정책 LLM 가시화). LLM 이 메타(지도) 보고 rag_search 자율 호출 → fetch_pd 본문 lazy fetch (Anthropic Skills 패턴 isomorphic). db / files 도 reference_resources 메타로 합류."
+version = "1.5.6"
+description = "XGEN Harness v1.5.6 — \u003creference_resources\u003e 메타 only (도구 이름 instruction 제거, LLM 이 \u003cavailable_tools\u003e 통해 자율 발견)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
