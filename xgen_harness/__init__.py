@@ -35,6 +35,9 @@ from .core.orchestrator_registry import register_orchestrator
 from .core.service_registry import register_service, register_env_mapping
 from .core.strategy_resolver import register_strategy
 from .core.node_plugin import register_node_plugin
+# v1.6 — Active policies registry + collection enricher registry
+from .core.active_policies import register_active_policy_renderer
+from .tools.builtin import register_collection_enricher
 from .events.emitter import EventEmitter
 from .events.types import (
     HarnessEvent,

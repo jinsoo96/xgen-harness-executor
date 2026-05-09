@@ -292,28 +292,13 @@ class SystemPromptStage(Stage):
             # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
             sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
 
-        # v1.5.5 — Policy guards LLM 가시화. 사용자가 박은 가드 / 정책 한도가 system_prompt 에
-        # 노출되어 LLM 이 자기 제약을 인지하고 답 합성 (자율 점진 선택 정신).
-        # 강제 / 하드코딩 톤 X — 단순 메타 노출만.
-        active_policies_lines: list[str] = []
+        # v1.6 — Policy guards LLM 가시화. data-driven (register API + entry_points).
+        # 빌트인 4 종 (max_iterations / cost_budget_usd / context_window / s05_guards) +
+        # 외부 wheel 이 register_active_policy_renderer() 또는 entry_points 로 추가 가능.
+        # 정책 종 hardcoded list X — 자기서술 (사용자 정신: 확장성).
+        from ...core.active_policies import render_all as _render_active_policies
         config = state.config
-        if config is not None:
-            if getattr(config, "max_iterations", None):
-                active_policies_lines.append(f"- 도구 호출 최대 {config.max_iterations}회")
-            if getattr(config, "cost_budget_usd", None):
-                active_policies_lines.append(f"- 비용 예산 ${config.cost_budget_usd:.2f}")
-            if getattr(config, "context_window", None):
-                active_policies_lines.append(f"- 컨텍스트 윈도우 {config.context_window:,} tokens")
-        # s05_policy.guards 는 자기 stage 가 아니므로 state.config.stage_params 직접 접근
-        s05_guards = []
-        if config is not None and hasattr(config, "stage_params"):
-            s05_guards = (config.stage_params or {}).get("s05_policy", {}).get("guards", []) or []
-        guard_names = [
-            g.get("name") for g in s05_guards
-            if isinstance(g, dict) and g.get("name")
-        ]
-        if guard_names:
-            active_policies_lines.append(f"- 활성 가드: {', '.join(guard_names)}")
+        active_policies_lines = _render_active_policies(config) if config else []
         if active_policies_lines:
             policy_section = (
                 "<active_policies>\n"
@@ -582,40 +567,45 @@ class SystemPromptStage(Stage):
         tool_index: list[dict],
         deferred_list: list[dict] | None = None,
     ) -> str:
-        """Progressive Disclosure Level 1 (v1.2.0 Claude Code 정합).
+        """Progressive Disclosure Level 1 — data-driven 그룹화 (v1.6).
 
-        eager 도구는 ``<available_tools>`` 섹션에 즉시 호출 가능 도구로 노출.
-        deferred 도구가 있으면 ``<deferred_tools>`` 섹션을 별도 추가 — 이름만
-        나열하고 LLM 이 ``ToolSearch(names=[...])`` 빌트인으로 승격해야 호출 가능.
+        도구의 ``category`` 필드 (자기서술) 로 자동 그룹. hardcoded 카테고리 list X.
+        eager / deferred 둘 다 같은 그룹화 규칙 — 미래 영역 (policy / prompt / evaluation
+        등) 추가 시 도구가 자기 category 박기만 + entry_points → 자동 합류. 본체 수정 0.
+
+        - 1단계 (사용자 PD 기조 — 찾는 도구): [system] 그룹 (search_tools / fetch_pd 등)
+        - 2단계 (사용자 박은 자원 도구): [retrieval] / [mcp_station] / [custom_api] / [xgen-nodes] / [policy] / [prompt] 등
+        - deferred: 별도 [deferred] 그룹 (ToolSearch 로 schema 승격)
         """
-        lines = ["<available_tools>"]
+        from collections import defaultdict
+        groups: dict[str, list[dict]] = defaultdict(list)
         for tool in tool_index or []:
-            name = tool.get("name", "unknown")
-            desc = tool.get("description", "")
-            category = tool.get("category", "")
-            line = f"- {name}: {desc}"
-            if category:
-                line += f" [{category}]"
-            lines.append(line)
-        lines.append("</available_tools>")
-        lines.append(
-            "\nTo learn more about a specific tool's parameters, "
-            "use the discover_tools function with the tool name."
-        )
-
+            cat = (tool.get("category") or "general").strip() or "general"
+            groups[cat].append(tool)
         if deferred_list:
-            lines.append("\n<deferred_tools>")
-            lines.append(
-                "These tools are NOT loaded yet — schemas are hidden to save context. "
-                "Call ToolSearch(names=[\"tool1\",\"tool2\"]) to load specific tools "
-                "before invoking them. Only load what you actually need."
-            )
             for tool in deferred_list:
+                groups["deferred"].append(tool)
+
+        lines = ["<available_tools>"]
+        # system 그룹 우선 (찾는 도구), 그 다음 알파벳, deferred 마지막
+        priority = {"system": 0}
+        sorted_cats = sorted(groups.keys(), key=lambda c: (priority.get(c, 1), 1 if c == "deferred" else 0, c))
+        # deferred 항상 마지막
+        if "deferred" in sorted_cats:
+            sorted_cats = [c for c in sorted_cats if c != "deferred"] + ["deferred"]
+
+        for cat in sorted_cats:
+            lines.append(f"\n[{cat}]")
+            if cat == "deferred":
+                lines.append(
+                    "  (schemas hidden to save context — call ToolSearch(names=[...]) to load before invoking)"
+                )
+            for tool in groups[cat]:
                 name = tool.get("name", "unknown")
                 desc = tool.get("description", "")
                 line = f"- {name}: {desc}" if desc else f"- {name}"
                 lines.append(line)
-            lines.append("</deferred_tools>")
+        lines.append("\n</available_tools>")
 
         return "\n".join(lines)
 
