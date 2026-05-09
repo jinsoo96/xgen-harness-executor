@@ -251,21 +251,37 @@ class SystemPromptStage(Stage):
 
         if (rag_collections_attached or ontology_collections_attached
                 or db_connections_attached or files_attached):
+            # v1.5.5 — Anthropic Skills frontmatter 패턴 isomorphic. 메타 (지도) 만 노출 —
+            # name + description + total_documents. 본문은 사전 인덱싱 X. LLM 이 메타 보고
+            # 자율 판단 → 도구 호출 (rag_search / query_graph) → 인덱스 → fetch_pd 본문 lazy.
+            rag_meta = state.metadata.get("rag_collections_meta") or {}
             lines: list[str] = ["<reference_resources>"]
             lines.append(
-                "사용자가 답변에 참조할 자원을 첨부했습니다. 질문이 이 자원과 "
-                "관련되어 보이면 자연스럽게 활용해서 답하세요."
+                "다음은 사용자가 첨부한 자원의 메타입니다. 질문에 관련되어 보이는 자원만 도구로 검색하세요."
             )
             if rag_collections_attached:
-                lines.append("- RAG 컬렉션 (rag_search 도구 또는 자동 검색 결과):")
+                lines.append("- RAG 컬렉션:")
                 for col in rag_collections_attached:
-                    lines.append(f"  · {col}")
+                    m = rag_meta.get(col, {}) if isinstance(rag_meta.get(col), dict) else {}
+                    desc = (m.get("description") or "").strip()
+                    total = m.get("total_documents", 0)
+                    line = f"  · {col}"
+                    if desc:
+                        line += f": {desc}"
+                    if total:
+                        line += f" ({total:,} docs)"
+                    lines.append(line)
+                lines.append(
+                    "  검색: rag_search(collection='이름', query='...') → 인덱스+snippet → "
+                    "fetch_pd(kind='rag', id='...') 로 본문 lazy fetch"
+                )
             if ontology_collections_attached:
-                lines.append("- 지식 그래프 (query_graph 도구 또는 자동 결과):")
+                lines.append("- 지식 그래프:")
                 for col in ontology_collections_attached:
                     lines.append(f"  · {col}")
+                lines.append("  검색: query_graph(collection='이름', query='...')")
             if db_connections_attached:
-                lines.append("- DB 연결 (외부 DB 도구 호출 시 connection 인자로 사용):")
+                lines.append("- DB 연결:")
                 for conn in db_connections_attached:
                     if isinstance(conn, dict):
                         cn = conn.get("name") or conn.get("connection_name") or str(conn)
@@ -273,8 +289,9 @@ class SystemPromptStage(Stage):
                         lines.append(f"  · {cn}{f' ({ct})' if ct else ''}")
                     else:
                         lines.append(f"  · {conn}")
+                lines.append("  사용: 외부 DB 도구 호출 시 connection 인자")
             if files_attached:
-                lines.append("- 파일 (RAG 검색 시 metadata_filter.file_name 으로 자동 좁힘):")
+                lines.append("- 파일 (RAG 검색 metadata_filter 로 좁힘):")
                 for fname in files_attached:
                     lines.append(f"  · {fname}")
             lines.append("</reference_resources>")

@@ -288,6 +288,40 @@ class ToolIndexStage(Stage):
             logger.info("[Tool Index] RAG collections: %s (top_k=%d)",
                         rag_collections, rag_top_k)
 
+            # v1.5.5 — 컬렉션 메타 (description / total_documents) 자동 fetch.
+            # Anthropic Skills frontmatter 패턴 isomorphic — name + description 만 메타 (지도).
+            # LLM 이 system_prompt 의 <reference_resources> 에서 풍부 메타 (지도) 보고
+            # rag_search 자율 호출 → 인덱스+snippet → fetch_pd 로 본문 lazy fetch.
+            _services_meta = state.metadata.get("services")
+            _doc_service_meta = (
+                getattr(_services_meta, "documents", None) if _services_meta else None
+            )
+            if _doc_service_meta and hasattr(_doc_service_meta, "list_collections"):
+                try:
+                    all_cols = await _doc_service_meta.list_collections() or []
+                    meta_map: dict = {}
+                    for c in all_cols:
+                        if not isinstance(c, dict):
+                            continue
+                        cn = c.get("collection_name")
+                        if cn and cn in rag_collections:
+                            desc = (c.get("description") or "").strip()
+                            total = c.get("total_documents") or c.get("document_count") or 0
+                            meta_map[cn] = {
+                                "description": desc,
+                                "total_documents": int(total) if total else 0,
+                            }
+                    if meta_map:
+                        state.metadata["rag_collections_meta"] = meta_map
+                        logger.info(
+                            "[Tool Index] rag_collections_meta cached: %d collections",
+                            len(meta_map),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "[Tool Index] rag_collections_meta fetch failed: %s", e
+                    )
+
             # v1.4.0 R3 — default 'both' → 'tool'. s06 자체 검색 안 하고 LLM 이 도구로 호출.
             # 'context' (s06 만 검색, 도구 등록 X) / 'both' (둘 다) 는 백워드 호환 유지.
             rag_tool_mode: str = self.get_param("rag_tool_mode", state, "tool")

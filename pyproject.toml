@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
 version = "1.5.5"
-description = "XGEN Harness v1.5.5 — 자원/정책 LLM 가시화 강화. <reference_resources> 섹션에 db_connections / files 도 합류 (RAG/Ontology isomorphic, 사용자가 박은 모든 자원 LLM 손에 메타로 노출). 신규 <active_policies> 섹션 = max_iterations / cost_budget_usd / context_window / s05_policy.guards 노출 → LLM 이 자기 제약 인지하고 답 합성 (자율 점진 선택 정신). 강제 / 하드코딩 톤 X — 단순 메타 노출. 이식측은 rag_tool_mode 'tool' → 'both' default 동시 변경 (사용자 박은 컬렉션 자동 답변 합류 회복)."
+description = "XGEN Harness v1.5.5 — <reference_resources> 메타 풍부화 (name + description + total_documents 자동 fetch) + <active_policies> 신규 섹션 (정책 LLM 가시화). LLM 이 메타(지도) 보고 rag_search 자율 호출 → fetch_pd 본문 lazy fetch (Anthropic Skills 패턴 isomorphic). db / files 도 reference_resources 메타로 합류."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
