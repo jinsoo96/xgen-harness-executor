@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.6.1"
+version = "1.7.0"
 description = "XGEN Harness v1.6 — PD 완성 (3-tier isomorphic): data-driven tools 그룹화 (category 자기서술), <active_policies> register API, check_policy + discover_prompt + discover_collection 빌트인, collection description enricher (default OFF)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -105,6 +105,9 @@ hitl              = "xgen_harness.stages.strategies.guard:HITLGuard"
 
 [project.entry-points."xgen_harness.collection_enrichers"]
 # 예: gpt_describe = "my_pkg:gpt_collection_describe"
+
+[project.entry-points."xgen_harness.resource_providers"]
+# 예: my_mcp = "my_pkg:MyMcpResourceProvider"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
