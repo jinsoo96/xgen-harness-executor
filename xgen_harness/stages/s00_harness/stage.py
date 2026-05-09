@@ -14,8 +14,8 @@ REAL_HARNESS.md §4.3 동작 명세 구현체.
   - 실제 Stage 실행은 Pipeline 이 함 (Plan.chosen 을 보고 bypass 판단)
   - provider 초기화는 `core.provider_bootstrap` 에 위임 (s07 과 공용)
 
-이 Stage 는 order=0 / phase=ingress 최상단. `HarnessConfig.use_planner=True`
-일 때만 Pipeline 이 주입하므로 기본 동작엔 영향 없다 (하위 호환).
+v1.1.0 — Planner OFF 고정 직선 흐름. execute() 는 noop (HarnessPlan.off_mode 만
+박음). main_call 메서드만 살아있어 Phase B main_actor 직전 본문 LLM 호출 담당.
 """
 
 from __future__ import annotations
@@ -79,78 +79,20 @@ class HarnessStage(Stage):
         return entries
 
     async def execute(self, state: PipelineState) -> dict:
-        from ...core.planner import HarnessPlanner, HarnessPlan
-        from ...events.types import PlanningEvent
+        """v1.1.0 — Planner OFF 고정. Plan 생성 분기 dead code 제거.
 
-        # ━━━━ 0. harness_mode=off 또는 레거시 noop: 전체 실행, Plan 없음 ━━━━
-        # mode 는 HarnessConfig.harness_mode 를 우선 참조, 없으면 stage_params 폴백.
-        harness_mode = getattr(state.config, "harness_mode", "") if state.config else ""
-        if not harness_mode:
-            harness_mode = self.get_param("strategy", state, "autonomous")
-        # legacy: strategy="noop" 를 off 로 간주
-        # v0.29.1 — fallback_all 분리. off 는 의도된 정상 경로 (사용자가 자율조립 끔)
-        # → source="off" 로 emit 해서 port 의 fallback_all 경고 (planner 실패 안내) 가
-        # off 케이스에선 안 뜨게 함. 빈 chosen 은 그대로 — Pipeline 이 모든 stage 실행
-        # 하면서 사용자 s04 selected_tools 를 그대로 사용.
-        if harness_mode in ("off", "noop"):
-            plan = HarnessPlan.off_mode(f"harness_mode={harness_mode}")
-            state.metadata["harness_plan"] = plan.to_dict()
-            return {
-                "planner_source": plan.source,
-                "chosen_count": 0,
-                "skipped_count": 0,
-            }
+        Pipeline 은 ingress 최상단 prepend 안 함 → 이 execute 는 사실상 호출되지
+        않음. main_call 만 살아있어 Phase B main_actor 직전 본문 LLM 호출 담당.
+        호환을 위해 빈 off-mode Plan 만 반환 (구 row 가 직접 호출하는 경우 대비).
+        """
+        from ...core.planner import HarnessPlan
 
-        # v1.0.5 — "selected" (사용자 핀 hard-pin) 모드 제거. 캔버스 회귀 유산이라
-        # 자율주행 정신과 충돌. 핀 흐름이 다시 필요해지면 별도 stage 로 분리.
-
-        # ━━━━ 1. Plan 생성 (autonomous) ━━━━
-        planner = HarnessPlanner()
-        workflow_hints = state.metadata.get("workflow_hints") or {}
-
-        plan = await planner.plan(
-            state=state,
-            user_input=state.user_input,
-            workflow_hints=workflow_hints,
-        )
-
-        # ━━━━ 2. state 에 Plan 저장 (Pipeline 이 읽음) ━━━━
+        plan = HarnessPlan.off_mode("planner_disabled_v1_1")
         state.metadata["harness_plan"] = plan.to_dict()
-
-        # ━━━━ 3. Plan.params / Plan.strategies 를 config 에 병합 ━━━━
-        self._merge_plan_into_config(state, plan)
-
-        # ━━━━ 4. PlanningEvent 방출 — 프론트 카드 ━━━━
-        if state.event_emitter:
-            await state.event_emitter.emit(PlanningEvent(
-                chosen=list(plan.chosen),
-                skipped=dict(plan.skipped),
-                params=dict(plan.params),
-                strategies=dict(plan.strategies),
-                reasoning=plan.reasoning,
-                planner_model=plan.planner_model,
-                source=plan.source,
-                iteration=getattr(state, "loop_iteration", 0),
-                done=plan.done,
-                max_iterations=plan.max_iterations or 0,
-                orchestrator_hint=plan.orchestrator_hint or "",
-            ))
-
-        logger.info(
-            "[Harness] Plan%s 확정 source=%s chosen=%d skipped=%d params=%d strategies=%d done=%s",
-            f"#{state.loop_iteration}" if state.loop_iteration > 0 else "",
-            plan.source, len(plan.chosen), len(plan.skipped),
-            len(plan.params), len(plan.strategies), plan.done,
-        )
-
         return {
             "planner_source": plan.source,
-            "chosen": list(plan.chosen),
-            "skipped": dict(plan.skipped),
-            "reasoning": plan.reasoning,
-            "planner_model": plan.planner_model,
-            "done": plan.done,
-            "iteration": getattr(state, "loop_iteration", 0),
+            "chosen_count": 0,
+            "skipped_count": 0,
         }
 
     async def main_call(self, state: PipelineState, *, strategy: str = "streaming") -> dict:

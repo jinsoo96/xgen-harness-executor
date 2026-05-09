@@ -36,6 +36,103 @@ ALL_STAGES = [
 REQUIRED_STAGES: set[str] = {"s01_input", "s08_decide", "s09_finalize"}
 
 
+# ─── v1.4.0 — Deprecated strategy / stage_param 자동 정규화 ───────────────────
+# v1.4.0 BREAKING 에서 list_strategies() 가 빈 리스트로 좁혀진 stage 들의 옛 strategy
+# 이름이 DB workflow row 의 active_strategies 에 잔존할 수 있다. 사용자 픽 카드가
+# 사라진 상태에서 옛 이름이 dispatcher 로 흘러들어가면 동일 동작은 하지만 새 default
+# (cascade / progressive_3level / section_priority / default) 의 이점을 못 누린다.
+# `__post_init__` 에서 자동 정규화 — 모든 인스턴스화 경로 (cls(**), from_dict,
+# from_workflow, 이식측 직접 cls(**config_kwargs)) 가 통과한다.
+#
+# 빈 문자열 ("") 로 매핑하면 active_strategies 키 자체 삭제 → resolve_strategy 가
+# stage 의 default_impl 인자로 자동 폴백.
+DEPRECATED_STRATEGIES_BY_STAGE: dict[str, dict[str, str]] = {
+    "s01_input": {
+        "with_classification": "",   # v1.4.0 hide. LLM 자율 분류로.
+    },
+    "s03_prompt": {
+        "cot_planner": "",           # thinking 패턴 전부 hide. LLM 자율.
+        "react": "",
+        "none": "",
+    },
+    "s04_tool": {
+        "eager_load": "",            # progressive_3level + ToolSearch 가 default.
+        "capability_auto": "",       # 자동 capability discovery 도 hide.
+        "none": "",
+    },
+    "s06_context": {
+        # cascade 가 압력별 L3→L4→L5 자동 에스컬레이션. 옛 strategy 들 모두 cascade 로.
+        "token_budget": "cascade",
+        "sliding_window": "cascade",
+        "microcompact": "cascade",
+        "context_collapse_overlay": "cascade",
+        "autocompact_llm": "cascade",
+    },
+    "s07_act": {
+        "parallel_read": "",         # default (sequential) 로.
+        "strict_no_error": "",
+    },
+}
+
+# stage_params 측 deprecated value — UI 표면 단순화 정합. v1.4.0 default 로 강제 정규화.
+# 빈 dict 의 stage_id 는 정규화 없음.
+DEPRECATED_STAGE_PARAM_VALUES: dict[str, dict[str, dict[str, str]]] = {
+    "s04_tool": {
+        # rag_tool_mode 'both' / 'context' 모두 R3 의 'tool' (LLM 도구 위임) 로.
+        # 백워드 호환은 사용자가 의도적으로 stage_params 박은 경우만.
+        "rag_tool_mode": {"both": "tool", "context": "tool"},
+    },
+    "s06_context": {
+        # rag_pd_mode 'eager' (구 default) → 'progressive' (v1.1.1+ default).
+        "rag_pd_mode": {"eager": "progressive"},
+    },
+}
+
+
+def _normalize_active_strategies(active: dict[str, str]) -> dict[str, str]:
+    """deprecated strategy 이름을 새 default 로 정규화 (v1.4.0).
+
+    빈 문자열로 매핑되면 키 자체 삭제 → stage 의 default_impl 폴백.
+    list_strategies 가 살아있는 stage (s02 / s05 / s08 / s09) 는 영향 없음.
+    """
+    if not isinstance(active, dict) or not active:
+        return active or {}
+    result: dict[str, str] = {}
+    for sid, name in active.items():
+        if not isinstance(name, str) or not name:
+            continue
+        mapping = DEPRECATED_STRATEGIES_BY_STAGE.get(sid)
+        if mapping is None:
+            result[sid] = name
+            continue
+        normalized = mapping.get(name, name)
+        if normalized:
+            result[sid] = normalized
+        # normalized == "" → 키 삭제 (default_impl 폴백)
+    return result
+
+
+def _normalize_stage_params(stage_params: dict) -> dict:
+    """deprecated stage_param value 를 v1.4.0 default 로 정규화."""
+    if not isinstance(stage_params, dict) or not stage_params:
+        return stage_params or {}
+    result: dict = {}
+    for sid, params in stage_params.items():
+        if not isinstance(params, dict):
+            result[sid] = params
+            continue
+        rules = DEPRECATED_STAGE_PARAM_VALUES.get(sid)
+        if rules is None:
+            result[sid] = params
+            continue
+        new_params = dict(params)
+        for field_id, value_map in rules.items():
+            if field_id in new_params and new_params[field_id] in value_map:
+                new_params[field_id] = value_map[new_params[field_id]]
+        result[sid] = new_params
+    return result
+
+
 def mark_stage_required(stage_id: str) -> None:
     """새 Stage 를 "비활성화 불가" 로 등록.
 
@@ -138,36 +235,32 @@ class HarnessConfig:
     # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
     verbose_events: bool = False
 
-    # --- Harness Planner (v0.12.0 → v0.14.0 확장) ---
-    # use_planner: 레거시 bool. True 면 s00_harness 가 ingress 최상단에 주입됨.
-    # v0.14.0: s00_harness 가 본문 LLM 호출을 소유하므로 사실상 항상 True 가
-    # 권장되는 상태. harness_mode 로 세분화:
-    #   - "autonomous": Planner LLM 이 카탈로그 보고 Stage/Strategy/파라미터 자율 조립
-    #   - "off":        전체 Stage 실행 (레거시 noop 동작과 동일)
-    # 빈 문자열이면 use_planner=True → "autonomous", False → "off" 로 해석.
-    # v1.0.5: "selected" (사용자 핀 hard-pin) 모드 제거 — 캔버스 회귀 유산.
-    use_planner: bool = False
-    harness_mode: str = ""
+    # --- Judge LLM (v1.1.0+) ---
+    # s08_decide 의 judge_then_loop 가 사용하는 별도 평가 모델. 미지정(빈 문자열) 시
+    # 본문 provider/model 재사용 — backward compat. 사용자 의도: "Judge 가 자기 답을
+    # 자기가 평가하는 약점" 을 더 강한/저렴한 모델로 분리 평가 가능하게.
+    judge_provider: str = ""
+    judge_model: str = ""
 
     # 레거시 호환
     preset: str = ""
 
     def __post_init__(self) -> None:
-        """빈 provider 는 레지스트리 기반 기본값. harness_mode 미지정 시 use_planner 에서 파생."""
+        """빈 provider 는 레지스트리 기반 기본값.
+
+        v1.4.0 — deprecated strategy / stage_param 자동 정규화. 모든 인스턴스화
+        경로 (cls(**kwargs), from_dict, from_workflow, 이식측 직접 cls(**config_kwargs))
+        가 통과한다. DB 의 옛 워크플로우 row 가 token_budget / eager / both 같은 옛
+        값을 박고 있어도 실행 시점에 자동 cascade / progressive / tool 로 정규화.
+        """
         if not self.provider:
             from ..providers import get_default_provider
             self.provider = get_default_provider()
-        if not self.harness_mode:
-            self.harness_mode = "autonomous" if self.use_planner else "off"
-
-    # v0.25.3 — harness_mode 리터럴 비교를 쓰는 Stage / Strategy 가 늘어나면서
-    # 문자열을 여기저기 하드코딩하면 새 모드(예: "safe_mode") 도입 시 추적 범위가 커짐.
-    # HarnessConfig 에 헬퍼를 박제해서 도메인 언어를 캡슐화.
-    def is_autonomous(self) -> bool:
-        return str(self.harness_mode or "").lower() == "autonomous"
-
-    def is_off(self) -> bool:
-        return str(self.harness_mode or "").lower() == "off"
+        # v1.4.0 — deprecated 정규화. 옛 이름 → 새 default.
+        if self.active_strategies:
+            self.active_strategies = _normalize_active_strategies(self.active_strategies)
+        if self.stage_params:
+            self.stage_params = _normalize_stage_params(self.stage_params)
 
     def get_active_stage_ids(self) -> list[str]:
         """활성 스테이지 ID 목록.
@@ -380,8 +473,10 @@ class HarnessConfig:
             strategy_variants=_alias_map(dict(harness_config.get("strategy_variants", {}) or {})),
             thinking_enabled=bool(harness_config.get("thinking_enabled", False)),
             thinking_budget_tokens=int(harness_config.get("thinking_budget_tokens", 10000)),
-            use_planner=bool(harness_config.get("use_planner", False)),
-            harness_mode=str(harness_config.get("harness_mode", "") or ""),
+            # v1.1.0 — harness_mode/use_planner 제거 (Planner OFF 직선 흐름 고정).
+            # 기존 DB row 의 두 키는 from_dict 가 fields() 화이트리스트로 자동 무시.
+            judge_provider=str(harness_config.get("judge_provider", "") or ""),
+            judge_model=str(harness_config.get("judge_model", "") or ""),
             # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
             context_window=_safe_int(
                 harness_config.get("context_window"), default=200_000, minimum=1024,

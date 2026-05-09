@@ -118,6 +118,14 @@ class PolicyGateStage(Stage):
         # 실제 Guard 차단은 Pipeline 이 4 훅 (PRE_MAIN/PRE_TOOL/POST_RESPONSE/LOOP_BOUNDARY) 에서 별도 호출.
         guards = self.get_param("guards", state, []) or []
         guard_names = [g.get("name") for g in guards if isinstance(g, dict) and g.get("name")]
+        # v1.5.3 — 사용자 디버깅 needs 정합. 활성 가드 list 를 verbose 이벤트로 EventLog 에 노출.
+        # "정책 안 먹힘" 호소 — 어떤 가드가 활성됐는지 사용자가 보이게.
+        from ...events.types import StageSubstepEvent as _Sub
+        await state.emit_verbose(_Sub(
+            stage_id=self.stage_id,
+            substep="guards_active",
+            meta={"guards": guard_names, "count": len(guards)},
+        ))
         return {
             "active": True,
             "guards_declared": len(guards),

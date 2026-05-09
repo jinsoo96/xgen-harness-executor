@@ -187,7 +187,12 @@ class SearchToolsTool(Tool):
             n = td.get("name", "?")
             d = (td.get("description") or "")[:120]
             lines.append(f"- {n} (score={s}): {d}")
-        lines.append("\nNext: discover_tools(tool_name=...) for full schema.")
+        # v1.4.0 — Claude Code 패턴 정합. 두 다음 단계 명확히 안내.
+        # ToolSearch = schema 합류 (다음 turn 호출 가능) / discover_tools = schema 조회만.
+        lines.append(
+            "\nNext: ToolSearch(names=[...]) to load and make callable, "
+            "or discover_tools(tool_name=...) to inspect schema only."
+        )
         return ToolResult.success("\n".join(lines))
 
     def _score_terms(self, terms: list[str], category_filter: str) -> list[tuple[int, dict]]:
@@ -241,10 +246,130 @@ class SearchToolsTool(Tool):
                 lines.append(f"  ... +{len(by_cat[cat]) - per_cat} more")
         lines.append(
             "\nNext: search_tools with English keyword (e.g. 'naver', 'news', 'search') "
-            "or discover_tools() for full list, or pick a tool above and call discover_tools(tool_name=...) "
-            "for schema."
+            "or discover_tools() for full list. To load and call: ToolSearch(names=['<picked>'])."
         )
         return "\n".join(lines)
+
+
+class ToolSearchTool(Tool):
+    """v1.2.0 — Claude Code 스타일 deferred tools 승격 빌트인.
+
+    s04_tool 이 selected_tools 화이트리스트 외 도구를 모두 deferred 로 보내고,
+    full schema 는 ``state.tool_schemas`` 캐시에만 둔다. LLM 은 system_prompt
+    의 [deferred] 섹션에서 도구 이름을 보고, 필요한 도구만 이 빌트인으로 명시
+    승격해 호출 가능 상태로 만든다.
+
+    호출 패턴:
+      ToolSearch(names=["mcp_notion_search", "brave_web_search"])
+        → state.tool_schemas[name] 을 state.tool_definitions 에 합류
+        → 다음 llm_call 의 tools= 인자에 자동 누적
+        → LLM 이 그 도구를 직접 호출 가능
+
+    keyword 검색은 별도 search_tools 빌트인 (token-grep) 이 담당.
+    """
+
+    def __init__(self, state_ref):
+        # state_ref: PipelineState 인스턴스. 매 턴 같은 인스턴스라 schemas / definitions
+        # 가 live 하게 공유된다 (FetchPDTool 와 같은 패턴).
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "ToolSearch"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Load full schemas for deferred tools so they become callable. "
+            "Pass `names` to load specific tools by name (e.g. select:tool1,tool2). "
+            "Loaded tools become callable in subsequent turns."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Exact tool names to load (from the [deferred] list).",
+                },
+            },
+            "required": ["names"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "system"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False  # 캐시(state.tool_schemas) 만 읽음
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        names_in = input_data.get("names") or []
+        if isinstance(names_in, str):
+            # "select:a,b" 형태 또는 단일 문자열도 허용
+            raw = names_in.split(":", 1)[1] if names_in.startswith("select:") else names_in
+            names_in = [n.strip() for n in raw.split(",") if n.strip()]
+        if not isinstance(names_in, list) or not names_in:
+            return ToolResult.error("'names' must be a non-empty array of tool names.")
+
+        schemas = self._state.tool_schemas or {}
+        existing = {td.get("name") for td in self._state.tool_definitions}
+        loaded: list[str] = []
+        not_found: list[str] = []
+        already: list[str] = []
+
+        for nm in names_in:
+            if not isinstance(nm, str) or not nm.strip():
+                continue
+            nm = nm.strip()
+            if nm in existing:
+                already.append(nm)
+                continue
+            schema = schemas.get(nm)
+            if not schema:
+                not_found.append(nm)
+                continue
+            self._state.tool_definitions.append(schema)
+            self._state.tool.loaded_names.add(nm)
+            loaded.append(nm)
+
+        # ToolLoadedEvent emit (best-effort).
+        try:
+            from ..events.types import ToolLoadedEvent
+            await self._state.emit_verbose(ToolLoadedEvent(
+                names=loaded,
+                total_loaded=len(self._state.tool.loaded_names),
+            ))
+        except Exception as _e:
+            logger.debug("[ToolSearch] event emit failed: %s", _e)
+
+        lines = []
+        if loaded:
+            lines.append(f"Loaded {len(loaded)} tool(s): {', '.join(loaded)}")
+            lines.append("These tools are now callable in your next turn.")
+        if already:
+            lines.append(f"Already loaded: {', '.join(already)}")
+        if not_found:
+            available = list(schemas.keys())[:20]
+            lines.append(
+                f"Not found: {', '.join(not_found)}. "
+                f"Available deferred tools (first 20): {', '.join(available) or '(none)'}"
+            )
+        if not lines:
+            lines.append("Nothing to load.")
+        return ToolResult.success("\n".join(lines))
 
 
 class FetchPDTool(Tool):

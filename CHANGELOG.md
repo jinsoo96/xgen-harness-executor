@@ -5,6 +5,179 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.4] — 2026-05-09
+
+### 🚨 R3 회귀 fix — system_prompt 에 박힌 컬렉션 안내 강제
+
+사용자 호소: "assort 컬렉션 박았는데 LLM 이 rag_search 안 부르고 'DB 연결 정보 알려달라' 답함. 컨텍스트 연동 안 되네"
+
+#### 회귀 원인 (v1.4.0 R3 부작용)
+- v1.4 R3 에서 `rag_tool_mode='tool'` default → s06_context 자체 검색 비활성 → `state.rag_context` 빈 채로 s03_prompt 진입
+- s03_prompt 의 `<reference_documents>` 섹션은 `if state.rag_context:` 조건 하에 렌더 → 빈 컬렉션 == 섹션 미렌더
+- = LLM 이 system_prompt 에 "사용자가 자료를 첨부했음" 안내 자체를 못 받음
+- → "주문 데이터" 같은 도메인 질의 시 LLM 이 DB 도구 (mcp_DatabaseLoader / mcp_postgresql_mcp) 우선 추론
+
+#### fix
+- `s03_prompt/stage.py`: `rag_collections` / `ontology_collections` 박혀있으면 (state.rag_context 와 무관) `<reference_resources>` 섹션 강제 추가:
+  ```
+  <reference_resources>
+  사용자가 답변에 참조할 자료를 첨부했습니다. 사용자 질문이 이 자료의 내용과 관련되어 보이면 다음 도구를 우선 호출해 검색하세요.
+  - RAG 컬렉션 (rag_search 도구로 검색):
+    · assort
+  - 지식 그래프 (query_graph 도구로 검색):
+    · masahoe
+  </reference_resources>
+  ```
+- `tools/rag_tool.py:RAGSearchTool.description`: "uploaded documents" 추상 → "user-attached / Call FIRST if the question could plausibly be answered" 강조
+
+#### Cross-stage 인지 메커니즘 (실효 보강)
+`Stage.get_param` 은 stage_id 격리 (`state.config.stage_params.get(self.stage_id, {})`) 라
+이식측이 `stage_params["s04_tool"]["rag_collections"]` / `["ontology_collections"]` 로 주입하면
+s03_prompt 의 `self.get_param("rag_collections")` 는 빈 결과. 따라서 두 보강:
+- `s04_tool/stage.py`: `rag_collections` 와 isomorphic 으로 `ontology_collections` 도 `state.metadata["ontology_collections"]` 로 cache (rag 는 v1.4.0 부터 박혀있었음)
+- `s03_prompt/stage.py`: 1차 `self.get_param` 빈 결과 시 2차 `state.metadata` 폴백 (rag 와 ontology 둘 다)
+
+s04 가 s03 보다 먼저 실행 (v1.4.0 order swap: s04=3 / s03=4) 이므로 s03 진입 시점에 metadata 가 이미 채워져 있음.
+
+엔진 동작 변경 0 (system_prompt 안내만 강화 — LLM 이 컬렉션 존재 인지하고 도구 우선 호출).
+
+## [1.5.3] — 2026-05-08
+
+### 📊 EventLog 디버깅 친화 강화 (사용자 호소: "디버깅 가능할 정도 / 정책 안 먹힘 / 도구 선택 안 보임")
+
+- **s04_tool**: `ToolDeferredEvent` emit 조건에서 `has_explicit_selection` 제거 — selected_tools 비어있어도 도구 발견 시 항상 emit. eager / deferred 카운트가 EventLog 에 항상 노출.
+- **s05_policy**: stage.execute 진입 시 활성 가드 list 를 `StageSubstepEvent(substep="guards_active")` 로 emit. "정책 안 먹힘" 호소 정합 — 어떤 가드가 박혀있는지 사용자가 EventLog 에서 즉시 확인.
+- 동작 변경 0 (이벤트 가시성만 강화).
+
+## [1.5.2] — 2026-05-08
+
+### 📝 Stage Configuration fields description 친화 톤 재작성 (patch)
+
+v1.5.1 에서 stage 의 description_ko / behavior 까지는 갈음했지만, 각 stage 의 **Configuration fields** 의 `description` 텍스트는 여전히 기술 키워드 잔존. 사용자 호소: "설정 fields description 이 뭔 소리지 모름".
+
+- s07_act: result_budget / preview_threshold / preview_size description 친화 톤
+- s08_decide: max_retries / judge_enabled / judge_threshold / criteria / evaluation_strategy / evaluation_prompt_template / evaluation_system_prompt 7 개 모두
+- s09_finalize: save_enabled / table_name / input_text_cap / output_text_cap 4 개
+
+기술 키워드 제거 매트릭스:
+- `judge_then_loop strategy` / `Strategy 카드 'X' 픽` → "켜면 / 활성화하면" 같은 자연어
+- `register_evaluation_criterion()` / `entry_points(xgen_harness.X)` → "외부 플러그인으로 추가 가능"
+- `harness_execution_log` / `PERSIST_DEFAULTS['X'] override` → "데이터베이스에 영구 저장 / 비우면 기본값"
+- `pd_stores` / `fetch_pd(kind='X')` → "별도 저장소에 보존 / LLM 이 필요할 때 다시 조회"
+- `Claude Code L1 패턴` → 이름 노출 X
+
+엔진 동작 변경 0 (텍스트만).
+
+## [1.5.1] — 2026-05-08
+
+### 📝 9 Stage UI 텍스트 사용자 친화 톤 재작성 (patch)
+
+v1.4.1 / v1.5.0 에서 stage_config.py 의 description_ko / behavior 갱신했지만 여전히 버전 명시 (v1.X.0 / R3) / 코드 path (`pd_stores` / `fetch_pd` / `state.*` / `s06_context.*`) / 영어 약어 (Cascade L3/L4/L5 / microcompact / autocompact / progressive disclosure / ToolSearch) 잔존. 일반 사용자가 "뭔 소린지 모름" 호소.
+
+전 9 stage (s00~s09) 의 `description_ko` / `behavior` 항목을 일반 사용자가 읽을 수 있는 자연어 한국어로 재작성:
+
+| Stage | 변경 |
+|---|---|
+| s00_harness | "Harness 통제탑 / Provider / streaming/batch / Planner OFF" → "에이전트가 답변할 때 LLM 모델을 호출합니다 / 일시 오류 시 자동 재시도" |
+| s01_input | "content block 정규화" → "LLM 이 이해하는 형식으로 변환" |
+| s02_history | "harness_execution_log → execution_io → chat_session 폴백" → "여러 저장소 자동 폴백 (실행 로그 → 입출력 기록 → 채팅 세션)" |
+| s03_prompt | "Identity → Rules → Planning → Tools → RAG → History" → "역할 → 규칙 → 사고 모드 → 도구 안내 → 참고 자료 → 대화 이력" |
+| s04_tool | "selected_tools / eager / deferred / ToolSearch / progressive disclosure" → "명시 선택한 도구 / 그 외 도구는 이름만 보이고 에이전트가 필요할 때 직접 불러옴" |
+| s06_context | "Cascade L3→L4→L5 / pd_stores / fetch_pd / R3" → "단계적 자동 압축 / 검색 결과는 요약만 먼저, 본문은 필요할 때 다시 가져옴" |
+| s07_act | "L1 Tool Result Budget / preview_threshold / pd_stores / discover_tools" → "큰 도구 결과는 미리보기로 줄이고 원본은 별도 보관" |
+| s08_decide | "judge_then_loop strategy / Policy Gate block" → "비용/반복 한도 시 종료 / 품질 평가 점수 미달이면 재시도" |
+| s09_finalize | "MetricsEvent / DoneEvent / persist strategy / harness_execution_log" → "토큰 사용량 / 비용 / 소요 시간 통계 발행 / 옵션: 데이터베이스에 영구 저장" |
+
+엔진 동작 변경 0 (텍스트만). 외부 기여자용 detail (entry_points / 플러그인 등록) 은 한 줄 정도로 압축 보존.
+
+## [1.5.0] — 2026-05-08
+
+### 🚨 BREAKING — Ontology / GraphRAG R3 도구 위임 (RAG 와 isomorphic)
+
+v1.4.0 R3 가 RAG 측만 도구 위임으로 정합화하고 Ontology / GraphRAG 측은 옛 자동 사전 검색 그대로였음. 사용자 지적: "온톨로지 GraphRAG 의 검색 로직은 복잡한데 (multi_turn_rag 의 child LLM ReAct 멀티턴) 그걸 매 턴 자동으로 호출하는 게 말이 되냐". 정확. v1.5.0 = ontology 도 같은 R3 정신.
+
+#### 신규 빌트인 — `tools/ontology_tool.py:QueryGraphTool`
+- `query_graph(question, collection)` — backend `multi_turn_rag.query()` 위임
+- progressive PD: 본문은 `state.pd_stores["graph"]` 에 보관, LLM 에는 인덱스+snippet 만 (200자 default)
+- LLM 은 `fetch_pd(kind='graph', id='<col>::<hash>')` 로 본문 lazy fetch
+
+#### s04_tool/stage.py
+- `ontology_collections` + `ontology_tool_mode` stage_param 받아서 `query_graph` 빌트인 등록
+- DocumentService.ontology_query 가용 시에만 등록 (없으면 graceful skip)
+- rag_search 등록과 isomorphic 패턴 — 코드 흐름 통일
+
+#### s06_context/stage.py
+- `ontology_query` 자동 호출 (line 326-348) 을 `ontology_tool_mode in ('context','both')` 일 때만 실행
+- default `'tool'` 이면 SKIP — s04 가 등록한 빌트인이 LLM 손에 있어 LLM 이 결정해서 호출
+- 백워드 호환: 사용자가 명시적으로 `context` / `both` 박으면 자체 호출 동작 (기존 흐름)
+
+#### 효과 (v1.4.0 R3 와 동일)
+| 항목 | v1.4 (RAG 측만) | v1.5 (Ontology 측도) |
+|---|---|---|
+| 매 턴 자동 호출 | ❌ (RAG 도구화 후 자율) | ❌ (Ontology 도 자율) |
+| LLM 자율성 (호출 결정) | ✅ | ✅ |
+| Progressive PD | ✅ rag | ✅ rag + graph |
+| pd_stores kind | `tool_result` / `rag` / `history` / `db_schema` / `gallery` | + `graph` 신규 |
+
+#### 비고
+- 백엔드 `multi_turn_rag` (child ReAct) 그대로 유지 — 캔버스 호환 영향 0
+- 이중 LLM 호출 자체는 잔존하지만 LLM 이 호출 결정 → 비용 폭증 X (질문이 그래프 무관하면 호출 안 함)
+- 빌드 안 된 컬렉션 박힌 경우 백엔드가 unavailable / 빈 결과 반환 → LLM 이 처리. 사용자가 "빌드된 것만" 박도록 frontend 옵션 source 필터는 v1.5.x 후속
+
+## [1.4.1] — 2026-05-08
+
+### 📝 stage_config.py UI 동작방식 박스 텍스트 v1.4 정합 갱신
+
+v1.4.0 commit 에서 코드 동작은 모두 변경됐으나 (eager/deferred 분리 / ToolSearch 빌트인 / R3 RAG 도구 위임 / cascade 자동 압축), `stage_config.py` 의 `description_ko` / `behavior` 텍스트는 v1.0 시점 그대로였음. UI 의 "동작 방식" 박스가 옛 동작 (Level 1/2/3 / `DocumentService.search` 등) 을 설명해서 사용자 혼란. 텍스트만 갱신.
+
+#### s04_tool
+- `description_ko`: "Strategy 카드는 progressive_3level / eager_load / capability_auto / none" → "selected_tools 명시 도구만 eager / 나머지 deferred / LLM 이 ToolSearch 로 명시 승격 (Claude Code 정합)" + R3 RAG 도구 위임 안내
+- `behavior` 7 항목 → 11 항목으로 재작성 (deferred 분리 / ToolSearch / search_tools / discover_tools / fetch_pd / rag_search 빌트인 / R3 / progressive PD)
+
+#### s06_context
+- `description_ko`: "RAG 검색 → 컨텍스트로 주입 / 압축" → "참조 리소스 선택만 / 검색은 도구로 위임 (R3) / cascade 자동 압축"
+- `behavior` 7 항목 → 10 항목으로 재작성 (Cascade L3/L4/L5 / R3 도구 위임 / progressive PD / 5종 PD 공유 인프라)
+
+엔진 코드 동작은 v1.4.0 그대로 — 행동 변경 없음 (patch). UI 표면 안내가 실 동작 정합되도록만 정정.
+
+## [1.4.0] — 2026-05-08
+
+### 🚨 BREAKING — Claude Code 정합 deferred tools + UI 표면 대청소 + R3 RAG 도구 위임
+
+#### Stage order swap (s04 → s03)
+- `s04_tool.order = 3` (was 4), `s03_prompt.order = 4` (was 3). ingress phase 안에서 도구 카탈로그를 먼저 채우고 system_prompt 가 그 결과를 본다. 기존엔 `_build_tool_index_section` 이 항상 빈 `state.tool_index` 를 봐서 `<available_tools>` 섹션이 미렌더되던 회귀 fix.
+
+#### Claude Code 스타일 deferred tools (v1.2.0 통합)
+- `s04_tool` 가 `selected_tools` 화이트리스트 기준으로 도구를 **eager** (Anthropic API `tools=` 인자에 박힘) / **deferred** (이름+1줄 desc 만 system_prompt 노출) 로 분리.
+- `state.tool_schemas` 에 모든 도구 (eager+deferred) full schema 캐시.
+- 신규 빌트인 `ToolSearch(names=[...])` — deferred 도구를 명시 이름으로 schema 합류 → 다음 turn `tools=` 에 자동 누적 (dynamic catalogue). `select:a,b` 문자열 형식도 자동 파싱 (Claude Code 정합).
+- `search_tools` (≥12 도구) 의 결과 안내에 ToolSearch 합류 흐름 명시 — keyword 검색 → 합류 자연스럽게 연결.
+- `state.tool.deferred` / `state.tool.loaded_names` 필드 신규 + property shim.
+- `ToolDeferredEvent` / `ToolLoadedEvent` 신규.
+
+#### 사용자 픽 strategy 카드 4 stage hide
+- `s01_input.list_strategies()` → `[]` (분류는 LLM 자율)
+- `s03_prompt.list_strategies()` → `[]` (사고 패턴 자율)
+- `s04_tool.list_strategies()` → `[]` (progressive_3level + ToolSearch 가 default)
+- `s07_act.list_strategies()` → `[]` (sequential default)
+- `s06_context.list_strategies()` → `[cascade]` 1개만 (압력별 L3→L4→L5 자동 에스컬레이션)
+- 코드 경로 (with_classification / cot_planner / react / eager_load / capability_auto / token_budget / sliding_window / microcompact / context_collapse_overlay / autocompact_llm / parallel_read / strict_no_error) 모두 보존 — 외부 plugin 또는 `active_strategies` 직접 셋으로 강제 가능. UI 표면만 단순화.
+
+#### R3 — s06 RAG 자체 검색 → s04 rag_search 도구 위임
+- `rag_tool_mode` default `'both'` → `'tool'`. `s06_context` 가 `rag_collections` 박혀있어도 자체 `doc_service.search` 호출 안 함. `s04_tool` 가 등록한 `rag_search` 빌트인이 LLM 손에 노출 → LLM 이 도구로 직접 호출.
+- `RAGSearchTool` 에 progressive PD 신규 — `state_ref` + `progressive=True` + `snippet_size=120`. 검색 결과 본문은 `state.pd_stores["rag"]` 에 보관, LLM 에는 인덱스+snippet 만 반환. LLM 이 `fetch_pd(kind='rag', id=...)` 로 본문 lazy fetch.
+- s06 의 책임 재정의: ❌ RAG 검색 (도구로 위임) / ✅ 참조 컬렉션 선택 + history 압축 (cascade).
+
+#### Deprecated 자동 정규화 (백워드 호환 무성의 X — 엄밀 cleanup)
+- `DEPRECATED_STRATEGIES_BY_STAGE` / `DEPRECATED_STAGE_PARAM_VALUES` 맵 신규.
+- `_normalize_active_strategies()` / `_normalize_stage_params()` 함수.
+- **`HarnessConfig.__post_init__` 에서 강제 호출** — 모든 인스턴스화 경로 (`cls(**kwargs)` / `from_dict` / `from_workflow` / 이식측 직접 `cls(**config_kwargs)`) 통과. DB 의 옛 워크플로우 row 가 `token_budget` / `eager_load` / `cot_planner` / `parallel_read` 등 박고 있어도 실행 시점에 자동으로 `cascade` / `''` (default 폴백) 로 정규화.
+- `rag_tool_mode: 'both'/'context'` → `'tool'`, `rag_pd_mode: 'eager'` → `'progressive'` 도 동일 정규화.
+
+#### 비고
+- s06 의 자체 RAG 검색 코드 (`if rag_collections and state.user_input` 블록) 는 보존 — `rag_tool_mode == 'context'` 또는 `'both'` 명시 시 백워드 호환 동작.
+- 도구 5종 PD (tool_result / rag / history / db_schema / gallery) 모두 default 로 적용 — 사용자가 카드/설정 안 박아도 자동.
+
 ## [1.0.9] — 2026-05-01
 
 ### 🏗 Plugin Registration API 정리 + s06 god-class 분해 + runtime_defaults 인프라

@@ -1,4 +1,15 @@
-"""ToolDiscoveryStrategy 구현체들"""
+"""ToolDiscoveryStrategy 구현체들 — v1.2.0 Claude Code 정합 deferred tools.
+
+v1.2.0 기준 책임 분담:
+  s04_tool: ToolSource 들 listing → selected_tools 화이트리스트로 eager/deferred 분리
+            eager: state.tool_definitions (Anthropic API tools= 인자에 박힘)
+            deferred: state.deferred_tools (이름+1줄 desc 만 노출)
+            schema 캐시: state.tool_schemas (모든 도구의 full schema, ToolSearch 가 조회)
+
+  ProgressiveDiscovery: s04 가 분리해놓은 결과 + 빌트인 (search/discover/fetch_pd/ToolSearch)
+  EagerLoadDiscovery:   사용자가 명시적으로 eager_load strategy 선택 시 — deferred 무시
+                         하고 모든 도구 schema 를 eager 로 환원 (백워드 호환).
+"""
 
 from typing import Any
 from ..interfaces import ToolDiscoveryStrategy
@@ -20,13 +31,17 @@ def get_progressive_threshold() -> int:
 
 
 class ProgressiveDiscovery(ToolDiscoveryStrategy):
-    """Progressive Disclosure 3단계 -- 기본 전략.
+    """Progressive Disclosure 3단계 — 기본 전략 (v1.2.0 Claude Code 정합).
 
-    Level 1: 도구 메타데이터만 시스템 프롬프트에 (~40 tokens/tool)
-             tool_index에는 name + short description만 저장
-             full schemas는 tool_schemas에 캐시
-    Level 2: discover_tools 빌트인으로 상세 스키마 조회 (LLM이 필요할 때 호출)
-    Level 3: 실제 도구 실행 (s08_act에서 처리)
+    Level 0 (search_tools): 전체 카탈로그 ≥ 12 시 키워드 검색 빌트인 추가
+    Level 1 (tool_index):    eager 도구 + 빌트인 메타데이터 → system_prompt
+    Level 2 (ToolSearch):    deferred 도구 schema 를 names 명시로 eager 승격
+    Level 2'(discover_tools): 특정 도구 상세 input_schema 조회
+    Level 3 (s07_act):       실제 도구 실행
+
+    s04 가 selected_tools 화이트리스트로 분리해 놓은 state.tool_definitions (eager)
+    + state.deferred_tools (이름만) 두 채널을 그대로 받아 augmented (Anthropic tools=
+    인자) 와 tool_index (system_prompt 메타) 를 만든다.
     """
 
     @property
@@ -35,69 +50,93 @@ class ProgressiveDiscovery(ToolDiscoveryStrategy):
 
     @property
     def description(self) -> str:
-        return "3단계 점진적 디스커버리 (메타데이터->스키마->실행)"
+        return "3단계 점진적 디스커버리 (eager+빌트인 → ToolSearch 승격 → 실행)"
 
     async def discover(
         self,
         tool_definitions: list[dict],
         state: Any,
     ) -> tuple[list[dict], list[dict]]:
-        # Level 1: 메타데이터 인덱스 (name + trimmed description only)
-        tool_index = []
-        tool_schemas = {}
+        # tool_definitions 는 s04 가 selected_tools 로 추린 eager 도구만.
+        # Level 1 메타 (~40 tokens/tool) — eager 만 system_prompt 에 schema 까지 박힘 안내.
+        tool_index: list[dict] = []
         for td in tool_definitions:
             name = td.get("name", "unknown")
-            raw_desc = td.get("description", "")
-            # 120자로 트림 (~40 tokens)
+            raw_desc = td.get("description", "") or ""
             short_desc = raw_desc[:_MAX_DESC_CHARS]
             if len(raw_desc) > _MAX_DESC_CHARS:
                 short_desc = short_desc.rsplit(" ", 1)[0] + "..."
-
             tool_index.append({
                 "name": name,
                 "description": short_desc,
                 "category": td.get("category", "tool"),
             })
-            # Level 2 캐시에는 전체 스키마 보관
-            tool_schemas[name] = td
 
-        # search_tools (Level 0) + discover_tools (Level 2) + fetch_pd (PD 원본 조회) 빌트인 추가.
-        # 카탈로그 ≥ _SEARCH_TOOLS_THRESHOLD 면 search_tools 도 등록 (큰 환경에서 진정한 progressive).
-        from ...tools.builtin import DiscoverToolsTool, SearchToolsTool, FetchPDTool
         augmented = list(tool_definitions)
-        discover = DiscoverToolsTool(tool_definitions)
-        augmented.append(discover.to_api_format())
 
-        if len(tool_definitions) >= _SEARCH_TOOLS_THRESHOLD:
-            search = SearchToolsTool(tool_definitions)
+        # 빌트인 등록 — search_tools / discover_tools / ToolSearch / fetch_pd.
+        # search_tools / discover_tools 는 deferred 도구도 함께 검색·조회 가능하도록
+        # state.tool_schemas (캐시) 의 모든 도구를 후보로 본다.
+        from ...tools.builtin import DiscoverToolsTool, SearchToolsTool, FetchPDTool, ToolSearchTool
+
+        all_known = list((state.tool_schemas or {}).values())
+        if not all_known:
+            all_known = list(tool_definitions)
+
+        discover = DiscoverToolsTool(all_known)
+        augmented.append(discover.to_api_format())
+        if hasattr(state, "metadata"):
+            state.metadata.setdefault("tool_registry", {})["discover_tools"] = discover
+
+        if len(all_known) >= _SEARCH_TOOLS_THRESHOLD:
+            search = SearchToolsTool(all_known)
             augmented.append(search.to_api_format())
             tool_index.append({
-                "name": search.name, "description": search.description[:_MAX_DESC_CHARS], "category": "system",
+                "name": search.name,
+                "description": search.description[:_MAX_DESC_CHARS],
+                "category": "system",
             })
-            # tool_registry 에 인스턴스 등록 (s08_act 가 디스패치 시 찾음)
             if hasattr(state, "metadata"):
                 state.metadata.setdefault("tool_registry", {})["search_tools"] = search
 
-        # fetch_pd — Progressive Disclosure 원본 조회 빌트인. tool_result L1 preview,
-        # RAG 청크, DB 스키마 등 state.pd_stores 에 보관된 리소스를 LLM 이 on-demand 로
-        # 당겨올 때 사용. state 참조를 보유하므로 매 턴 state 인스턴스가 같으면 live.
+        # v1.2.0 — ToolSearch 빌트인. deferred 도구가 있으면 등록 (없으면 무의미).
+        deferred = getattr(state, "deferred_tools", None) or []
+        if deferred:
+            tool_search = ToolSearchTool(state)
+            augmented.append(tool_search.to_api_format())
+            tool_index.append({
+                "name": tool_search.name,
+                "description": tool_search.description[:_MAX_DESC_CHARS],
+                "category": "system",
+            })
+            if hasattr(state, "metadata"):
+                state.metadata.setdefault("tool_registry", {})["ToolSearch"] = tool_search
+
+        # fetch_pd — Progressive Disclosure 원본 조회 (PD chunks / tool_result preview).
         fetch_pd = FetchPDTool(state)
         augmented.append(fetch_pd.to_api_format())
         tool_index.append({
-            "name": fetch_pd.name, "description": fetch_pd.description[:_MAX_DESC_CHARS], "category": "system",
+            "name": fetch_pd.name,
+            "description": fetch_pd.description[:_MAX_DESC_CHARS],
+            "category": "system",
         })
         if hasattr(state, "metadata"):
             state.metadata.setdefault("tool_registry", {})["fetch_pd"] = fetch_pd
 
-        # state에 스키마 캐시 저장 (s08 discover_tools 핸들러에서 사용)
-        if hasattr(state, 'tool_schemas'):
-            state.tool_schemas = tool_schemas
+        # state.tool_schemas 는 s04 가 모든 도구 (eager+deferred) full schema 를 미리 채움.
+        # 비어있으면 fallback 으로 eager 만이라도 캐시 — 호환성 안전망.
+        if hasattr(state, "tool_schemas") and not state.tool_schemas:
+            state.tool_schemas = {td.get("name"): td for td in tool_definitions if td.get("name")}
 
         return tool_index, augmented
 
 
 class EagerLoadDiscovery(ToolDiscoveryStrategy):
-    """모든 도구 스키마를 즉시 로드 — 도구 수가 적을 때."""
+    """모든 도구 schema 를 즉시 로드 — 사용자가 명시적으로 ``eager_load`` 픽 시.
+
+    s04 가 selected_tools 로 일부만 eager 로 분리했더라도, 이 strategy 는 그
+    분리를 무시하고 deferred 까지 모두 eager 로 환원한다 (백워드 호환).
+    """
 
     @property
     def name(self) -> str:
@@ -105,19 +144,40 @@ class EagerLoadDiscovery(ToolDiscoveryStrategy):
 
     @property
     def description(self) -> str:
-        return "모든 도구 스키마를 즉시 로드"
+        return "모든 도구 스키마를 즉시 로드 (deferred 환원)"
 
     async def discover(
         self,
         tool_definitions: list[dict],
         state: Any,
     ) -> tuple[list[dict], list[dict]]:
+        # deferred 까지 모두 eager 로 끌어올린다.
+        eager = list(tool_definitions)
+        eager_names = {td.get("name") for td in eager if td.get("name")}
+        deferred = getattr(state, "deferred_tools", None) or []
+        schemas = getattr(state, "tool_schemas", None) or {}
+
+        for d in deferred:
+            nm = d.get("name") if isinstance(d, dict) else None
+            if not nm or nm in eager_names:
+                continue
+            schema = schemas.get(nm)
+            if schema:
+                eager.append(schema)
+                eager_names.add(nm)
+                if hasattr(state, "tool"):
+                    state.tool.loaded_names.add(nm)
+
+        # deferred 비워 — eager 환원 후 system_prompt 의 [deferred] 섹션도 사라짐.
+        if hasattr(state, "deferred_tools"):
+            state.deferred_tools = []
+
         tool_index = []
-        for td in tool_definitions:
+        for td in eager:
             tool_index.append({
                 "name": td.get("name", "unknown"),
                 "description": td.get("description", ""),
                 "category": "tool",
                 "schema": td.get("input_schema"),
             })
-        return tool_index, list(tool_definitions)
+        return tool_index, eager

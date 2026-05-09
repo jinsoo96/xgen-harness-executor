@@ -175,6 +175,35 @@ class RetryEvent(HarnessEvent):
 
 
 @dataclass
+class ToolDeferredEvent(HarnessEvent):
+    """v1.2.0 — s04_tool 가 도구를 deferred 카탈로그로 분류한 사실 보고.
+
+    Claude Code 스타일 progressive disclosure:
+      eager  : Anthropic API tools= 에 full schema 박힘. 즉시 호출 가능.
+      deferred: 이름 + 1줄 desc 만 system_prompt 에 노출. schema 는 cache 에만.
+                LLM 이 ToolSearch 빌트인으로 names 지정 → 그제야 schema 합류.
+
+    UI 는 이 이벤트로 "도구 X개는 즉시 가용, Y개는 검색해야 호출 가능" 배지를 띄운다.
+    """
+    eager_count: int = 0
+    deferred_count: int = 0
+    eager_names: list = field(default_factory=list)   # 디버깅용 (UI 노출 X 권장)
+    stage_id: str = "s04_tool"
+
+
+@dataclass
+class ToolLoadedEvent(HarnessEvent):
+    """v1.2.0 — ToolSearch 빌트인이 deferred 도구 schema 를 eager 로 승격한 사실.
+
+    승격 후 다음 llm_call 의 tools= 인자에 자동 합류 (state.tool_definitions
+    가 매 호출마다 그대로 전달됨). UI 는 "도구 N개 활성화" 토스트 등으로 표시.
+    """
+    names: list = field(default_factory=list)
+    total_loaded: int = 0
+    stage_id: str = "s07_act"
+
+
+@dataclass
 class PolicyBlockedEvent(HarnessEvent):
     """Policy Gate 가 Guard 체크에서 block 한 사실을 외부에 알림.
 

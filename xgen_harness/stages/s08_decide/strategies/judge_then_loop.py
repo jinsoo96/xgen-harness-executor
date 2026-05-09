@@ -163,7 +163,12 @@ async def evaluate_response(state, get_param) -> dict:
 
 
 async def _llm_judge_fallback(state, get_param) -> dict:
-    """raw LLM 호출로 평가. EvaluationStrategy 없을 때 폴백."""
+    """raw LLM 호출로 평가. EvaluationStrategy 없을 때 폴백.
+
+    v1.1.0 — config.judge_provider / judge_model 지원. 미지정 시 본문 LLM 재사용
+    (backward compat). judge_provider 가 본문 provider 와 다르면 별도 provider
+    인스턴스 띄워 호출 — "Judge 가 자기 답을 자기가 평가" 약점 회피.
+    """
     eval_prompt, selected_criteria = _build_evaluation_prompt(state, get_param)
 
     # v1.0.7 — judge LLM 의 system prompt 사용자 override 지원. 미설정(None) 이면
@@ -172,11 +177,19 @@ async def _llm_judge_fallback(state, get_param) -> dict:
     eval_system_str: str | None = (
         str(eval_system).strip() if isinstance(eval_system, str) and eval_system.strip() else None
     )
+
+    # v1.1.0 — judge_model lookup. 빈 값이면 본문 LLM 재사용 (backward compat).
+    # judge_provider 는 v1.1.0 에서 Pydantic 필드만 보존, 본문과 다른 provider 사용은
+    # API 키 wiring 까지 정합 필요해서 v1.1.x 후속. 같은 provider 다른 model 만 우선.
+    config = getattr(state, "config", None)
+    judge_model_name = (str(getattr(config, "judge_model", "") or "")).strip()
+
     try:
         from ....core.llm_call import aux_call
         eval_text = await aux_call(
             state, stage_id="s08_decide", prompt=eval_prompt,
             system=eval_system_str,
+            model=judge_model_name or None,
         )
     except Exception as e:
         logger.warning("[judge] aux_call 실패: %s", e)

@@ -76,14 +76,12 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
 
         # ── 1. RAG 컬렉션 + folders 확장 ──
         rag_collections: list[str] = list(self.get_param("rag_collections", state, []) or [])
-        # v0.25.2 — config.rag_collections 폴백은 **autonomous 모드에서만** 허용.
-        # 사용자가 UI 에서 컬렉션을 명시 비워 저장한 경우 (selected/off 모드), 자동 폴백으로
-        # 전체 문서 기반 답변이 나가면 안 된다. v0.25.3 은 리터럴 비교 대신
-        # HarnessConfig.is_autonomous() 헬퍼로 도메인 언어 캡슐화.
+        # v1.1.0 — harness_mode 제거에 따른 폴백 단순화.
+        # stage_params 의 rag_collections 가 비어있으면 항상 config.rag_collections 폴백.
+        # 사용자가 UI 에서 명시 비워 저장하면 stage_params 가 빈 list 로 들어와도
+        # config.rag_collections 자체가 비어있을 것 (양쪽이 같은 store 필드를 공유).
         if not rag_collections and hasattr(config, 'rag_collections'):
-            is_auto = bool(getattr(config, 'is_autonomous', lambda: True)())
-            if is_auto:
-                rag_collections = list(getattr(config, 'rag_collections', []) or [])
+            rag_collections = list(getattr(config, 'rag_collections', []) or [])
 
         # folders → 해당 폴더 안의 컬렉션 자동 추가 (DocumentService.list_collections 위임)
         folders: list[str] = list(self.get_param("folders", state, []) or [])
@@ -106,7 +104,19 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
                 except Exception as e:
                     logger.warning("[Context] folder expansion failed: %s", e)
 
-        if rag_collections and state.user_input:
+        # v1.4.0 R3 — RAG 검색을 도구 호출로 위임. rag_tool_mode 가 'tool' 이면 s06 의
+        # 자체 doc_service.search 호출 SKIP. s04 가 등록한 rag_search 빌트인이 LLM 손에
+        # 노출되어 LLM 이 직접 search 호출 → progressive PD 로 결과 합성. s06 책임은
+        # 이제 "참조 컬렉션 선택 → 도구 wiring" + "히스토리 압축 (cascade)" 만.
+        # 'context' 또는 'both' 면 기존 behavior (s06 자체 검색) 유지 — 백워드 호환.
+        _rag_tool_mode_for_self_search = str(
+            self.get_param("rag_tool_mode", state, "tool") or "tool"
+        ).strip().lower()
+        _do_self_rag_search = (
+            rag_collections and state.user_input
+            and _rag_tool_mode_for_self_search in ("context", "both")
+        )
+        if _do_self_rag_search:
             # verbose: RAG fetch 시작
             from ...events.types import StageSubstepEvent as _Sub
             top_k = int(self.get_param("rag_top_k", state, None) or 0)
@@ -313,9 +323,16 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
                 meta={"chunks": results.get("rag_chunks", 0)},
             ))
 
-        # ── 1.5 Ontology / GraphRAG — DocumentService.ontology_query 위임 ──
+        # ── 1.5 Ontology / GraphRAG — v1.5.0 R3: 도구 위임 (자체 자동 호출 비활성)
+        # rag_tool_mode 패턴 정합 — ontology_tool_mode default 'tool' 이면 s04 가
+        # query_graph 빌트인 등록해 LLM 이 호출 결정. s06 자체 자동 호출은 'context'
+        # 또는 'both' 명시 시만 (백워드 호환).
         ontology_collections: list[str] = list(self.get_param("ontology_collections", state, []) or [])
-        if ontology_collections and state.user_input:
+        ontology_tool_mode = str(
+            self.get_param("ontology_tool_mode", state, "tool") or "tool"
+        ).strip().lower()
+        if (ontology_collections and state.user_input
+                and ontology_tool_mode in ("context", "both")):
             services = state.metadata.get("services")
             doc_service = getattr(services, "documents", None) if services else None
             if doc_service and hasattr(doc_service, "ontology_query"):
@@ -787,12 +804,10 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
                     return
 
     def list_strategies(self) -> list[StrategyInfo]:
-        # v0.11.20 — dispatcher 와 완전 동기. stage_config.options 와 이 목록은 단일 진실 원본이어야 함.
+        # v1.4.0 — 사용자 픽 카드 1개 (cascade) 만 노출. 압력별 L3→L4→L5 자동 에스컬레이션이
+        # 가장 안전한 default. 다른 5 strategy (token_budget/sliding_window/microcompact/
+        # context_collapse_overlay/autocompact_llm) 의 dispatcher 코드는 보존되어 외부 plugin
+        # 또는 active_strategies 직접 셋으로 강제 가능. 사용자 UI 표면만 단순화.
         return [
-            StrategyInfo("token_budget", "RAG 검색 + 토큰 예산 압축 (파괴적 first+last3)", is_default=True),
-            StrategyInfo("sliding_window", "슬라이딩 윈도우 (최근 N개 메시지)"),
-            StrategyInfo("microcompact", "L3 Microcompact — 오래된 tool_result 를 placeholder 로 교체 (Claude Code L3)"),
-            StrategyInfo("context_collapse_overlay", "L4 Context Collapse — 중간 메시지 overlay, 원본은 pd_stores 보존 (Claude Code L4)"),
-            StrategyInfo("autocompact_llm", "L5 Autocompact — child LLM 9-section summary (Claude Code L5)"),
-            StrategyInfo("cascade", "Cascade — 압력별 L3→L4→L5 자동 선택 (Claude Code Cascade)"),
+            StrategyInfo("cascade", "압력별 L3→L4→L5 자동 압축", is_default=True),
         ]

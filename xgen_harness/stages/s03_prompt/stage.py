@@ -164,7 +164,11 @@ class SystemPromptStage(Stage):
 
     @property
     def order(self) -> int:
-        return 3
+        # v1.2.0 — s04_tool 가 ingress 의 도구 카탈로그를 먼저 채우도록 s03 을 뒤로 민다.
+        # 기존 (order=3) 에서는 _build_tool_index_section 이 항상 빈 tool_index 를 봐서
+        # <available_tools> 섹션이 사실상 미렌더 → progressive disclosure 의 system_prompt
+        # 측 가시성이 죽어있던 회귀. 이제 s04 → s03 순으로 ingress 가 흐른다.
+        return 4
 
     async def execute(self, state: PipelineState) -> dict:
         config = state.config
@@ -193,8 +197,11 @@ class SystemPromptStage(Stage):
             sections.append((SECTION_PRIORITIES["rules"], "rules", self._default_rules(state)))
 
         # 3. Tool Index — Level 1 메타데이터 (progressive disclosure)
-        if state.tool_index:
-            tool_section = self._build_tool_index_section(state.tool_index)
+        # v1.2.0 — eager (tool_index) + deferred (state.deferred_tools) 두 그룹 표시.
+        # eager 는 곧바로 호출 가능 / deferred 는 ToolSearch 로 승격 후 호출.
+        deferred_list = getattr(state, "deferred_tools", None) or []
+        if state.tool_index or deferred_list:
+            tool_section = self._build_tool_index_section(state.tool_index, deferred_list)
             sections.append((SECTION_PRIORITIES["tools"], "tools", tool_section))
 
         # 4. RAG Context — v0.9.0+: 실행은 s06_context 가 단독 담당.
@@ -203,6 +210,125 @@ class SystemPromptStage(Stage):
         if state.rag_context:
             rag_section = f"<reference_documents>\n{state.rag_context}\n</reference_documents>"
             sections.append((SECTION_PRIORITIES["rag"], "rag", rag_section))
+
+        # v1.5.4 — R3 회귀 fix. rag_tool_mode='tool' (default) 일 때 state.rag_context 가
+        # 비어 있고 <reference_documents> 섹션이 미렌더되어 LLM 이 "참조 자료 있음" 사실
+        # 자체를 모르고 DB 도구로 추론하던 회귀 (사용자 호소: "assort 컬렉션 박았는데
+        # rag_search 안 부르고 DB 연결 알려달라고 답"). 박힌 컬렉션 list 를 명시하고
+        # 도구 우선 사용 안내를 system_prompt 에 박는다.
+        rag_collections_attached = list(
+            self.get_param("rag_collections", state, []) or []
+        )
+        # s04 가 rag_collections 를 stage_param 에 두는 경로 (rag/ontology) — s06 진입 전
+        # state.metadata 에 노출됨. 둘 다 fallback.
+        if not rag_collections_attached:
+            rag_collections_attached = list(
+                state.metadata.get("rag_collections") or []
+            )
+        ontology_collections_attached = list(
+            self.get_param("ontology_collections", state, []) or []
+        )
+        if not ontology_collections_attached:
+            ontology_collections_attached = list(
+                state.metadata.get("ontology_collections") or []
+            )
+        # v1.5.5 — db_connections / files 도 reference_resources 에 합류 (RAG/Ontology isomorphic).
+        # 사용자가 박은 모든 자원이 LLM 손에 메타로 노출되어 자율 판단 가능.
+        db_connections_attached = list(
+            self.get_param("db_connections", state, []) or []
+        )
+        if not db_connections_attached:
+            db_connections_attached = list(
+                state.metadata.get("db_connections") or []
+            )
+        files_attached = list(
+            self.get_param("files", state, []) or []
+        )
+        if not files_attached:
+            files_attached = list(
+                state.metadata.get("files") or []
+            )
+
+        if (rag_collections_attached or ontology_collections_attached
+                or db_connections_attached or files_attached):
+            # v1.5.5 — Anthropic Skills frontmatter 패턴 isomorphic. 메타 (지도) 만 노출 —
+            # name + description + total_documents. 본문은 사전 인덱싱 X. LLM 이 메타 보고
+            # 자율 판단 → 도구 호출 (rag_search / query_graph) → 인덱스 → fetch_pd 본문 lazy.
+            rag_meta = state.metadata.get("rag_collections_meta") or {}
+            lines: list[str] = ["<reference_resources>"]
+            lines.append(
+                "다음은 사용자가 첨부한 자원의 메타입니다. 질문에 관련되어 보이는 자원만 도구로 검색하세요."
+            )
+            if rag_collections_attached:
+                lines.append("- RAG 컬렉션:")
+                for col in rag_collections_attached:
+                    m = rag_meta.get(col, {}) if isinstance(rag_meta.get(col), dict) else {}
+                    desc = (m.get("description") or "").strip()
+                    total = m.get("total_documents", 0)
+                    line = f"  · {col}"
+                    if desc:
+                        line += f": {desc}"
+                    if total:
+                        line += f" ({total:,} docs)"
+                    lines.append(line)
+                lines.append(
+                    "  검색: rag_search(collection='이름', query='...') → 인덱스+snippet → "
+                    "fetch_pd(kind='rag', id='...') 로 본문 lazy fetch"
+                )
+            if ontology_collections_attached:
+                lines.append("- 지식 그래프:")
+                for col in ontology_collections_attached:
+                    lines.append(f"  · {col}")
+                lines.append("  검색: query_graph(collection='이름', query='...')")
+            if db_connections_attached:
+                lines.append("- DB 연결:")
+                for conn in db_connections_attached:
+                    if isinstance(conn, dict):
+                        cn = conn.get("name") or conn.get("connection_name") or str(conn)
+                        ct = conn.get("type") or conn.get("db_type") or ""
+                        lines.append(f"  · {cn}{f' ({ct})' if ct else ''}")
+                    else:
+                        lines.append(f"  · {conn}")
+                lines.append("  사용: 외부 DB 도구 호출 시 connection 인자")
+            if files_attached:
+                lines.append("- 파일 (RAG 검색 metadata_filter 로 좁힘):")
+                for fname in files_attached:
+                    lines.append(f"  · {fname}")
+            lines.append("</reference_resources>")
+            ref_section = "\n".join(lines)
+            # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
+            sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
+
+        # v1.5.5 — Policy guards LLM 가시화. 사용자가 박은 가드 / 정책 한도가 system_prompt 에
+        # 노출되어 LLM 이 자기 제약을 인지하고 답 합성 (자율 점진 선택 정신).
+        # 강제 / 하드코딩 톤 X — 단순 메타 노출만.
+        active_policies_lines: list[str] = []
+        config = state.config
+        if config is not None:
+            if getattr(config, "max_iterations", None):
+                active_policies_lines.append(f"- 도구 호출 최대 {config.max_iterations}회")
+            if getattr(config, "cost_budget_usd", None):
+                active_policies_lines.append(f"- 비용 예산 ${config.cost_budget_usd:.2f}")
+            if getattr(config, "context_window", None):
+                active_policies_lines.append(f"- 컨텍스트 윈도우 {config.context_window:,} tokens")
+        # s05_policy.guards 는 자기 stage 가 아니므로 state.config.stage_params 직접 접근
+        s05_guards = []
+        if config is not None and hasattr(config, "stage_params"):
+            s05_guards = (config.stage_params or {}).get("s05_policy", {}).get("guards", []) or []
+        guard_names = [
+            g.get("name") for g in s05_guards
+            if isinstance(g, dict) and g.get("name")
+        ]
+        if guard_names:
+            active_policies_lines.append(f"- 활성 가드: {', '.join(guard_names)}")
+        if active_policies_lines:
+            policy_section = (
+                "<active_policies>\n"
+                + "\n".join(active_policies_lines)
+                + "\n</active_policies>"
+            )
+            # rules 다음 우선순위 — 행동 가이드 끝에 자기 제약 자연스럽게 합류
+            sections.append((SECTION_PRIORITIES["rules"] + 0.4, "active_policies", policy_section))
 
         # 5. Citation — 문서 인용 형식 지시
         # citation_mode 우선, 하위 호환으로 citation_enabled 도 여전히 읽습니다.
@@ -458,10 +584,19 @@ class SystemPromptStage(Stage):
             name = "default"
         return DEFAULT_RULES.get(name, DEFAULT_RULES["default"])
 
-    def _build_tool_index_section(self, tool_index: list[dict]) -> str:
-        """Progressive Disclosure Level 1: 도구 메타데이터만 포함"""
+    def _build_tool_index_section(
+        self,
+        tool_index: list[dict],
+        deferred_list: list[dict] | None = None,
+    ) -> str:
+        """Progressive Disclosure Level 1 (v1.2.0 Claude Code 정합).
+
+        eager 도구는 ``<available_tools>`` 섹션에 즉시 호출 가능 도구로 노출.
+        deferred 도구가 있으면 ``<deferred_tools>`` 섹션을 별도 추가 — 이름만
+        나열하고 LLM 이 ``ToolSearch(names=[...])`` 빌트인으로 승격해야 호출 가능.
+        """
         lines = ["<available_tools>"]
-        for tool in tool_index:
+        for tool in tool_index or []:
             name = tool.get("name", "unknown")
             desc = tool.get("description", "")
             category = tool.get("category", "")
@@ -469,21 +604,29 @@ class SystemPromptStage(Stage):
             if category:
                 line += f" [{category}]"
             lines.append(line)
-
         lines.append("</available_tools>")
         lines.append(
             "\nTo learn more about a specific tool's parameters, "
             "use the discover_tools function with the tool name."
         )
+
+        if deferred_list:
+            lines.append("\n<deferred_tools>")
+            lines.append(
+                "These tools are NOT loaded yet — schemas are hidden to save context. "
+                "Call ToolSearch(names=[\"tool1\",\"tool2\"]) to load specific tools "
+                "before invoking them. Only load what you actually need."
+            )
+            for tool in deferred_list:
+                name = tool.get("name", "unknown")
+                desc = tool.get("description", "")
+                line = f"- {name}: {desc}" if desc else f"- {name}"
+                lines.append(line)
+            lines.append("</deferred_tools>")
+
         return "\n".join(lines)
 
     def list_strategies(self) -> list[StrategyInfo]:
-        # v1.0 — section_priority(조립 방식) + Planning 카드 (사고 모드, 구 s05_strategy 흡수).
-        # 카드 픽 → STRATEGY_CARD_TO_MODE 로 thinking_mode 자동 결정.
-        # 카드 미픽 → stage_params.thinking_mode (default=auto) 폴백.
-        return [
-            StrategyInfo("section_priority", "우선순위 기반 섹션 조립", is_default=True),
-            StrategyInfo("cot_planner", "Chain-of-Thought 사고 지시 주입"),
-            StrategyInfo("react", "ReAct (Reason+Act) 프레임워크 지시 주입"),
-            StrategyInfo("none", "사고 모드 비활성 — planning 섹션 생략"),
-        ]
+        # v1.4.0 — 사용자 픽 카드 hide. 사고 모드는 LLM 자율.
+        # 코드 (section_priority/cot_planner/react/none) 보존 — active_strategies 직접 셋 가능.
+        return []
