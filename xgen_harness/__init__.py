@@ -40,6 +40,11 @@ from .core.active_policies import register_active_policy_renderer
 from .tools.builtin import register_collection_enricher
 # v1.7 — ResourceProvider 자동 인식 패턴 (자원 종별 자기 메타 fetch)
 from .core.resource_providers import register_resource_provider, ResourceProvider
+# v1.7.1 — HarnessConfig top-level 필드 self-describing schema
+from .core.top_level_field_schema import (
+    register_top_level_field,
+    get_top_level_field_schema,
+)
 from .events.emitter import EventEmitter
 from .events.types import (
     HarnessEvent,
@@ -407,4 +412,13 @@ __all__ = [
     "available_guards",
     "describe_guards",
     "build_guard_chain",
+    # v1.7 — ResourceProvider
+    "register_resource_provider",
+    "ResourceProvider",
+    # v1.6 — active policies + collection enricher
+    "register_active_policy_renderer",
+    "register_collection_enricher",
+    # v1.7.1 — top-level field schema
+    "register_top_level_field",
+    "get_top_level_field_schema",
 ]

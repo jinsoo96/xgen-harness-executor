@@ -792,7 +792,7 @@ from xgen_harness import (
 크게 네 단계로 정리됩니다.
 
 ```
-Phase 1  13 Stage 구조      ─ Stage 디렉토리화 / s00_harness 통제탑       (v0.12 ~ v0.16)
+Phase 1  13 Stage 구조      ─ Stage 디렉토리화 / s00_harness 본문 LLM     (v0.12 ~ v0.16)
 Phase 2  발행·격리·정책      ─ MCP wheel / Sandbox / NOM / Policy Gate    (v0.17 ~ v0.21)
 Phase 3  독립성 정리         ─ xgen 특화 호스트 이관 / ToolSource 통합     (v0.22 ~ v0.25)
 Phase 4  라이브 검증 패치    ─ production 결함 일괄 fix                   (v0.26.x)
@@ -868,7 +868,7 @@ Phase 4  라이브 검증 패치    ─ production 결함 일괄 fix            
 
 | Stage | 역할 | strategies | 검증 |
 |---|---|---|---|
-| `s00_harness` | 통제탑 — 본문 LLM 호출 + iterative replan | `streaming` / `batch` (`TransportStrategy`) | ✅ |
+| `s00_harness` | 본문 LLM 호출 + iterative replan | `streaming` / `batch` (`TransportStrategy`) | ✅ |
 | `s01_input` | 사용자 입력 분류·정리 | `default` / `with_classification` | ✅ |
 | `s02_history` | 메모리 검색 (embedding) | `default` / `embedding_search` | ✅ |
 | `s03_prompt` | 섹션 우선순위 조립 | `section_priority` | ✅ |

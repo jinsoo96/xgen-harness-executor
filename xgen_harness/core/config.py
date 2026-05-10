@@ -1,8 +1,8 @@
 """
 HarnessConfig — 파이프라인 설정
 
-v1.0 통합 — 9 스테이지 (s00_harness 통제탑 별도) + s05_policy 4훅 동시 작동.
-s00_harness 가 Provider / Strategy / 본문호출 / Planner 를 모두 통제 (재귀적 자율주행).
+v1.0 통합 — 9 스테이지 (s00_harness 본문 LLM 호출 stage 별도) + s05_policy 4훅 동시 작동.
+s00_harness 가 Provider / Strategy / 본문 LLM 호출 / Planner 디스패처 역할.
 workflow_data.harness_config 에서 로드.
 """
 
@@ -16,7 +16,7 @@ _cfg_logger = logging.getLogger("harness.core.config")
 
 
 # 전체 10 스테이지 (v1.0 통합 — s05_strategy 분해 / s08_judge·s10_save 격하 / s12_publish 삭제)
-# s00_harness 는 본문 LLM 호출 통제탑. s05_policy 는 일반 순번 진입 + 4훅 동시.
+# s00_harness 는 본문 LLM 호출 stage (Transport / Provider 디스패처). s05_policy 는 일반 순번 진입 + 4훅 동시.
 # 이 리스트는 "원래부터 있던 기본 Stage" 화이트리스트. 새 Stage 는 registry 에 등록만 —
 # `get_active_stage_ids()` 가 registry 와 병합해서 런타임 목록 생성.
 ALL_STAGES = [
@@ -241,6 +241,10 @@ class HarnessConfig:
     # 자기가 평가하는 약점" 을 더 강한/저렴한 모델로 분리 평가 가능하게.
     judge_provider: str = ""
     judge_model: str = ""
+    # v1.7.1 — 사용자 명시 "본문 재사용" 의도 (UI chip). True 면 judge_model 박혀
+    # 있어도 무시하고 본문 LLM 재사용. False 일 때만 judge_model 값 사용 (빈 값은
+    # backward "미설정 = 본문 재사용" 시맨틱). frontend self-describing 정합용.
+    judge_use_main: bool = False
 
     # 레거시 호환
     preset: str = ""
@@ -477,6 +481,7 @@ class HarnessConfig:
             # 기존 DB row 의 두 키는 from_dict 가 fields() 화이트리스트로 자동 무시.
             judge_provider=str(harness_config.get("judge_provider", "") or ""),
             judge_model=str(harness_config.get("judge_model", "") or ""),
+            judge_use_main=bool(harness_config.get("judge_use_main", False)),
             # v0.11.21 — top-level context_window 전파 (파싱 실패 시 dataclass 기본값 200_000 유지)
             context_window=_safe_int(
                 harness_config.get("context_window"), default=200_000, minimum=1024,

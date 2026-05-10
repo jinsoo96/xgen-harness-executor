@@ -159,13 +159,12 @@ class ArtifactRegistry:
                     "current_artifact": current_artifact,
                     "source_file": stage_source,
                     "strategies": strategies_out,
-                    # stage_config: UI 렌더링용 설정 스키마
-                    "config": {
-                        "description_ko": stage_cfg.get("description_ko", ""),
-                        "description_en": stage_cfg.get("description_en", ""),
-                        "fields": stage_cfg.get("fields", []),
-                        "behavior": stage_cfg.get("behavior", []),
-                    } if stage_cfg else None,
+                    # stage_config: UI 렌더링용 설정 스키마. v1.7.1 — cherry-pick 풀고
+                    # stage_cfg 통째로 노출. _inject_visibility_meta 가 박는
+                    # expose_strategy_picker, _inject_stage_meta 가 박는 progressive_threshold,
+                    # 외부 Stage 가 자기 stage_config 에 박은 임의 키 (bypass_ko/en, icon,
+                    # cost_hint 등) 모두 자동 합류 — 프론트 확장성 정합.
+                    "config": dict(stage_cfg) if stage_cfg else None,
                 })
         return sorted(descriptions, key=lambda d: d["order"])
 

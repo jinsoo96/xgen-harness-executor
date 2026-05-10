@@ -54,15 +54,23 @@ try:
         registry = ArtifactRegistry.default()
         stages = registry.describe_all()
         configs = get_all_stage_configs()
+        # v1.7.1 — registry.describe_all() 의 stage 응답에 stage_config 의 모든 키 자동 합류.
+        # 옛 cherry-pick (icon/description_ko/description_en/fields/behavior 5 key) 는 RESERVED 외
+        # 키 spread 로 자동 박힘 (backward 호환). 추가로 _inject_visibility_meta 가 박은
+        # expose_strategy_picker, _inject_stage_meta 가 박은 progressive_threshold, 외부
+        # Stage 가 박은 bypass_ko/en 등 임의 키 자동 합류 — 확장성 정합.
+        RESERVED_STAGE_KEYS = {
+            "stage_id", "display_name", "display_name_ko", "phase", "order",
+            "role", "active", "required", "artifacts", "current_artifact",
+            "source_file", "strategies",
+        }
         for s in stages:
             s["active"] = True
             s["required"] = s["stage_id"] in REQUIRED_STAGES
             cfg = configs.get(s["stage_id"], {})
-            s["icon"] = cfg.get("icon", "")
-            s["description_ko"] = cfg.get("description_ko", "")
-            s["description_en"] = cfg.get("description_en", "")
-            s["fields"] = cfg.get("fields", [])
-            s["behavior"] = cfg.get("behavior", [])
+            for k, v in cfg.items():
+                if k not in RESERVED_STAGE_KEYS:
+                    s[k] = v
         return {"stages": stages, "required": list(REQUIRED_STAGES), "all": ALL_STAGES}
 
     # === Tool Sources (v0.25.0) ===
