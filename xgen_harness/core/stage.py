@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 # v1.0 — 11→10 통합. s05_strategy 분해 / s08_judge·s10_save 격하 / s12_publish 삭제.
 STAGE_DISPLAY_NAMES: dict[str, str] = {
-    "s00_harness":    "Auto",
+    "s00_harness":    "Settings",
     "s01_input":      "Input",
     "s02_history":    "History",
     "s03_prompt":     "Prompt",
@@ -31,8 +31,12 @@ STAGE_DISPLAY_NAMES: dict[str, str] = {
     "s09_finalize":   "Finalize",
 }
 
+# v1.7.1 — s00_harness "Auto" 폐기. v1.1.0 BREAKING 으로 mode 시스템 (Auto/Selected/Off)
+# 자체 사라졌는데 stage 표시명 잔재로 "Auto" 가 남아 EventLog 에 raw 노출됨.
+# frontend stage-list.tsx / stage-detail-panel.tsx 이 이미 "Settings/설정" 으로
+# override 박았으므로 엔진도 동일 표현으로 통일 — override 자연스럽게 noop.
 STAGE_DISPLAY_NAMES_KO: dict[str, str] = {
-    "s00_harness":    "Auto",
+    "s00_harness":    "설정",
     "s01_input":      "입력",
     "s02_history":    "이력",
     "s03_prompt":     "프롬프트",
@@ -96,7 +100,7 @@ class Stage(ABC):
     @property
     @abstractmethod
     def order(self) -> int:
-        """실행 순서. v1.0 통합 기준 0~9 (s00_harness=0 통제탑 + s01_input~s09_finalize)."""
+        """실행 순서. v1.0 통합 기준 0~9 (s00_harness=0 본문 LLM 호출 stage + s01_input~s09_finalize)."""
         ...
 
     @property

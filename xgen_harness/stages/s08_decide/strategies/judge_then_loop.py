@@ -181,8 +181,13 @@ async def _llm_judge_fallback(state, get_param) -> dict:
     # v1.1.0 — judge_model lookup. 빈 값이면 본문 LLM 재사용 (backward compat).
     # judge_provider 는 v1.1.0 에서 Pydantic 필드만 보존, 본문과 다른 provider 사용은
     # API 키 wiring 까지 정합 필요해서 v1.1.x 후속. 같은 provider 다른 model 만 우선.
+    # v1.7.1 — judge_use_main=True 면 judge_model 박혀있어도 강제 본문 재사용
+    # (사용자 UI chip "본문 재사용" 명시 의도 우선).
     config = getattr(state, "config", None)
-    judge_model_name = (str(getattr(config, "judge_model", "") or "")).strip()
+    if bool(getattr(config, "judge_use_main", False)):
+        judge_model_name = ""
+    else:
+        judge_model_name = (str(getattr(config, "judge_model", "") or "")).strip()
 
     try:
         from ....core.llm_call import aux_call

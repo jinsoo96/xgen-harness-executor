@@ -162,7 +162,7 @@ STAGE_IO_SPECS: dict[str, dict[str, StageInput | StageOutput]] = {
             events=["StageEnterEvent", "StageExitEvent", "MetricsEvent", "DoneEvent"],
         ),
     },
-    # s00_harness — 통제탑. Phase A 에서 Plan 생성, Phase B 루프 안에서 main_call 로 본문 LLM 호출.
+    # s00_harness — 본문 LLM 호출 stage. Phase A 에서 Plan 생성, Phase B 루프 안에서 main_call 로 본문 LLM 호출.
     "s00_harness": {
         "input": StageInput(
             requires=["user_input"],

@@ -97,7 +97,7 @@ STAGE_CONFIGS: dict[str, dict] = {
     },
     "s01_input": {
         # v0.14.0 s01: **사용자 입력 정규화 전용**. LLM provider/model/temperature
-        # 선택은 s00_harness 통제탑 관할 — s01 에서 필드로 노출하지 않음.
+        # 선택은 s00_harness 관할 (본문 LLM 호출 stage) — s01 에서 필드로 노출하지 않음.
         "description_ko": "사용자가 입력한 메시지와 첨부 파일을 검증해서 LLM 이 이해하는 형식으로 변환합니다.",
         "description_en": "Validates the user message and normalizes attachments into LLM-readable blocks.",
         # v0.12.0 self-describing — Planner 가 이 세 필드만 보고 선택/제외/파라미터 조정.
@@ -926,6 +926,71 @@ def _inject_stage_meta(stage_id: str, cfg: dict) -> dict:
     return cfg
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# v1.7.1 — Frontend visibility 단일 진실 소스
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 프론트가 stage-detail-panel.tsx 에 SCHEMA_FIELD_HIDE_BY_STAGE / STRATEGY_UI_VISIBLE_STAGES
+# 를 하드코딩하던 것을 엔진으로 이동. 외부 Stage 는 두 경로 중 하나로 동일 효과:
+#   1) 자기 stage_config dict 의 field 에 직접  "hidden": True 박음
+#   2) 자기 stage_config dict 의 stage 메타에  "expose_strategy_picker": True 박음
+# 빌트인 stage 의 hide list 는 아래 두 dict 가 단일 진실 소스. 프론트는 f.hidden /
+# cfg.expose_strategy_picker 만 read 하면 됨 (외부 stage 자동 합류).
+# ─── hidden field — 사용자에게 안 보이게 가릴 stage_param. LLM 자율 결정 또는 R3 PD 정신 위임.
+_HIDDEN_FIELDS_BY_STAGE: dict[str, set[str]] = {
+    "s00_harness": {"strategy"},                                                # Transport — auto
+    "s03_prompt":  {"include_rules", "citation_mode",
+                    "citation_auto_doc_tokens", "citation_auto_prod_tokens",
+                    "thinking_mode", "planning_instruction_template",
+                    "identity_template", "rules_template"},                     # CoT/ReAct·인용 — auto
+    "s04_tool":    {"builtin_tools", "force_tool_use", "rag_tool_mode",
+                    "capability_discovery", "capability_top_k",
+                    "capability_min_score"},                                    # R3 — rag_tool_mode default 'tool'
+    "s06_context": {"strategy", "context_window", "compaction_threshold",
+                    "score_threshold", "rerank_top_k", "reranker",
+                    "enhance_prompt", "metadata_filter",
+                    "rag_pd_mode", "rag_ingestion_mode", "chars_per_token",
+                    "rag_pd_snippet_size",
+                    "cascade_l3_threshold", "cascade_l4_threshold", "cascade_l5_threshold",
+                    "context_collapse_threshold", "context_collapse_keep_tail",
+                    "microcompact_threshold", "microcompact_keep_recent",
+                    "autocompact_threshold", "autocompact_keep_tail",
+                    "window_size", "intent_rules"},                             # R3 — 검색 파라미터는 RAG 도구가 owns
+}
+# ─── Strategy 카드 노출 stage 화이트리스트. default False (모든 stage 의 strategy UI 는 함정).
+# 사용자가 명시적으로 결정해야 의미 있는 두 stage 만 노출.
+_EXPOSE_STRATEGY_PICKER: set[str] = {
+    "s05_policy",   # Guard 조합 = 보안 정책 사용자 명시
+    "s08_decide",   # 평가 모드 사용자 결정
+}
+
+
+def _inject_visibility_meta(stage_id: str, cfg: dict) -> dict:
+    """Frontend visibility 메타 통합 (v1.7.1).
+
+    - fields[i].hidden — 빌트인 hide list 박음. 자체 stage_config 가 이미 박은
+      hidden=True 는 보존 (외부 Stage self-describing 우선).
+    - cfg.expose_strategy_picker — 빌트인 화이트리스트로 박음. 자체 stage_config
+      가 이미 박은 값은 보존.
+    """
+    if not cfg or not isinstance(cfg, dict):
+        return cfg
+    hides = _HIDDEN_FIELDS_BY_STAGE.get(stage_id) or set()
+    if hides:
+        new_fields = []
+        changed = False
+        for f in cfg.get("fields") or []:
+            if isinstance(f, dict) and f.get("id") in hides and not f.get("hidden"):
+                new_fields.append({**f, "hidden": True})
+                changed = True
+            else:
+                new_fields.append(f)
+        if changed:
+            cfg = {**cfg, "fields": new_fields}
+    if "expose_strategy_picker" not in cfg:
+        cfg = {**cfg, "expose_strategy_picker": stage_id in _EXPOSE_STRATEGY_PICKER}
+    return cfg
+
+
 def _resolve_stage_self_describe(stage_id: str) -> Optional[dict]:
     """Stage 클래스의 self-describing 설정 조회.
 
@@ -1026,6 +1091,7 @@ def get_stage_config(stage_id: str) -> dict:
     cfg = _resolve_stage_self_describe(sid) or STAGE_CONFIGS.get(sid, {})
     cfg = _inject_dynamic_options(cfg)
     cfg = _inject_stage_meta(sid, cfg)
+    cfg = _inject_visibility_meta(sid, cfg)
     return cfg
 
 
@@ -1044,6 +1110,7 @@ def get_all_stage_configs() -> dict:
         cfg = self_described if self_described is not None else base
         cfg = _inject_dynamic_options(cfg)
         cfg = _inject_stage_meta(sid, cfg)
+        cfg = _inject_visibility_meta(sid, cfg)
         out[sid] = cfg
         seen.add(sid)
 
@@ -1059,6 +1126,7 @@ def get_all_stage_configs() -> dict:
                 continue
             cfg = _inject_dynamic_options(self_described)
             cfg = _inject_stage_meta(sid, cfg)
+            cfg = _inject_visibility_meta(sid, cfg)
             out[sid] = cfg
     except Exception as e:
         _sc_logger.debug("[stage_config] registry self-describe 병합 skip: %s", e)
