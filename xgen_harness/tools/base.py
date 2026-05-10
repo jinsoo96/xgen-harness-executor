@@ -95,11 +95,14 @@ class Tool(ABC):
         """외부 세계(네트워크·파일) 에 영향. 기본 True (안전 쪽)."""
         return True
 
-    # ─── 레거시 호환 (v0.23 deprecated, v0.24 에서 제거 예정) ────────
+    # ─── 외부 wheel legacy 호환 — 보존 ────────────────────────────────
+    # v0.23 deprecated 표기됐으나 capabilities/schema.py:83 + s07_act/stage.py:316 fallback
+    # chain 이 외부 wheel 의 옛 Tool 인스턴스를 detect 할 때 이 별칭을 그대로 사용. 진짜 정신
+    # 정합 = 외부 wheel 호환 보장 → 보존 (read_only_hint 가 신규 표준).
 
     @property
     def is_read_only(self) -> bool:
-        """레거시 별칭. `read_only_hint` 를 그대로 반환."""
+        """외부 ext legacy 별칭. 신규 코드는 read_only_hint 사용."""
         return self.read_only_hint
 
     # ─── 실행 ──────────────────────────────────────────────────────────
