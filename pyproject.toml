@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.7.1"
+version = "1.7.2"
 description = "XGEN Harness v1.7 — ResourceProvider 자동 인식 + frontend visibility self-describing (hidden / expose_strategy_picker) + HarnessConfig top-level field schema (register_top_level_field) + judge_use_main 정식 등록 + cherry-pick 누수 fix."
 requires-python = ">=3.10"
 license = {text = "MIT"}

@@ -58,9 +58,14 @@ class RagCollectionMetaProvider:
             if cn and cn in cols:
                 desc = (c.get("description") or "").strip()
                 total = c.get("total_documents") or c.get("document_count") or 0
+                # v1.7.2 — collection_make_name (UUID 없는 사용자 친화 이름) 도 박음.
+                # 사용자가 description 비워둔 경우 (5/9 worklog 시나리오) 에도 LLM 이 친화 이름
+                # 보고 적합도 추측 가능. system_prompt 의 reference_resources 가 사용.
+                make_name = (c.get("collection_make_name") or "").strip()
                 meta_map[cn] = {
                     "description": desc,
                     "total_documents": int(total) if total else 0,
+                    "make_name": make_name,
                 }
 
         # description 빈 칸 컬렉션 자동 enrich (default OFF, register 한 enricher 만 발동)

@@ -277,16 +277,34 @@ class SystemPromptStage(Stage):
             lines.append("사용자가 첨부한 자원입니다. 질문에 관련되면 활용하세요.")
             if rag_collections_attached:
                 lines.append("- RAG 컬렉션:")
+                # v1.7.2 — description 빈 칸인 컬렉션 추적 → 가이드 라인 끝에 추가.
+                missing_desc_count = 0
                 for col in rag_collections_attached:
                     m = rag_meta.get(col, {}) if isinstance(rag_meta.get(col), dict) else {}
                     desc = (m.get("description") or "").strip()
                     total = m.get("total_documents", 0)
-                    line = f"  · {col}"
+                    make_name = (m.get("make_name") or "").strip()
+                    # 친화 이름 우선 (assort_uuid → 'assort'). UUID 만 있는 collection_name 보다
+                    # LLM 이 컬렉션 의미 추측하기 쉬움. UUID 는 도구 호출 시 정확 ID 로 옆에 박음.
+                    if make_name and make_name != col:
+                        line = f"  · {make_name} (id={col})"
+                    else:
+                        line = f"  · {col}"
                     if desc:
                         line += f": {desc}"
+                    else:
+                        missing_desc_count += 1
                     if total:
                         line += f" ({total:,} docs)"
                     lines.append(line)
+                # description 빈 칸이면 LLM 에게 명시 가이드 — "메타 부족 시 직접 검색해 확인".
+                # 사용자가 컬렉션 description 안 박은 경우에도 rag_search 호출 유도.
+                if missing_desc_count > 0:
+                    lines.append(
+                        "  ※ 일부 컬렉션은 description 이 비어있습니다. "
+                        "사용자 질문이 컬렉션 이름과 관련 있어 보이거나 내용을 모르겠다면 "
+                        "rag_search(collection_name=..., query=...) 로 직접 검색해 확인하세요."
+                    )
             if ontology_collections_attached:
                 lines.append("- 지식 그래프:")
                 for col in ontology_collections_attached:
