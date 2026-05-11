@@ -387,6 +387,51 @@ class SystemPromptStage(Stage):
             # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
             sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
 
+        # v1.7.5 — `<available_prompt_templates>` 섹션. PD isomorphic 정합.
+        # L1 (system_prompt 메타) 에 등록된 prompt template 의 이름 + 첫 줄 (description
+        # 대용) 박음 → LLM 이 "이런 게 있구나" 인지 → 필요 시 discover_prompt 자율 호출
+        # 로 본문 lazy fetch. 사용자 정신: 사용자가 박은 prompt 가 본문이고, 등록된
+        # template 은 추가 참조 풀. 이름만 박혀있어도 LLM 이 점진적으로 찾아갈 수 있다.
+        # 빈 reg 는 skip — default 만 있어도 default 라는 이름 자체가 LLM 에게 의미.
+        try:
+            registries = [
+                ("identity", DEFAULT_IDENTITIES),
+                ("rules", DEFAULT_RULES),
+                ("thinking_mode", THINKING_MODE_TEMPLATES),
+            ]
+            tpl_lines: list[str] = []
+            any_template = False
+            for ttype, reg in registries:
+                if not reg:
+                    continue
+                tpl_lines.append(f"- {ttype}:")
+                for tname, body in reg.items():
+                    # 본문 첫 줄 (~120자) 을 description 대용. 본문 비어있으면 이름만.
+                    first_line = ""
+                    if isinstance(body, str):
+                        s = body.strip()
+                        if s:
+                            first_line = s.split("\n", 1)[0][:120]
+                    if first_line:
+                        tpl_lines.append(f"  · {tname}: {first_line}")
+                    else:
+                        tpl_lines.append(f"  · {tname}")
+                    any_template = True
+            if any_template:
+                tpl_section = (
+                    "<available_prompt_templates>\n"
+                    "사용자가 박은 prompt 가 본문이고, 아래는 추가 참조 가능한 등록된 template "
+                    "목록입니다. 적합한 게 있으면 discover_prompt(template_type=..., name=...) "
+                    "로 본문을 lazy fetch 하세요.\n"
+                    + "\n".join(tpl_lines)
+                    + "\n</available_prompt_templates>"
+                )
+                # rag 다음 우선순위 — 자원 인덱스 끝에 자연스럽게 합류
+                sections.append((SECTION_PRIORITIES["rag"], "available_prompt_templates", tpl_section))
+        except Exception as _e:
+            # 메타 노출 실패는 본문 prompt 흐름 깨면 안 됨 — graceful skip.
+            logger.debug("[s03_prompt] available_prompt_templates 섹션 skip: %s", _e)
+
         # v1.6 — Policy guards LLM 가시화. data-driven (register API + entry_points).
         # 빌트인 4 종 (max_iterations / cost_budget_usd / context_window / s05_guards) +
         # 외부 wheel 이 register_active_policy_renderer() 또는 entry_points 로 추가 가능.

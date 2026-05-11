@@ -950,10 +950,25 @@ class DiscoverPromptTool(Tool):
             )
 
         if not name:
-            # list 모드
+            # v1.7.5 — list 모드 정보량 보강. 이름만 X → name + description (본문 첫 줄,
+            # 120자) + length. system_prompt 의 <available_prompt_templates> 섹션과
+            # isomorphic — LLM 이 "어떤 게 적합한지" 자율 판단할 정보 박음.
+            entries = []
+            for k, v in reg.items():
+                first_line = ""
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s:
+                        first_line = s.split("\n", 1)[0][:120]
+                entries.append({
+                    "name": k,
+                    "description": first_line,
+                    "length": len(v) if isinstance(v, str) else 0,
+                })
             return ToolResult.success(
-                f"{len(reg)} {ttype} templates",
-                templates=list(reg.keys()),
+                f"{len(reg)} {ttype} templates — discover_prompt(template_type='{ttype}', "
+                f"name=...) 로 본문 fetch",
+                templates=entries,
             )
 
         if name not in reg:

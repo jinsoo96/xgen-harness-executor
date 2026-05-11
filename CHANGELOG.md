@@ -5,6 +5,126 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.5] — 2026-05-11
+
+### 🚨 PD isomorphic 정합 — RAG 무한 루프 fix + prompt template 메타 노출
+
+v1.7.4 (RAG only) 와 prompt template 메타 노출을 한 release 로 묶음. 사용자 PD 의도 ("L1 메타 → 점진적 자율 fetch") 정합 — RAG 단일이 아니라 **도구 / 컬렉션 / 프롬프트 / 정책 4 종 isomorphic** 으로.
+
+#### A. RAG 무한 루프 fix (= 사라진 v1.7.4)
+
+사용자 사례 (dev-xgen): `rag_search ×6 + fetch_pd ×3 + discover_collection` — "최신 주문데이터" 찾는다고 같은 컬렉션 9 라운드 반복, 35초 / 208K 토큰 / $0.64 태우고도 답변 미완.
+
+진단 — root cause 3:
+1. snippet 120자 → "이 청크가 답에 충분한지" 판단 정보 부족, 추측으로 같은 query 반복
+2. `chunk_index / total_chunks / length` 메타 부재 → "총 N 중 M번째 봤다" 인지 불가, "끝까지 봐야 한다" 강박
+3. 도구 description 에 "같은 query 반복 금지 / 답 없으면 종료" 안내 부재 → max_iter 직전까지 헛 fetch
+
+fix (`xgen_harness/tools/rag_tool.py`):
+- snippet 120 → 250자 (claude skills description ~150자 보다 약간 두껍지만 청크 본문 미리보기 역할 정합. 500자 시도는 두꺼워 PD "지도" 와 비대칭이라 폐기)
+- chunk 정량 메타: `[i] id=col#i · source · score · len=N · chunk=M/total · 250자 snippet`
+- description 에 PD 흐름 명시 + "Avoid repeating the same search query" + "report insufficient data and stop"
+- `register_progressive_policy(enabled, auto_threshold_chars, snippet_size)` — 호스트 외부 override
+
+#### B. prompt template 메타 노출 (4 종 isomorphic 정합)
+
+기존 비대칭:
+| L1 메타 (system_prompt) | 도구 카탈로그 ✅ | RAG 컬렉션 ✅ | 정책 ✅ | **prompt template ❌** |
+
+= `discover_prompt` 도구는 등록되지만 LLM 이 L1 에서 "이 도구로 뭘 볼 수 있는지" 모름 → 자율 호출 trigger 약함 → 사용자 의도 ("프롬프트 + 메타 프롬프트 목록 들어간 다음 점진적 찾아감") 못 충족.
+
+fix:
+1. **`s03_prompt/stage.py`**: `<available_prompt_templates>` 섹션 신규. `<reference_resources>` 다음 우선순위로 박힘:
+   ```
+   <available_prompt_templates>
+   사용자가 박은 prompt 가 본문이고, 아래는 추가 참조 가능한 등록된 template 목록입니다.
+   적합한 게 있으면 discover_prompt(template_type=..., name=...) 로 본문을 lazy fetch 하세요.
+   - identity:
+     · default: <본문 첫 줄 120자>
+     · legal_advisor: <본문 첫 줄 120자>
+   - rules:
+     · default: ...
+   - thinking_mode:
+     · cot: ...
+   </available_prompt_templates>
+   ```
+   본문 첫 줄을 description 대용 — 사용자 정신 ("description 있으면 같이, 없으면 이름만").
+   빈 칸인 template 은 이름만. 빈 reg 는 skip. graceful — 메타 노출 실패는 본문 prompt 흐름 안 깸.
+
+2. **`tools/builtin.py:DiscoverPromptTool.execute`**: list 모드 정보량 보강. 이름만 X → `[{name, description, length}]`. system_prompt 섹션과 isomorphic.
+
+#### C. PD 4-tier (4 종 isomorphic)
+
+```
+L1 메타 (system_prompt 박힘):
+  ├─ tool_index                       (도구 이름 + 120자 desc)
+  ├─ <reference_resources>            (RAG: make_name + description + total_documents)
+  ├─ <available_prompt_templates>     (← v1.7.5 신규: identity/rules/thinking_mode 이름 + 첫 줄 120자)
+  └─ <active_policies>                (max_iter / cost / context / guards)
+
+L0/L2 lazy load (도구 호출):
+  search_tools / discover_tools / ToolSearch / rag_search / discover_collection /
+  discover_prompt / check_policy
+
+L3 lazy fetch:
+  s07_act 실 도구 호출 / fetch_pd(kind, id) → pd_stores 본문
+```
+
+#### Public API
+
+- `register_progressive_policy(enabled, auto_threshold_chars, snippet_size)` — 신규
+- `get_progressive_policy() → dict` — 신규
+- `RAGSearchTool.__init__(progressive=None, snippet_size=None)` — None default 면 _PROGRESSIVE_POLICY 사용 (BC)
+
+---
+
+## [1.7.4] — 2026-05-11 (skipped — 1.7.5 로 묶음)
+
+### 🚨 RAG 무한 루프 fix — PD "지도" 정보량 보강 + 자율 절제 가이드
+
+사용자 사례 (dev-xgen 테스트): `rag_search ×6 + fetch_pd ×3 + discover_collection` — LLM 이 "최근 주문데이터" 찾는다고 같은 컬렉션을 9 라운드 반복 호출, 35초 / 208K 토큰 / $0.64 태우고도 답변 미완. "다시 더 넓은 범위로 최신 주문 데이터를 검색해보겠습니다" 같은 멘트만 반복.
+
+#### 진단 — root cause 3 가지
+
+1. **인덱스 빈약** — snippet 120자 + source + score 만. LLM 이 "이 청크가 답에 충분한지" 판단 정보 부족 → 추측으로 같은 query 반복
+2. **정량 메타 부재** — `chunk_index / total_chunks / length` 없음. LLM 이 "총 N 청크 중 M번째 봤다" 인지 불가 → "끝까지 봐야 한다" 강박
+3. **자율 절제 가이드 없음** — 도구 description 에 "같은 query 반복 금지 / 답 없으면 종료" 안내 부재 → LLM 이 max_iter 직전까지 헛 fetch
+
+#### fix (PD 패턴 유지, "지도" 단계 정보량만 보강)
+
+`xgen_harness/tools/rag_tool.py`:
+
+1. **snippet 120 → 250자** — claude skills description (~150자) 보다 약간 두껍지만 청크 본문 미리보기 역할 정합. PD "지도" 본분 유지 (500자 시도는 두꺼워 PD 와 비대칭이라 폐기)
+2. **chunk 정량 메타 박음** — 결과 형식: `[i] id=col#i · source · score · len=N · chunk=M/total · 250자 snippet`
+3. **description 에 PD 흐름 명시**:
+   ```
+   Returns an INDEX (map) of relevant chunks ... To read the full body, call
+   fetch_pd(kind='rag', id='<id>'). Strategy: read the index first to decide
+   WHICH chunks are worth fetching, then fetch only those, then synthesize.
+   Avoid repeating the same search query — if the index doesn't show what
+   you need, try a different query or report insufficient data and stop.
+   ```
+4. **`register_progressive_policy(enabled=, auto_threshold_chars=, snippet_size=)`** — 호스트가 PD 정책 외부 override (확장성)
+
+#### 사용자 의도 정합 (R3 PD 본질)
+
+> "LLM 이 지도와 고삐를 달도 실행이 된다라는 progressive disclosing... 마치 클로드 스킬스 처럼 사용자가 선택해놓은 도구들이나 RAG 문서들 여러가지 설정사항들의 인덱스들을 바탕으로 골라서 사용자의 질문이나 요구사항들에 따라서 그걸 고르고 답변에 활용"
+
+3-tier PD 강화:
+```
+L1: system_prompt <reference_resources>     ← 카탈로그 (eager — 자원 종류/이름/메타)
+L2: rag_search() 결과 = 인덱스 (메타+250자)  ← v1.7.4 보강 (지도)
+L3: fetch_pd(kind='rag', id=...) → 본문      ← lazy
+```
+
+#### Public API
+
+- `register_progressive_policy(enabled, auto_threshold_chars, snippet_size)` — 신규
+- `get_progressive_policy() → dict` — 신규
+- `RAGSearchTool.__init__(progressive=None, snippet_size=None)` — None default 면 _PROGRESSIVE_POLICY 사용 (BC)
+
+---
+
 ## [1.5.4] — 2026-05-09
 
 ### 🚨 R3 회귀 fix — system_prompt 에 박힌 컬렉션 안내 강제

@@ -105,6 +105,7 @@ from .adapters.node_adapters import register_node_adapter
 from .orchestrator.multi_agent_planner import register_fan_out_strategy
 from .stages.strategies._decide import register_decide_defaults
 from .stages.strategies.token_tracker import register_model_pricing
+from .tools.rag_tool import register_progressive_policy, get_progressive_policy
 from .stages.s03_prompt.stage import (
     register_identity,
     register_rules,
@@ -421,4 +422,7 @@ __all__ = [
     # v1.7.1 — top-level field schema
     "register_top_level_field",
     "get_top_level_field_schema",
+    # v1.7.3 — RAG progressive PD policy (default OFF, auto-on > 50KB)
+    "register_progressive_policy",
+    "get_progressive_policy",
 ]
