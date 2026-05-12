@@ -5,6 +5,111 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-05-12
+
+### 🚨 BREAKING — Option C 라디칼 (s06_context pre-search 폐기) + Claude Code 서브에이전트 패턴 fetch_synthesize 재설계
+
+#### A. s06_context Option C — 단일 도구 경로
+
+`s06_context.execute` 가 `doc_service.search` / `doc_service.ontology_query` 자동 호출하던 코드 ~200 라인 제거. RAG / Ontology / Gallery / MCP search 가 isomorphic — **모두 s07 에서 LLM 자율 도구 호출** 단일 경로.
+
+옛 s06 의 9 stage_params (`top_k` / `score_threshold` / `metadata_filter` / `files` / `reranker` / `rerank_top_k` / `rag_pd_mode` / `rag_pd_snippet_size` / `rag_ingestion_mode`) → `s04_tool` 가 cross-stage read 해서 `RAGSearchTool` 의 default args 로 자동 이주. UI 사용자 의도 (top_k=10, reranker=True 등) 그대로 적용.
+
+BC 완화 — `s03_prompt` 의 `<active_resources>` 명령형 강화:
+```
+These resources are attached to the workflow.
+**If the user query is related to any of them, you MUST call the matching
+tool BEFORE answering — do not assume, do not say you don't know without
+checking first.**
+```
+
+영향:
+- 첫 응답 1 turn 지연 (rag_search 호출 추가)
+- max_iter 압박 (rag_search 가 iter 1 회 소모)
+- 옛 stage_params `rag_ingestion_mode` / `enhance_prompt` 는 dead (UI 무시)
+
+#### B. fetch_synthesize Claude Code 서브에이전트 패턴 재설계
+
+옛 (v1.8.0): body 가 sub-LLM 의 system prompt 에 통째 박혀 vLLM short-context 폭주.
+
+신 (v1.9.0): body 가 sub-agent 의 도구로 lazy 노출 — sub 가 자기 컨텍스트 안에서 ReAct 루프:
+- `read_chunk(start, end)` — body 슬라이스 lazy read (max 1500자/콜)
+- `search_in_body(keyword)` — 키워드 위치 발견
+- `done(synthesis, citations[], missing_topics[])` — main 에 합성 + 인용 발췌 + 누락 신호 복귀
+
+누락 방지 3중:
+1. **Raw passthrough** — body ≤ 2000자 면 sub-agent 호출 자체 skip, raw 그대로 main 반환 (압축 0 = 누락 0)
+2. **Verbatim citations** — sub 가 `done.citations[]` 에 본문 verbatim 발췌 보존
+3. **Missing topics 신호** — sub 가 다루지 못한 주제 명시 → main 자율 재호출 결정
+
+호스트 override:
+```python
+register_runtime_default("synth_raw_threshold", 5000)  # raw 임계 조정
+register_runtime_default("synth_sub_max_turns", 12)   # sub ReAct turn 늘리기
+```
+
+#### C. P0#1 — 도구 N 연속 실패 graceful fallback
+
+같은 도구 N (default 3) 회 연속 실패 시 `state.metadata['tool_failure_streak']` 카운터 도달 → error_msg 에 명령형 가이드 박음:
+
+```
+[harness graceful fallback — `<tool>` failed N times in a row. Stop calling it.
+Either: (a) try a different tool, (b) reformulate the user request, or
+(c) answer with what you have and note the limitation.]
+```
+
+LLM 자율 판단 보존 (강제 termination X). 무한 retry 차단.
+
+#### D. P0#3 — judge_provider 별도 인스턴스
+
+`HarnessConfig.judge_provider` 필드가 v1.1.0 부터 존재하나 동작 X (같은 provider 다른 model 만) 였던 거 fix.
+
+`resolve_judge_provider()` 신설 — `judge_provider != config.provider` 면 API key / base_url 독립 lookup (ServiceProvider.config → env → file) 으로 별도 provider 인스턴스 구축. 같은 provider 면 model 만 다름 (BC). `judge_use_main=True` 면 본문 재사용.
+
+self-promotion bias 회피 (Claude 가 Claude 평가 vs OpenAI 가 Claude 평가) + 비용 절감 시나리오 (본문 Opus / judge Haiku 4.5).
+
+#### E. 3 새 runtime_defaults
+
+```python
+"synth_raw_threshold": 2000,
+"synth_sub_max_turns": 8,
+"tool_consecutive_failure_limit": 3,
+```
+
+#### F. 변경 영역
+
+- `stages/s06_context/stage.py` — pre-search ~200 라인 삭제, scope 선언만
+- `stages/s04_tool/stage.py` — `rag_tool_mode` / `ontology_tool_mode` 분기 폐기. s06 9 stage_params cross-stage read
+- `stages/s03_prompt/stage.py` — `<active_resources>` 명령형 강화
+- `tools/rag_tool.py` — `RAGSearchTool.__init__` 5 새 default args
+- `tools/builtin.py` — `FetchSynthesizeTool` Claude Code 패턴 재설계
+- `stages/s07_act/stage.py` — `_append_failure_streak_guidance`
+- `core/provider_bootstrap.py` — `resolve_judge_provider()`
+- `core/llm_call.py` — `aux_call` 에 `provider` kwarg
+- `stages/s08_decide/strategies/judge_then_loop.py` — resolve_judge_provider 호출
+- `core/runtime_defaults.py` — 3 새 floor
+
+검증: 22/22 tests PASS · grep 자가검증 7항목 · 컨테이너 통합 8항목 · 실 UI Playwright PASS (R14 B PD assort RAG / rag_search 자율 호출 / fetch_pd 4 회 / 정확 답변 합성).
+
+---
+
+## [1.8.1] — 2026-05-11
+
+### 🔧 RAG vector 매칭 가이드 강화
+
+`rag_search` description + SKILL body 에 file_name 매칭 가이드 추가 — vector 1순위 chunk 만 보고 fetch 하던 약한 모델 회귀 fix. 단, v1.8.1 의 file_name 매칭 강요 가이드는 사용자 지적 (도메인 의미 정합) 후 v1.9.0 에서 원복.
+
+---
+
+## [1.7.5] — 2026-05-10
+
+### 🔧 PD isomorphic 정합
+
+- RAG 무한 루프 fix
+- prompt template 메타 노출 (`<available_prompt_templates>`)
+
+---
+
 ## [1.8.0] — 2026-05-11
 
 ### 🚨 BREAKING — Claude Code MCP-style PD strict + 메타 도구 Skills 화 + Auto-load on first call

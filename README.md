@@ -4,6 +4,8 @@
 
 LLM 에이전트 실행기입니다. 워크플로우를 코드로 짜지 않고 `HarnessConfig` 한 객체로 선언하면, 10개 Stage 가 정해진 순서로 실행합니다.
 
+**v1.9.0 (2026-05-12)** — Option C 라디칼 (모든 search 가 LLM 자율 도구 호출 단일 경로) · Claude Code 서브에이전트 패턴 `fetch_synthesize` · 도구 N 연속 실패 graceful fallback · judge_provider 별도 인스턴스. [CHANGELOG](./CHANGELOG.md).
+
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
 [![License](https://img.shields.io/pypi/l/xgen-harness)](https://pypi.org/project/xgen-harness/)
@@ -89,40 +91,36 @@ PipelineState  ◀──────────  EventEmitter (SSE 스트림)
     │
     │   ── agent loop (orchestrator_hint 가 결정한 횟수만큼) ──
     ├─ s05_policy   (옵션) Guard 체인 — pre_main / pre_tool / post_response / loop_boundary
-    ├─ s06          RAG · 온톨로지 · DB → 컨텍스트 주입 + 압축 (microcompact / cascade / …)
-    │                + Intent Routing (구 s05_strategy 흡수)
-    ├─ s07_act      tool_use multi-turn 도구 실행 (s00 본문 호출 결과 기반)
+    ├─ s06_context  scope 선언 (RAG / Ontology / DB / 폴더 / 파일) + 토큰 예산 컴팩션
+    │                ※ v1.9.0 Option C — 자동 search 폐기, 모든 search 는 s07 도구 호출
+    ├─ s07_act      tool_use multi-turn 도구 실행 (rag_search / query_graph / mcp_xxx ...)
     ├─ s08_decide   루프 계속 / 종료 결정 + (선택) judge_then_loop strategy 로 응답 평가
-    │                ※ 구 s08_judge 가 strategy 로 격하
+    │                ※ v1.9.0 — judge_provider 별도 인스턴스 (resolve_judge_provider)
     │
     │   ── egress ──
     └─ s09_finalize 최종 응답 + MetricsEvent + (선택) persist strategy 로 DB 기록
-                    ※ 구 s10_save / s11_finalize 통합
 ```
 
-`HarnessConfig.harness_mode` 가 이 사이클의 자율도를 결정합니다 (`off` / `selected` / `autonomous`). 자세한 내용은 다음 섹션입니다.
+`HarnessConfig.harness_mode` 가 이 사이클의 자율도를 결정합니다 (`off` / `autonomous` — v1.1.0 부터 selected 폐기, 자세한 내용은 다음 섹션).
 
 ---
 
-## 3 모드 — 자유도 vs 안정성
+## 2 모드 — 자유도 vs 안정성
 
-| 모드 | `harness_mode` | 동작 | 언제 쓰나 |
-|---|---|---|---|
-| **Off** (기본) | `"off"` | 10 Stage 정해진 순서, Plan 안 만듦, 본문 LLM 1회 | 빠른 단발 Q&A |
-| **Selected** | `"selected"` + `active_strategies={...}` | 사용자 핀 한 부분만 hard-pin, 나머지 Planner 자율 | 일부만 강제 |
-| **Auto** | `"autonomous"` | Planner LLM 이 Stage / Strategy / 도구 / orchestrator_hint 자율 결정 | 복잡 요청 · RAG · 멀티턴 도구 |
+| 모드 | 동작 | 언제 쓰나 |
+|---|---|---|
+| **autonomous** (기본) | 10 Stage 정해진 순서로 모두 실행. Planner LLM 이 stage 안에서 도구 / strategy 자율 선택 | 일반 요청 |
+| **off** | s04 stage 의 `strategy="none"` → 도구 발견 / capability binding skip. 메타 도구 + 빌트인 도구 등록 안 됨 | 단순 LLM 호출만 (도구 무관) |
 
 ```python
-# Auto — LLM 이 입력 보고 자율 조립 (RAG 결정, 도구 선택, orchestrator 결정)
-config = HarnessConfig(harness_mode="autonomous", max_iterations=5)
-assert config.is_autonomous() is True   # v0.25.3 helper
+# 표준 — autonomous (기본). HarnessConfig 만들기만 하면 됨.
+config = HarnessConfig(max_iterations=5)
 
-# Selected — 일부만 핀
+# 특정 stage 의 strategy 핀
 config = HarnessConfig(
-    harness_mode="selected",
     active_strategies={
-        "s06_context": "microcompact",       # RAG 압축 전략 핀
-        "s08_decide":  "judge_then_loop",    # 응답 품질 평가 활성 (구 s08_judge stage 격하)
+        "s06_context": "cascade",            # 컨텍스트 압축 — L3/L4/L5 자동
+        "s08_decide":  "judge_then_loop",    # 응답 품질 평가 활성
     },
 )
 ```
@@ -148,7 +146,7 @@ config = HarnessConfig(
 | # | Stage | 책임 | 주요 `stage_params` | Strategy |
 |---|---|---|---|---|
 | 5 | **s05_policy** | Guard 체인 × 4 훅 포인트 (`guards` 비면 자동 bypass) | `guards: [{name, params}]` | — (Guard 합성, Strategy 카드 0) |
-| 6 | **s06_context** | RAG / 온톨로지 / DB → 컨텍스트 주입 + 압축 + Intent Routing (구 s05_strategy 흡수) | `rag_collections`, `folders`, `files`, `db_connections`, `ontology_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `rag_ingestion_mode`, `intent_rules`, cascade/L3/L4/L5 임계 | `token_budget`* / `sliding_window` / `microcompact` / `context_collapse_overlay` / `autocompact_llm` / `cascade` |
+| 6 | **s06_context** | **v1.9.0 Option C** — scope 선언 (RAG / Ontology / DB / 폴더 / 파일) + 토큰 예산 컴팩션. search 는 s07 에서 도구 호출 (`rag_search` / `query_graph`) | `rag_collections`, `folders`, `files`, `db_connections`, `ontology_collections`, `score_threshold`, `reranker`, `metadata_filter`, `rag_pd_mode`, `intent_rules`, cascade/L3/L4/L5 임계 — s04 가 RAGSearchTool default args 로 자동 이주 | `cascade`* (사용자 픽 카드 단일) — token_budget / microcompact / context_collapse_overlay / autocompact_llm 는 코드 보존 (외부 plugin 직접 셋) |
 | 7 | **s07_act** | 도구 실행 (read 병렬 / write 직렬) | `timeout`, `result_budget`, `tool_result_preview_threshold`, `tool_result_preview_size` | `default`* / `parallel_read` / `strict_no_error` |
 | 8 | **s08_decide** ✱ | 루프 계속 / 종료 결정 + (선택) 응답 품질 평가 (구 s08_judge 흡수) | `max_retries`, `judge_enabled`, `judge_threshold`, `criteria`, `evaluation_strategy`, `evaluation_prompt_template`, `evaluation_system_prompt` | `threshold`* / `judge_then_loop` / `always_pass` |
 
@@ -163,6 +161,26 @@ config = HarnessConfig(
 > v1.0 BREAKING (2026-04-29~30): `s05_strategy` 분해 / `s08_judge` → strategy 격하 / `s10_save` → strategy 격하 / `s12_publish` 제거 / 번호 시프트 (`s09_decide`→`s08_decide`, `s11_finalize`→`s09_finalize`). 외부 swap-in 슬롯은 strategy 로 보존.
 
 > **최근 변경 — 한눈에**:
+>
+> - **v1.9.0 (2026-05-12) — BREAKING — Option C 라디칼 + Claude Code 서브에이전트 패턴 + P0#1/#3**:
+>   - **s06_context Option C** — `doc_service.search` / `ontology_query` 자동 호출 폐기. RAG / Ontology / Gallery / MCP search 모두 s07 에서 LLM 자율 도구 호출 단일 경로. 옛 9 stage_params (top_k / score_threshold / metadata_filter / files / reranker / rerank_top_k / rag_pd_mode / rag_pd_snippet_size / rag_ingestion_mode) 는 `s04_tool` 가 cross-stage read 해 `RAGSearchTool` default args 로 자동 이주.
+>   - **`fetch_synthesize` Claude Code 서브에이전트 패턴 재설계** — body 가 sub system prompt 박히던 거 → 도구로 lazy 노출 (`read_chunk` / `search_in_body` / `done(synthesis, citations, missing_topics)`). 누락 방지 3중: raw passthrough (≤2000자) / verbatim citations / missing_topics 신호.
+>   - **`s03_prompt` 명령형 강화** — `<active_resources>` 에 "MUST call BEFORE answering" (자동 search 폐기 후 LLM 자율 호출 유도).
+>   - **P0#1 graceful fallback** — 같은 도구 N (default 3) 연속 실패 시 명령형 가이드 박음. `state.metadata['tool_failure_streak']`. 무한 retry 차단.
+>   - **P0#3 `judge_provider` 별도 인스턴스** — `resolve_judge_provider()` 신설. judge_provider != config.provider 면 별도 인스턴스 (API key 독립 lookup). self-promotion bias 회피.
+>   - 3 새 runtime_defaults: `synth_raw_threshold=2000` / `synth_sub_max_turns=8` / `tool_consecutive_failure_limit=3`.
+>
+> - **v1.8.0 ~ v1.8.1 (2026-05-11) — BREAKING — Claude Code MCP-style PD strict + Skills + sub-agent + RAG 가이드 강화**:
+>   - **default 패러다임 변경** — `selected_tools` 미명시 시 모든 도구 eager → 메타 도구 8개만 eager / 사용자 도구 = deferred. LLM 이 `search_tools` / `ToolSearch` 로 능동 발견·승격. 환원 path: `register_default_tool_strategy("eager_all")`.
+>   - **Auto-load SKILL on first call** (provider 무관) — `s07_act._execute_single` hook. 도구 첫 실행 시 SKILL body 가 `state.loaded_skills` 자동 박힘 + `<loaded_skills>` 섹션 합류. Qwen / vLLM 약 instruction following 대응.
+>   - **`fetch_synthesize` 신** — fetch_pd 청크 본문 클 때 sub-agent (별 LLM 호출) 로 합성. body 격리 → main 컨텍스트 보호 (v1.9.0 에서 Claude Code 패턴으로 재설계).
+>   - v1.8.1: `rag_search` description + SKILL body 에 file_name 매칭 가이드 (v1.9.0 에서 도메인 의미 정합 우려로 원복).
+>
+> - **v1.7.x (2026-05-09~10) — PD 4-layer 완성 + ResourceProvider + frontend visibility self-describing + R3 회귀 fix**:
+>   - v1.7.0 `register_resource_provider()` 자동 인식 패턴 (자원 종이 자기 메타 fetch)
+>   - v1.7.1 frontend visibility 메타 (`_HIDDEN_FIELDS_BY_STAGE` / `_EXPOSE_STRATEGY_PICKER`) + `judge_use_main` 정식 등록 + s00_harness "Auto" → "설정"
+>   - v1.7.2 RAG 메타 `make_name` + description 빈 칸 가이드 (assort R3 회귀 fix)
+>   - v1.7.5 PD isomorphic 정합 (RAG 무한 루프 fix + prompt template 메타 노출)
 >
 > - **v1.0.9 (2026-05-01) — Plugin Registration API 정리 + s06 god-class 분해 + runtime_defaults 인프라**:
 >   - 30+ `register_*` / `get_*` / `list_*` 함수 **top-level export** (entry_points 16 그룹과 1:1 매핑). 외부 plugin 이 깊은 모듈 경로 알 필요 없이 `from xgen_harness import register_phase` 한 줄로.
