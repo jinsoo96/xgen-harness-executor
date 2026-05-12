@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
 version = "1.9.0"
-description = "XGEN Harness v1.9.0 — BREAKING: Option C 라디칼 (s06_context pre-search 폐기, 모든 search 는 LLM 자율 도구 호출). RAG / Ontology / Gallery / MCP search isomorphic 단일 경로. 옛 s06 의 9 stage_params (top_k / score_threshold / metadata_filter / files / reranker / rerank_top_k / rag_pd_mode / rag_pd_snippet_size / rag_ingestion_mode) 는 RAGSearchTool 의 default args 로 자동 이주. s03 <active_resources> 명령형 강화 ('답변 전 반드시 도구 호출'). fetch_synthesize 가 Claude Code 서브에이전트 패턴으로 재설계 (read_chunk / search_in_body / done() — body 가 sub system prompt 박히던 거 lazy load). 도구 N연속 실패 graceful fallback. judge_provider 별도 인스턴스 (UI 약속 실현)."
+description = "XGEN Harness v1.9.0 — BREAKING: Option C 라디칼 (s06_context pre-search 폐기, 모든 search 가 LLM 자율 도구 호출 단일 경로). RAG/Ontology/Gallery/MCP isomorphic. 옛 s06 9 stage_params → RAGSearchTool default args 자동 이주. s03 <active_resources> 명령형 강화. fetch_synthesize 가 Claude Code 서브에이전트 패턴 재설계 (read_chunk / search_in_body / done — body lazy load). 도구 N연속 실패 graceful fallback. judge_provider 별도 인스턴스 (UI 약속 실현)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
