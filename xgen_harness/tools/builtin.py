@@ -28,6 +28,11 @@ from .term_expansion import (
     expand_query_terms,
     _expand_query_terms,  # 구 private alias 호환
 )
+from .skill_registry import (
+    get_skill_body,
+    list_skill_names,
+    register_skill_body,
+)
 
 logger = logging.getLogger("harness.tools.search")
 
@@ -50,10 +55,10 @@ class DiscoverToolsTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "Get detailed information about available tools. "
-            "Call with tool_name to get the full input schema, "
-            "or without tool_name to list all tools."
+            "List eager tools, or get full schema (tool_name='X'). "
+            "If not in eager → search_tools first."
         )
 
     @property
@@ -124,10 +129,10 @@ class SearchToolsTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "Search tools by keyword. Returns matching tools with name and short description. "
-            "Call this BEFORE discover_tools when the catalog is large. "
-            "After finding a tool, use discover_tools(tool_name) for the full schema."
+            "Find tools by keyword (eager + deferred). Most user-installed tools "
+            "are deferred — search first, then ToolSearch to promote."
         )
 
     @property
@@ -279,10 +284,10 @@ class ToolSearchTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "Load full schemas for deferred tools so they become callable. "
-            "Pass `names` to load specific tools by name (e.g. select:tool1,tool2). "
-            "Loaded tools become callable in subsequent turns."
+            "Load deferred tool schemas to make callable. "
+            "Pass exact names. Tool callable next turn."
         )
 
     @property
@@ -399,10 +404,11 @@ class FetchPDTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — fetch_pd 의존도 낮춤. search 결과 (snippet) 만으로 합성이 default.
         return (
-            "Fetch the full content of a resource whose preview is in the conversation. "
-            "Use when a tool result or retrieved chunk was truncated to a preview. "
-            "Provide both `kind` and `id`. Omit `id` to list available ids for a kind."
+            "Fetch full body by (kind, id). RARELY needed — synthesize from search "
+            "snippets first. Use only if a specific chunk is clearly insufficient. "
+            "Kinds: rag, tool_result, history, db_schema, gallery, graph."
         )
 
     @property
@@ -461,7 +467,478 @@ class FetchPDTool(Tool):
         full = entry.get("full", "")
         meta = entry.get("meta", {})
         header = f"[pd:{kind}:{rid}] meta={meta}" if meta else f"[pd:{kind}:{rid}]"
+        # v1.8.0 — 청크 원문 본문 들이붓기 차단. 사용자 명시: "청크 원문 박는 걸 막으라".
+        # rag/tool_result kind 는 본문 cap 1500자 (snippet 600 + 약간 더). 큰 본문 들이붓기 X.
+        # tool_result/db_schema/gallery/graph/history 도 동일 cap. context 보호.
+        # 더 깊이 필요하면 → 다른 query / 다른 search 도구 시도 (fetch_pd 들이붓기 X).
+        _CAP = 1500
+        if len(full) > _CAP:
+            full = (
+                full[:_CAP] +
+                f"\n\n[body capped at {_CAP} — original {len(full):,} chars. "
+                f"Don't fetch more chunks. Synthesize from this preview, "
+                f"or run a different search query, or stop.]"
+            )
         return ToolResult.success(f"{header}\n\n{full}")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# v1.8.0 — FetchSynthesizeTool: sub-agent 패턴 (본문 main context 격리)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class FetchSynthesizeTool(Tool):
+    """v1.9.0 — Claude Code 서브에이전트 패턴. body 를 sub-LLM system prompt 에 박지
+    않음. sub-agent 가 자기 도구로 본문 chunk 자율 탐색 → done() 으로 main 복귀.
+
+    main agent 가 fetch_synthesize(kind, id, query) 호출:
+      1. 코드가 state.pd_stores 에서 본문 read (sub-agent context 박지 X)
+      2. sub-agent 가 자기 컨텍스트 안에서 ReAct 루프:
+         - read_chunk(start, end) 로 본문 chunk lazy 탐색
+         - search_in_body(keyword) 로 키워드 위치 발견
+         - done(synthesis, citations[], missing_topics[]) 로 main 복귀
+      3. main 엔 done() 의 synthesis 텍스트만 박힘 — body / 중간 read 폐기
+
+    v1.9.0 핵심 (vs v1.8.0):
+    - body 가 sub-agent system prompt 에 통째 박히던 → 도구로 lazy 탐색 (vLLM 안전)
+    - 합성 응답에 verbatim citation 발췌 + missing_topics 강제 → 누락 위험 ↓
+    - 작은 본문 (< 2000자) raw passthrough — sub-agent 호출 자체 skip (비용/속도 ↑)
+    - 작은 본문 raw passthrough 임계는 register_runtime_default('synth_raw_threshold', N)
+      으로 호스트 override.
+    """
+
+    # Raw passthrough 임계 (chars). 본문이 이보다 작으면 sub-agent 호출 안 함.
+    # 호스트가 register_runtime_default('synth_raw_threshold', N) 으로 override.
+    _RAW_PASSTHROUGH_THRESHOLD_DEFAULT = 2000
+
+    # Sub-agent ReAct 최대 turn (안전망 — 무한 루프 차단).
+    _SUB_MAX_TURNS_DEFAULT = 8
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "fetch_synthesize"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Fetch a resource body and synthesize an answer in an isolated sub-agent loop. "
+            "The body is never loaded into your context — the sub-agent reads chunks via "
+            "its own tools and returns only the synthesis + verbatim citations. "
+            "Use when you need to extract specific info from a large body without context bloat. "
+            "Pass kind, id (from search index), and query (what to extract)."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Resource type (rag | tool_result | history | db_schema | gallery | graph)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Resource id within kind (from search index, e.g. 'assort#1').",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "What to extract/synthesize from the body (natural language).",
+                },
+            },
+            "required": ["kind", "id", "query"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "system"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return False  # sub-LLM 호출 — 같은 입력도 미세 다른 합성 가능
+
+    @property
+    def open_world_hint(self) -> bool:
+        return True   # LLM provider 외부 호출
+
+    @staticmethod
+    def _resolve_raw_threshold() -> int:
+        try:
+            from ..core.runtime_defaults import resolve_with_default
+            v = resolve_with_default(None, "synth_raw_threshold",
+                                     FetchSynthesizeTool._RAW_PASSTHROUGH_THRESHOLD_DEFAULT)
+            return int(v)
+        except Exception:
+            return FetchSynthesizeTool._RAW_PASSTHROUGH_THRESHOLD_DEFAULT
+
+    @staticmethod
+    def _resolve_max_turns() -> int:
+        try:
+            from ..core.runtime_defaults import resolve_with_default
+            v = resolve_with_default(None, "synth_sub_max_turns",
+                                     FetchSynthesizeTool._SUB_MAX_TURNS_DEFAULT)
+            return int(v)
+        except Exception:
+            return FetchSynthesizeTool._SUB_MAX_TURNS_DEFAULT
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        kind = (input_data.get("kind") or "").strip()
+        rid = input_data.get("id")
+        query = (input_data.get("query") or "").strip()
+        if not kind or rid is None or rid == "" or not query:
+            return ToolResult.error("'kind', 'id', 'query' all required.")
+
+        entry = self._state.pd_fetch(kind, str(rid))
+        if entry is None:
+            return ToolResult.error(
+                f"No resource for kind={kind!r} id={rid!r}. "
+                f"Available ids: {self._state.pd_list(kind)[:10]}"
+            )
+        body = entry.get("full", "")
+        if not body:
+            return ToolResult.success(
+                f"Empty body for kind={kind!r} id={rid!r}. Nothing to synthesize."
+            )
+
+        body_chars = len(body)
+        raw_threshold = self._resolve_raw_threshold()
+
+        # ── Raw passthrough — 작은 본문은 sub-agent 호출 skip ──
+        # main 에 본문 통째 박아도 컨텍스트 안전. 합성/압축 없음 = 누락 0.
+        if body_chars <= raw_threshold:
+            try:
+                from ..events.types import StageSubstepEvent
+                await self._state.emit_verbose(StageSubstepEvent(
+                    stage_id="s07_act",
+                    substep="sub_agent_raw_passthrough",
+                    meta={
+                        "tool": "fetch_synthesize",
+                        "kind": kind, "id": str(rid), "query": query,
+                        "body_chars": body_chars,
+                        "threshold": raw_threshold,
+                    },
+                ))
+            except Exception:
+                pass
+            return ToolResult.success(
+                f"[raw passthrough — body={body_chars} chars ≤ threshold={raw_threshold}, "
+                f"no compression; missing risk = 0]\n\n{body}"
+            )
+
+        # ── Sub-agent ReAct 루프 ──
+        try:
+            from ..core.provider_bootstrap import ensure_provider
+            provider = await ensure_provider(self._state)
+        except Exception as e:
+            return ToolResult.error(
+                f"sub-agent provider unavailable: {e}. "
+                f"Synthesize from search snippets you already have."
+            )
+        if provider is None:
+            return ToolResult.error("sub-agent provider not bootstrapped.")
+
+        # 본문은 sub-agent 의 closure 변수로만 (system prompt 박지 X).
+        # sub-agent 의 read_chunk / search_in_body 가 호출 시점에 lazy load.
+        body_ref = body  # closure 캡처
+
+        # ── Sub-agent 의 도구 정의 ──
+        sub_tool_defs = [
+            {
+                "name": "read_chunk",
+                "description": (
+                    "Read a slice of the resource body. Use this to inspect specific "
+                    "parts of the body that you want to cite verbatim. "
+                    f"Body is {body_chars} chars total. "
+                    "Pass start (0-indexed char position) and end (exclusive)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "start": {"type": "integer", "description": "Start char index (0-indexed)."},
+                        "end": {"type": "integer", "description": "End char index (exclusive). Max 1500 chars per call."},
+                    },
+                    "required": ["start", "end"],
+                },
+            },
+            {
+                "name": "search_in_body",
+                "description": (
+                    "Find a keyword's positions in the body. Returns up to 10 char "
+                    "indices where the keyword first appears in each match. "
+                    "Use to locate relevant sections quickly without reading sequentially."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "keyword": {"type": "string", "description": "Keyword to find (case-insensitive)."},
+                    },
+                    "required": ["keyword"],
+                },
+            },
+            {
+                "name": "done",
+                "description": (
+                    "Return the final synthesis to the caller and exit. "
+                    "MUST be called once you have enough info. "
+                    "synthesis: 1-5 sentence answer. citations: list of verbatim excerpts "
+                    "you read (for grounding). missing_topics: topics in the body NOT "
+                    "covered by your synthesis (so the caller can decide to re-query)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "synthesis": {"type": "string", "description": "Final synthesis answer."},
+                        "citations": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Verbatim excerpts from the body that support the synthesis.",
+                        },
+                        "missing_topics": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Body topics not covered (helps caller decide to re-query).",
+                        },
+                    },
+                    "required": ["synthesis"],
+                },
+            },
+        ]
+
+        # Helper: keyword 검색
+        def _search_positions(haystack: str, needle: str, limit: int = 10) -> list[int]:
+            positions: list[int] = []
+            if not needle:
+                return positions
+            hay_lc = haystack.lower()
+            ned_lc = needle.lower()
+            idx = 0
+            while True:
+                p = hay_lc.find(ned_lc, idx)
+                if p < 0 or len(positions) >= limit:
+                    break
+                positions.append(p)
+                idx = p + max(1, len(ned_lc))
+            return positions
+
+        sub_system = (
+            "You are a sub-agent assisting a main LLM by extracting facts from one "
+            "isolated resource body. The body is NOT in your context — read it via the "
+            "`read_chunk` and `search_in_body` tools.\n\n"
+            "Workflow:\n"
+            "1. Optionally call `search_in_body(keyword)` to locate relevant sections.\n"
+            "2. Call `read_chunk(start, end)` to read the surrounding context (max ~1500 "
+            "chars per call). Repeat until you have enough.\n"
+            "3. Call `done(synthesis, citations, missing_topics)` to return.\n\n"
+            "Rules:\n"
+            "- Quote verbatim in `citations` — never paraphrase the body inside citations.\n"
+            "- Be honest in `missing_topics` — if you skipped a section, list its theme.\n"
+            "- Do NOT speculate beyond what you read in chunks.\n"
+            f"- Finish within {self._resolve_max_turns()} tool turns."
+        )
+        sub_messages: list[dict] = [{
+            "role": "user",
+            "content": (
+                f"Resource: kind={kind}, id={rid}, body={body_chars} chars (not in context).\n"
+                f"Query: {query}\n\n"
+                f"Explore the body via tools, then call `done`."
+            ),
+        }]
+
+        try:
+            from ..events.types import StageSubstepEvent
+            await self._state.emit_verbose(StageSubstepEvent(
+                stage_id="s07_act",
+                substep="sub_agent_call_start",
+                meta={
+                    "tool": "fetch_synthesize",
+                    "kind": kind, "id": str(rid), "query": query,
+                    "body_chars": body_chars,
+                    "mode": "react_subagent",
+                    "max_turns": self._resolve_max_turns(),
+                },
+            ))
+        except Exception:
+            pass
+
+        # ── ReAct 루프 ──
+        max_turns = self._resolve_max_turns()
+        done_output: dict | None = None
+        last_error: str | None = None
+        for turn_idx in range(max_turns):
+            tool_uses: list[dict] = []
+            text_acc = ""
+            try:
+                from ..providers.base import ProviderEventType
+                async for event in provider.chat(
+                    messages=sub_messages,
+                    system=sub_system,
+                    tools=sub_tool_defs,
+                    temperature=0.2,
+                    max_tokens=800,
+                    stream=True,
+                    tool_choice=None,
+                ):
+                    if event.type == ProviderEventType.TEXT_DELTA:
+                        text_acc += event.text
+                    elif event.type == ProviderEventType.TOOL_USE:
+                        # 도구 호출 capture — ProviderEvent: tool_use_id / tool_name / tool_input
+                        tool_uses.append({
+                            "id": event.tool_use_id or f"sub_tu_{turn_idx}",
+                            "name": event.tool_name,
+                            "input": event.tool_input or {},
+                        })
+                    elif event.type == ProviderEventType.ERROR:
+                        last_error = getattr(event, "text", "") or "sub-agent error"
+                        break
+            except Exception as e:
+                last_error = str(e)
+                break
+            if last_error:
+                break
+
+            # assistant turn 박음 (text + tool_use 모두)
+            assistant_content: list[dict] = []
+            if text_acc.strip():
+                assistant_content.append({"type": "text", "text": text_acc})
+            for tu in tool_uses:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tu["id"] or f"sub_tu_{turn_idx}_{len(assistant_content)}",
+                    "name": tu["name"],
+                    "input": tu["input"],
+                })
+            if not assistant_content:
+                # 빈 응답 — 모델이 멈춤. fallback synthesis 추출.
+                last_error = "sub-agent emitted no tool_use and no text"
+                break
+            sub_messages.append({"role": "assistant", "content": assistant_content})
+
+            # done 호출 검사
+            done_call = next((tu for tu in tool_uses if tu["name"] == "done"), None)
+            if done_call:
+                done_output = done_call["input"] if isinstance(done_call["input"], dict) else {}
+                break
+
+            # 도구 호출 처리 → tool_result 추가
+            tool_results: list[dict] = []
+            for tu in tool_uses:
+                inp = tu["input"] if isinstance(tu["input"], dict) else {}
+                tu_id = tu["id"] or f"sub_tu_{turn_idx}"
+                tu_name = tu["name"]
+                if tu_name == "read_chunk":
+                    try:
+                        s = max(0, int(inp.get("start", 0)))
+                        e = min(body_chars, int(inp.get("end", s)))
+                        if e <= s:
+                            payload = f"[read_chunk error: end ({e}) <= start ({s})]"
+                        elif e - s > 1500:
+                            payload = (
+                                f"[read_chunk error: range too large "
+                                f"({e - s} chars > 1500). Narrow start/end.]"
+                            )
+                        else:
+                            chunk = body_ref[s:e]
+                            payload = f"[chunk start={s} end={e} chars={len(chunk)}]\n{chunk}"
+                    except Exception as ce:
+                        payload = f"[read_chunk error: {ce}]"
+                elif tu_name == "search_in_body":
+                    kw = (inp.get("keyword") or "").strip()
+                    if not kw:
+                        payload = "[search_in_body error: keyword required]"
+                    else:
+                        positions = _search_positions(body_ref, kw, limit=10)
+                        if not positions:
+                            payload = f"[search_in_body keyword={kw!r}: 0 matches]"
+                        else:
+                            payload = (
+                                f"[search_in_body keyword={kw!r}: {len(positions)} matches at "
+                                f"positions {positions}]"
+                            )
+                else:
+                    # 알 수 없는 도구 호출 — sub-agent 가 schema 따랐을 텐데 …
+                    payload = (
+                        f"[unknown tool: {tu_name!r}. Available: read_chunk, "
+                        f"search_in_body, done]"
+                    )
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu_id,
+                    "content": payload,
+                })
+            sub_messages.append({"role": "user", "content": tool_results})
+
+        # ── 결과 처리 ──
+        try:
+            from ..events.types import StageSubstepEvent
+            await self._state.emit_verbose(StageSubstepEvent(
+                stage_id="s07_act",
+                substep="sub_agent_call_complete",
+                meta={
+                    "tool": "fetch_synthesize",
+                    "kind": kind, "id": str(rid),
+                    "mode": "react_subagent",
+                    "turns_used": (turn_idx + 1) if not last_error else (turn_idx + 1),
+                    "done_called": done_output is not None,
+                    "error": last_error,
+                },
+            ))
+        except Exception:
+            pass
+
+        if last_error and done_output is None:
+            return ToolResult.error(
+                f"sub-agent failed: {last_error}. Body={body_chars} chars isolated. "
+                f"Synthesize from search snippets instead."
+            )
+        if done_output is None:
+            return ToolResult.success(
+                f"sub-agent exhausted max_turns={max_turns} without calling done. "
+                f"Try a more focused query or re-call later."
+            )
+
+        synthesis = (done_output.get("synthesis") or "").strip()
+        citations = done_output.get("citations") or []
+        missing = done_output.get("missing_topics") or []
+        if not synthesis:
+            return ToolResult.success(
+                f"sub-agent returned empty synthesis for kind={kind!r} id={rid!r} "
+                f"query={query!r}. Try a different chunk or different query."
+            )
+        # main agent context — synthesis + citations (verbatim 발췌) + missing_topics.
+        # citations 는 body 일부지만 사용자가 보고 검증하도록 main 에 박음.
+        parts: list[str] = [
+            f"[synthesized from {kind}:{rid}, body={body_chars} chars isolated]",
+            "",
+            synthesis,
+        ]
+        if citations:
+            cap_cits = citations[:5] if isinstance(citations, list) else []
+            if cap_cits:
+                parts.append("")
+                parts.append("Citations (verbatim from body):")
+                for c in cap_cits:
+                    s = str(c).strip()
+                    if len(s) > 400:
+                        s = s[:400] + "…"
+                    parts.append(f"- {s}")
+        if missing:
+            cap_miss = missing[:5] if isinstance(missing, list) else []
+            if cap_miss:
+                parts.append("")
+                parts.append("Missing topics (body areas not covered):")
+                for m in cap_miss:
+                    parts.append(f"- {str(m).strip()}")
+                parts.append(
+                    "  (re-call fetch_synthesize with a different query if you need these)"
+                )
+        return ToolResult.success("\n".join(parts))
 
 
 class CompactTool(Tool):
@@ -502,11 +979,10 @@ class CompactTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "Compact older tool results or conversation turns into a short summary "
-            "to reduce context size. Use when prior turns have large tool outputs "
-            "you no longer need verbatim. Provide `scope` (e.g. "
-            "'tool_results_before:5') and optional `summary_hint` for what to keep."
+            "Compact older context to free budget. scope: tool_results_before:N | "
+            "history_before:N | pd_store:<kind>. Destructive."
         )
 
     @property
@@ -740,10 +1216,10 @@ class CheckPolicyTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "Self-check: 호출하려는 action 이 활성 정책 (가드 / 예산 / 콘텐츠) "
-            "통과하는지 사전 검증. 민감 도구 호출 전 (e.g. 외부 API / DB write) "
-            "정책 위반 risk 확인용."
+            "Pre-check policies before sensitive tool call (DB write, external API, "
+            "destructive). If blocked → tell user, don't retry."
         )
 
     @property
@@ -888,9 +1364,10 @@ class DiscoverPromptTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
         return (
-            "외부 등록 prompt template (identity / rules / thinking_mode) 의 본문 + "
-            "메타 lazy load. name 미박으면 등록된 모든 template 의 list 반환."
+            "Browse/fetch prompt templates (identity/rules/thinking_mode). "
+            "Reference material — not callable."
         )
 
     @property
@@ -1009,9 +1486,10 @@ class DiscoverCollectionTool(Tool):
 
     @property
     def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤 + STOP 명령형 (v1.7.5 정합).
         return (
-            "Lazy load: RAG 컬렉션의 sample documents + 통계 메타. <reference_resources> "
-            "의 메타가 부족하면 이 도구로 더 깊이 — sample 보고 적합도 판단 후 rag_search 호출."
+            "Sample RAG collection. Don't call same name twice. "
+            "If empty: rag_search directly, or another collection, or STOP."
         )
 
     @property
@@ -1067,8 +1545,11 @@ class DiscoverCollectionTool(Tool):
                 "", name, limit=sample_size, score_threshold=0.0,
             ) or []
         except Exception as e:
+            # v1.8.0 — RESTRICTIONS_ONLY 톤.
             return ToolResult.success(
-                f"sample fetch failed but meta returned",
+                f"sample fetch failed for '{name}'. Don't retry. "
+                f"Use rag_search(query=..., collection_name='{name}') directly, "
+                f"or try another collection, or STOP.",
                 meta=result_meta,
                 samples_error=str(e)[:120],
             )
@@ -1083,10 +1564,108 @@ class DiscoverCollectionTool(Tool):
                 "preview": text[:200],
             })
 
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
+        if not sample_summaries:
+            return ToolResult.success(
+                f"empty for '{name}'. Don't retry discover_collection. "
+                f"Use rag_search(query=..., collection_name='{name}'), "
+                f"or query_graph for relationships, or try another collection, or STOP.",
+                meta=result_meta,
+                samples=[],
+            )
         return ToolResult.success(
-            f"collection {name}: {len(sample_summaries)} samples",
+            f"collection {name}: {len(sample_summaries)} samples. "
+            f"Next: rag_search if relevant.",
             meta=result_meta,
             samples=sample_summaries,
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# v1.8.0 — Skill (Claude Code Skills 패턴 — body lazy + session 고정)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class SkillTool(Tool):
+    """Claude Code Skills 패턴 — 메타 도구의 사용 가이드 markdown body lazy load.
+
+    description (frontmatter 격) 은 짧게 유지하고, 자세한 사용법 / 예시 / 흔한 실수 /
+    NEXT path 는 markdown body 로 분리. LLM 이 `Skill(name="rag_search")` 호출 시
+    body 가져옴 + state.loaded_skills 에 박힘. s03_prompt 의 <loaded_skills> 섹션이
+    매 turn 그 body 들 포함 (session 고정).
+
+    Claude Code 의 SKILL.md frontmatter+body 분리 정합. 한 번 load 한 skill 은
+    재호출 X — 이미 system_prompt 에 박혀있음.
+    """
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "Skill"
+
+    @property
+    def description(self) -> str:
+        # v1.8.0 — RESTRICTIONS_ONLY 톤.
+        return (
+            "Load detailed guide for a meta tool. Don't load same skill twice. "
+            "Body stays in context for session."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Exact skill name. Omit to list all available skill names."
+                    ),
+                },
+            },
+        }
+
+    @property
+    def category(self) -> str:
+        return "system"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        nm = (input_data.get("name") or "").strip()
+        if not nm:
+            names = list_skill_names()
+            return ToolResult.success(
+                f"{len(names)} skills available — call Skill(name='X') to load body:\n"
+                + "\n".join(f"- {n}" for n in names)
+            )
+        body = get_skill_body(nm)
+        if body is None:
+            available = list_skill_names()
+            return ToolResult.error(
+                f"Unknown skill: {nm!r}. Available: {', '.join(available)}"
+            )
+        # session 고정 — state.loaded_skills 에 박음. s03_prompt 가 매 turn read.
+        try:
+            self._state.tool.loaded_skills[nm] = body
+        except Exception as e:
+            logger.debug("[Skill] loaded_skills update skip: %s", e)
+        return ToolResult.success(
+            f"Loaded skill '{nm}' ({len(body)} chars). "
+            f"Body now in <loaded_skills> from this turn forward — act on it.\n\n"
+            f"{body}"
         )
 
 

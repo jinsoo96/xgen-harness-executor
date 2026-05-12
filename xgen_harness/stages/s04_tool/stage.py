@@ -178,13 +178,19 @@ class ToolIndexStage(Stage):
                 if tags:
                     td.setdefault("metadata", {})["tags"] = list(tags)
 
-                # eager / deferred 결정.
-                # - has_explicit_selection=False  → 모두 eager
-                # - global_allow 명시            → 그 안에 있으면 eager, 아니면 deferred
-                # - sub_allow 명시              → 그 안에 있으면 eager, 아니면 deferred
-                # - 둘 다 명시 안 된 source 는 selected 명시 X 로 간주 → deferred
+                # eager / deferred 결정. v1.8.0 — Claude Code MCP-style PD 정합.
+                # 옛 default: has_explicit_selection=False  → 모두 eager (47개 schema 박힘)
+                # 신 default: has_explicit_selection=False  → 메타 도구만 eager / 사용자
+                #             박은 빌트인 노드 도구는 deferred (LLM 이 search_tools /
+                #             ToolSearch 로 능동 발견·승격). "지도 간편화 → 점진 발견"
+                #             패러다임 = 진짜 Progressive Disclosure.
+                # 호스트 override: register_default_tool_strategy("eager_all") 로 옛
+                #             동작 환원 가능. 명시 strategy="eager_load" 도 같은 효과.
+                # selected_tools 명시 워크플로우는 영향 X — 명시한 것 eager / 나머지 deferred.
+                from ..strategies.discovery import _get_default_tool_strategy
+                _default_mode = _get_default_tool_strategy()
                 if not has_explicit_selection:
-                    is_eager = True
+                    is_eager = (_default_mode == "eager_all")
                 else:
                     is_eager = False
                     if global_allow is not None and nm in global_allow:
@@ -230,16 +236,28 @@ class ToolIndexStage(Stage):
         # has_explicit_selection 조건 제거 — eager 든 deferred 든 도구 발견 했으면 EventLog 에.
         if eager_added or deferred_added:
             from ...events.types import ToolDeferredEvent
+            _deferred_names = [
+                t.get("name") for t in (state.deferred_tools or []) if t.get("name")
+            ]
             await state.emit_verbose(ToolDeferredEvent(
                 eager_count=eager_added,
                 deferred_count=deferred_added,
                 eager_names=[td.get("name") for td in state.tool_definitions if td.get("name")],
+                deferred_names=_deferred_names,
             ))
 
         if collected:
+            # v1.8.0 — backend log 도 도구 이름 list 박음 (사용자 디버깅 정합).
+            # 카운트만으론 "어떤 도구 박혔는지" 추적 불가. 너무 길면 첫 N개 + 나머지 카운트.
+            _eager_n = [td.get("name") for td in state.tool_definitions if td.get("name")]
+            _deferred_n = [t.get("name") for t in (state.deferred_tools or []) if t.get("name")]
+            _trim = lambda lst, k=10: (lst[:k] + [f"...+{len(lst)-k}"]) if len(lst) > k else lst
             logger.info(
-                "[Tool Index] tool_sources: %d tool(s) from %d source(s) — eager=%d deferred=%d",
-                collected, len(sources_used), eager_added, deferred_added,
+                "[Tool Index] tool_sources: %d tool(s) from %d source(s) — "
+                "eager=%d %s · deferred=%d %s",
+                collected, len(sources_used),
+                eager_added, _trim(_eager_n),
+                deferred_added, _trim(_deferred_n),
             )
 
         # ─── 2. Strategy 디스패치 (progressive_3level / eager_load / none) ─
@@ -264,11 +282,18 @@ class ToolIndexStage(Stage):
         # v1.6 — check_policy / discover_prompt 도 strategy 무관 항상 등록 (사용자 정신:
         # 시스템 빌트인 = 1단계 메타 도구 = LLM 항상 손에). discover_collection 은
         # rag_collections 박혔을 때만 (조건부, Section 3 영역에서 등록).
-        from ...tools.builtin import FetchPDTool, CheckPolicyTool, DiscoverPromptTool
+        from ...tools.builtin import (
+            FetchPDTool, CheckPolicyTool, DiscoverPromptTool, SkillTool,
+            FetchSynthesizeTool,
+        )
         _STRATEGY_AGNOSTIC = [
             ("fetch_pd", FetchPDTool, True),       # state_ref 필요
             ("check_policy", CheckPolicyTool, True),
             ("discover_prompt", DiscoverPromptTool, False),
+            # v1.8.0 — Skill (Claude Code Skills 패턴 — body lazy + session 고정)
+            ("Skill", SkillTool, True),
+            # v1.8.0 — fetch_synthesize (sub-agent 패턴 — 본문 main context 격리)
+            ("fetch_synthesize", FetchSynthesizeTool, True),
         ]
         for tname, cls, needs_state in _STRATEGY_AGNOSTIC:
             if any(td.get("name") == tname for td in augmented_defs):
@@ -324,69 +349,116 @@ class ToolIndexStage(Stage):
                 state.metadata.setdefault("tool_registry", {})["discover_collection"] = _disc
                 logger.info("[Tool Index] discover_collection builtin registered (rag_collections present)")
 
-            # v1.4.0 R3 — default 'both' → 'tool'. s06 자체 검색 안 하고 LLM 이 도구로 호출.
-            # 'context' (s06 만 검색, 도구 등록 X) / 'both' (둘 다) 는 백워드 호환 유지.
-            rag_tool_mode: str = self.get_param("rag_tool_mode", state, "tool")
-            if rag_tool_mode in ("tool", "both"):
-                _services = state.metadata.get("services")
-                _doc_service = getattr(_services, "documents", None) if _services else None
-                # v1.4.0 R3 — state 주입 + progressive PD 활성. RAGSearchTool 이
-                # 검색 결과 본문을 pd_stores["rag"] 에 박고, LLM 에 인덱스+snippet
-                # 만 반환. LLM 이 fetch_pd(kind='rag', id=...) 로 본문 lazy fetch.
-                rag_pd_mode_for_tool = str(
-                    self.get_param("rag_pd_mode", state, "progressive") or "progressive"
-                ).strip().lower()
-                rag_pd_snippet_for_tool = int(
-                    self.get_param("rag_pd_snippet_size", state, 120) or 120
-                )
-                rag_tool = RAGSearchTool(
-                    collections=rag_collections,
-                    default_top_k=rag_top_k,
-                    doc_service=_doc_service,
-                    state_ref=state,
-                    progressive=(rag_pd_mode_for_tool == "progressive"),
-                    snippet_size=rag_pd_snippet_for_tool,
-                )
-                if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
-                    state.tool_definitions.append(rag_tool.to_api_format())
-                    tool_index.append(rag_tool.to_index_entry())
-                    state.metadata.setdefault("tool_registry", {})["rag_search"] = rag_tool
-                    logger.info("[Tool Index] rag_search tool registered (mode=%s)",
-                                rag_tool_mode)
+            # v1.9.0 — Option C 라디칼: rag_tool_mode 분기 폐기. rag_collections 박혀
+            # 있으면 항상 rag_search 도구로 등록. s06 의 옛 9 stage_params 가 도구
+            # default args 로 자동 이주 (사용자 의도 보존).
+            _services = state.metadata.get("services")
+            _doc_service = getattr(_services, "documents", None) if _services else None
+            rag_pd_mode_for_tool = str(
+                self.get_param("rag_pd_mode", state, "progressive") or "progressive"
+            ).strip().lower()
+            rag_pd_snippet_for_tool = int(
+                self.get_param("rag_pd_snippet_size", state, 120) or 120
+            )
+            # v1.9.0 — s06 의 stage_params 를 cross-stage 로 read (BC).
+            # s04 가 자기 stage 의 동명 param 우선 → 없으면 s06 의 동명 param fallback.
+            _s06_params = (
+                state.config.stage_params.get("s06_context", {})
+                if state.config and getattr(state.config, "stage_params", None)
+                else {}
+            )
 
-        # ─── 3.5 Ontology / GraphRAG 도구 등록 (v1.5.0 R3) ─────────────
+            def _from_s06(key, fallback=None):
+                # s04 stage_params 우선 → s06 stage_params fallback → fallback
+                v = self.get_param(key, state, None)
+                if v is None:
+                    v = _s06_params.get(key, fallback)
+                return v
+
+            _score_th = _from_s06("score_threshold", None)
+            _raw_filter = _from_s06("metadata_filter", None)
+            _files_default = _from_s06("files", None) or []
+            _reranker = _from_s06("reranker", None)
+            _rerank_topk = _from_s06("rerank_top_k", None)
+            # metadata_filter 가 JSON 문자열로 들어올 수도 있어 파싱.
+            if isinstance(_raw_filter, str) and _raw_filter.strip():
+                try:
+                    import json as _json
+                    _raw_filter = _json.loads(_raw_filter)
+                    if not isinstance(_raw_filter, dict):
+                        _raw_filter = None
+                except Exception:
+                    _raw_filter = None
+            if not isinstance(_raw_filter, dict):
+                _raw_filter = None
+            # bool 문자열 정규화 ("False"/"True" → False/True)
+            if isinstance(_reranker, str):
+                _reranker = _reranker.strip().lower() == "true"
+            try:
+                _rerank_topk_int = int(_rerank_topk) if _rerank_topk is not None else None
+            except (TypeError, ValueError):
+                _rerank_topk_int = None
+            try:
+                _score_th_float = float(_score_th) if _score_th is not None else None
+            except (TypeError, ValueError):
+                _score_th_float = None
+            rag_tool = RAGSearchTool(
+                collections=rag_collections,
+                default_top_k=rag_top_k,
+                doc_service=_doc_service,
+                state_ref=state,
+                progressive=(rag_pd_mode_for_tool == "progressive"),
+                snippet_size=rag_pd_snippet_for_tool,
+                default_score_threshold=_score_th_float,
+                default_filter=_raw_filter,
+                default_reranker=_reranker,
+                default_rerank_top_k=_rerank_topk_int,
+                default_file_names=list(_files_default) if _files_default else None,
+            )
+            if not any(td.get("name") == "rag_search" for td in state.tool_definitions):
+                state.tool_definitions.append(rag_tool.to_api_format())
+                tool_index.append(rag_tool.to_index_entry())
+                state.metadata.setdefault("tool_registry", {})["rag_search"] = rag_tool
+                logger.info(
+                    "[Tool Index] rag_search registered (v1.9.0 Option C — single tool path) "
+                    "defaults: score_th=%s files=%d filter=%s rerank=%s rerank_top_k=%s",
+                    _score_th_float, len(_files_default) if _files_default else 0,
+                    "set" if _raw_filter else "none", _reranker, _rerank_topk_int,
+                )
+
+        # ─── 3.5 Ontology / GraphRAG 도구 등록 (v1.9.0 Option C) ────────
         # 사용자가 박은 ontology_collections 를 query_graph 빌트인 도구로 노출.
-        # ontology_tool_mode default 'tool' — s06_context 자체 자동 호출 X, LLM 이
-        # 도구로 호출 (rag_search 와 isomorphic). 'context'/'both' 명시 시 백워드.
+        # v1.9.0 — ontology_tool_mode 분기 폐기. ontology_collections 박혀있으면
+        # 항상 query_graph 도구로 등록 (RAG / Ontology / Gallery / MCP isomorphic 단일 경로).
+        # s06 자동 호출은 v1.9.0 에서 폐기 (Option C).
         ontology_collections: list[str] = self.get_param("ontology_collections", state, []) or []
         if ontology_collections:
             # v1.5.4 — s03_prompt 가 cross-stage 로 인지하도록 metadata cache (rag 와 isomorphic).
             state.metadata["ontology_collections"] = ontology_collections
-            ontology_tool_mode: str = self.get_param("ontology_tool_mode", state, "tool")
-            if ontology_tool_mode in ("tool", "both"):
-                _services_o = state.metadata.get("services")
-                _doc_service_o = getattr(_services_o, "documents", None) if _services_o else None
-                if _doc_service_o is not None and hasattr(_doc_service_o, "ontology_query"):
-                    graph_tool = QueryGraphTool(
-                        collections=list(ontology_collections),
-                        doc_service=_doc_service_o,
-                        state_ref=state,
-                        progressive=True,
-                        snippet_size=int(self.get_param("rag_pd_snippet_size", state, 200) or 200),
-                    )
-                    if not any(td.get("name") == "query_graph" for td in state.tool_definitions):
-                        state.tool_definitions.append(graph_tool.to_api_format())
-                        tool_index.append(graph_tool.to_index_entry())
-                        state.metadata.setdefault("tool_registry", {})["query_graph"] = graph_tool
-                        logger.info(
-                            "[Tool Index] query_graph tool registered (mode=%s, collections=%s)",
-                            ontology_tool_mode, ontology_collections,
-                        )
-                else:
+            _services_o = state.metadata.get("services")
+            _doc_service_o = getattr(_services_o, "documents", None) if _services_o else None
+            if _doc_service_o is not None and hasattr(_doc_service_o, "ontology_query"):
+                graph_tool = QueryGraphTool(
+                    collections=list(ontology_collections),
+                    doc_service=_doc_service_o,
+                    state_ref=state,
+                    progressive=True,
+                    snippet_size=int(self.get_param("rag_pd_snippet_size", state, 200) or 200),
+                )
+                if not any(td.get("name") == "query_graph" for td in state.tool_definitions):
+                    state.tool_definitions.append(graph_tool.to_api_format())
+                    tool_index.append(graph_tool.to_index_entry())
+                    state.metadata.setdefault("tool_registry", {})["query_graph"] = graph_tool
                     logger.info(
-                        "[Tool Index] ontology_collections present (%s) but DocumentService.ontology_query unavailable — query_graph not registered",
+                        "[Tool Index] query_graph registered (v1.9.0 Option C — single tool path) "
+                        "collections=%s",
                         ontology_collections,
                     )
+            else:
+                logger.info(
+                    "[Tool Index] ontology_collections present (%s) but DocumentService.ontology_query unavailable — query_graph not registered",
+                    ontology_collections,
+                )
 
         # ─── 4. force_tool_use (v0.11.19) ──────────────────────────────
         force_tool_use = bool(self.get_param("force_tool_use", state, False))

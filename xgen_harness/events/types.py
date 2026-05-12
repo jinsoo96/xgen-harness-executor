@@ -187,7 +187,8 @@ class ToolDeferredEvent(HarnessEvent):
     """
     eager_count: int = 0
     deferred_count: int = 0
-    eager_names: list = field(default_factory=list)   # 디버깅용 (UI 노출 X 권장)
+    eager_names: list = field(default_factory=list)        # 디버깅용 — eager 박힌 도구 이름
+    deferred_names: list = field(default_factory=list)     # v1.8.0 — deferred 박힌 도구 이름 (UI 노출 정합)
     stage_id: str = "s04_tool"
 
 

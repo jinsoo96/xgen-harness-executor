@@ -221,6 +221,48 @@ class ExecuteStage(Stage):
                 )
                 result_text = preview_body + hint
 
+            # v1.8.0 — Auto-load SKILL on first call (Claude Code Skills 차용 + 우리 환경 정합).
+            # 이 도구의 SKILL body 가 아직 안 박혔으면 자동 load → state.system_prompt 에
+            # 즉시 패치 (s03_prompt 가 ingress phase 라 매 turn 재build 안 됨 → 직접 patch
+            # 필요). 다음 LLM 호출부터 가이드 손에 → 무한 루프 방지. provider 무관.
+            try:
+                from ...tools.skill_registry import get_skill_body as _get_skill_body
+                if hasattr(state, "tool") and hasattr(state.tool, "loaded_skills"):
+                    if tool_name not in state.tool.loaded_skills:
+                        _body = _get_skill_body(tool_name)
+                        if _body:
+                            state.tool.loaded_skills[tool_name] = _body
+                            # state.system_prompt 직접 패치 — <loaded_skills> 섹션이
+                            # 이미 있으면 안에 append, 없으면 신규 생성. 다음 LLM call 시
+                            # provider 가 system=state.system_prompt 로 전달 → 즉시 효과.
+                            _marker_open = "<loaded_skills>"
+                            _marker_close = "</loaded_skills>"
+                            _skill_block = (
+                                f"\n\n### {tool_name}\n\n{_body}"
+                            )
+                            _sp = state.system_prompt or ""
+                            if _marker_close in _sp:
+                                _sp = _sp.replace(
+                                    _marker_close, _skill_block + "\n" + _marker_close,
+                                )
+                            else:
+                                _sp = _sp + (
+                                    f"\n\n{_marker_open}\n"
+                                    f"다음은 이번 session 에서 도구를 호출한 후 자동 load 된 "
+                                    f"메타 도구 사용 가이드입니다. 이미 system_prompt 에 박혀있으므로 "
+                                    f"같은 도구를 무모하게 반복 호출하지 마세요. 가이드의 NEXT / "
+                                    f"common-mistake 패턴을 따르세요."
+                                    f"{_skill_block}\n{_marker_close}"
+                                )
+                            state.system_prompt = _sp
+                            # v1.8.0 — RESTRICTIONS_ONLY 톤. 명령형 1줄.
+                            result_text = (
+                                result_text +
+                                f"\n\n[guide for `{tool_name}` loaded — check <loaded_skills>]"
+                            )
+            except Exception as _se:
+                logger.debug("[Execute] auto-load skill skip for %s: %s", tool_name, _se)
+
             # 누적 예산 초과 시 2 차 방어 (여러 작은 결과 합이 큰 경우) — 기존 하드 트림 유지.
             chars = len(result_text)
             if current_chars + chars > result_budget:
@@ -229,6 +271,10 @@ class ExecuteStage(Stage):
                 chars = len(result_text)
 
             state.add_tool_result(tool_use_id, result_text, is_error=False)
+            # v1.9.0 P0#1 — 성공 시 streak 리셋.
+            _streak_map = state.metadata.setdefault("tool_failure_streak", {})
+            if tool_name in _streak_map:
+                _streak_map.pop(tool_name, None)
 
             if state.event_emitter:
                 _src = (state.metadata.get("tool_source_of") or {}).get(tool_name, "")
@@ -249,12 +295,14 @@ class ExecuteStage(Stage):
 
         except asyncio.TimeoutError:
             error_msg = f"Tool '{tool_name}' timed out after {self._tool_timeout}s"
+            error_msg = self._append_failure_streak_guidance(state, tool_name, error_msg)
             state.add_tool_result(tool_use_id, error_msg, is_error=True)
             logger.warning("[Execute] %s", error_msg)
             return {"tool_name": tool_name, "success": False, "error": "timeout"}, 0
 
         except Exception as e:
             error_msg = f"Tool '{tool_name}' failed: {str(e)}"
+            error_msg = self._append_failure_streak_guidance(state, tool_name, error_msg)
             state.add_tool_result(tool_use_id, error_msg, is_error=True)
             logger.error("[Execute] %s\n%s", error_msg, traceback.format_exc())
 
@@ -269,6 +317,32 @@ class ExecuteStage(Stage):
                 ))
 
             return {"tool_name": tool_name, "success": False, "error": str(e)}, 0
+
+    def _append_failure_streak_guidance(
+        self, state: PipelineState, tool_name: str, error_msg: str,
+    ) -> str:
+        """v1.9.0 P0#1 — 같은 tool N 연속 실패 시 LLM 에게 graceful 가이드 추가.
+
+        runtime_default 'tool_consecutive_failure_limit' (기본 3) 도달하면
+        error_msg 끝에 "다른 도구 / 다른 query / finalize" 명령형 1 줄 추가.
+        LLM 이 무한 retry 빠지지 않게.
+        """
+        try:
+            from ...core.runtime_defaults import resolve_with_default
+            limit = int(resolve_with_default(None, "tool_consecutive_failure_limit", 3))
+        except Exception:
+            limit = 3
+        streak_map = state.metadata.setdefault("tool_failure_streak", {})
+        n = int(streak_map.get(tool_name, 0)) + 1
+        streak_map[tool_name] = n
+        if n >= limit:
+            error_msg += (
+                f"\n\n[harness graceful fallback — `{tool_name}` failed {n} times in a row. "
+                f"Stop calling it. Either: (a) try a different tool, "
+                f"(b) reformulate the user request, or (c) answer with what you have "
+                f"and note the limitation.]"
+            )
+        return error_msg
 
     def _resolve_read_only_hint(
         self, tool_name: str, state: PipelineState, tool_registry: dict,

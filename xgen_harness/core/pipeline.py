@@ -479,6 +479,29 @@ class Pipeline:
             description=f"main_call ({transport})",
         ))
 
+        # v1.8.0 — fetch_pd 코드화 패턴: per-turn body injection.
+        # 사용자 정합 ("코드화해서 system_prompt 안 넘어가게"). 직전 turn 의 fetch_pd 본문을
+        # state.system_prompt 에 임시 추가 (이번 LLM 호출만), 호출 후 즉시 환원.
+        # 매 turn LLM 이 "방금 fetch 한 본문" 만 손에 — messages 누적 X, system_prompt 누적 X.
+        # provider/context 한계 무관 (모든 모델 안전).
+        _pending = list(getattr(state, "fetched_pending", []) or [])
+        _sp_orig = state.system_prompt
+        if _pending:
+            _injection_lines = ["<recently_fetched>"]
+            _injection_lines.append(
+                "다음은 이번 turn 에 호출한 fetch_pd 의 본문입니다. 이 본문은 이번 응답 합성 시점에만 "
+                "노출되며 다음 turn 부터 사라집니다. 필요한 정보는 이번에 답변에 인용하세요."
+            )
+            for entry in _pending:
+                _kind = entry.get("kind", "?")
+                _id = entry.get("id", "?")
+                _body = entry.get("body", "")
+                _meta = entry.get("meta", {})
+                _injection_lines.append(f"\n### [{_kind}:{_id}] meta={_meta}\n")
+                _injection_lines.append(_body)
+            _injection_lines.append("\n</recently_fetched>")
+            state.system_prompt = (_sp_orig or "") + "\n\n" + "\n".join(_injection_lines)
+
         t0 = time.time()
         try:
             result = await planner_stage.main_call(state, strategy=transport)
@@ -496,6 +519,11 @@ class Pipeline:
                 message=str(e), stage_id=sid, recoverable=False,
             ))
             raise
+        finally:
+            # v1.8.0 — 인젝션 환원. 다음 turn 시 _pending 새로 채워짐 (또는 빈 list).
+            if _pending:
+                state.system_prompt = _sp_orig
+                state.fetched_pending = []
 
     def _find_loop_s00(self) -> Optional[Stage]:
         """v0.16.6 — Planner(role="orchestrator_planner") 인스턴스 조회.

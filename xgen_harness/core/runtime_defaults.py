@@ -55,6 +55,13 @@ _RUNTIME_DEFAULTS: dict[str, Any] = {
     "microcompact_threshold_pct": 75,       # microcompact strategy
     "context_collapse_threshold_pct": 85,   # collapse_overlay strategy
     "autocompact_threshold_pct": 90,        # autocompact_llm strategy
+
+    # v1.9.0 — fetch_synthesize sub-agent (Claude Code 패턴) 임계
+    "synth_raw_threshold": 2000,            # 본문이 이하면 sub-agent 호출 skip (raw passthrough)
+    "synth_sub_max_turns": 8,               # sub-agent ReAct 최대 turn (안전망)
+
+    # v1.9.0 — 도구 연속 실패 graceful fallback (P0#1)
+    "tool_consecutive_failure_limit": 3,    # 같은 도구 N 회 연속 실패 시 warning + LLM fallback emit
 }
 
 

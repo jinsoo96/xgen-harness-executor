@@ -165,9 +165,10 @@ async def evaluate_response(state, get_param) -> dict:
 async def _llm_judge_fallback(state, get_param) -> dict:
     """raw LLM 호출로 평가. EvaluationStrategy 없을 때 폴백.
 
-    v1.1.0 — config.judge_provider / judge_model 지원. 미지정 시 본문 LLM 재사용
-    (backward compat). judge_provider 가 본문 provider 와 다르면 별도 provider
-    인스턴스 띄워 호출 — "Judge 가 자기 답을 자기가 평가" 약점 회피.
+    v1.9.0 — config.judge_provider 가 본문과 다른 provider 면 **별도 인스턴스** 띄워
+    호출. "Judge 가 자기 답을 자기 평가" self-promotion bias 회피.
+    같은 provider 면 model 만 다르게 (v1.1.0 동작 보존). judge_use_main=True 면
+    본문 그대로 (v1.7.1 정신 보존).
     """
     eval_prompt, selected_criteria = _build_evaluation_prompt(state, get_param)
 
@@ -179,8 +180,6 @@ async def _llm_judge_fallback(state, get_param) -> dict:
     )
 
     # v1.1.0 — judge_model lookup. 빈 값이면 본문 LLM 재사용 (backward compat).
-    # judge_provider 는 v1.1.0 에서 Pydantic 필드만 보존, 본문과 다른 provider 사용은
-    # API 키 wiring 까지 정합 필요해서 v1.1.x 후속. 같은 provider 다른 model 만 우선.
     # v1.7.1 — judge_use_main=True 면 judge_model 박혀있어도 강제 본문 재사용
     # (사용자 UI chip "본문 재사용" 명시 의도 우선).
     config = getattr(state, "config", None)
@@ -189,12 +188,23 @@ async def _llm_judge_fallback(state, get_param) -> dict:
     else:
         judge_model_name = (str(getattr(config, "judge_model", "") or "")).strip()
 
+    # v1.9.0 P0#3 — judge_provider 별도 인스턴스 해석.
+    # judge_use_main 이거나 judge_provider 비어있거나 본문과 같은 provider 면 본문 그대로
+    # (resolve_judge_provider 내부에서 분기).
+    try:
+        from ....core.provider_bootstrap import resolve_judge_provider
+        judge_provider_inst = await resolve_judge_provider(state, stage_id="s08_decide")
+    except Exception as e:
+        logger.warning("[judge] resolve_judge_provider 실패 — 본문 폴백: %s", e)
+        judge_provider_inst = None
+
     try:
         from ....core.llm_call import aux_call
         eval_text = await aux_call(
             state, stage_id="s08_decide", prompt=eval_prompt,
             system=eval_system_str,
             model=judge_model_name or None,
+            provider=judge_provider_inst,
         )
     except Exception as e:
         logger.warning("[judge] aux_call 실패: %s", e)

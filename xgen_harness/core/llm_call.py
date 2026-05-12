@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from .state import PipelineState, TokenUsage
 from ..events.types import MessageEvent, ToolCallEvent, ThinkingEvent, RetryEvent
@@ -429,6 +429,7 @@ async def aux_call(
     max_tokens: Optional[int] = None,
     temperature: float = 0.0,
     model: Optional[str] = None,
+    provider: Optional[Any] = None,
 ) -> str:
     """보조 LLM 호출 — 짧은 판정/요약용. 응답 텍스트 반환.
 
@@ -447,12 +448,17 @@ async def aux_call(
         보조 호출은 결정성 우선이라 default 0.0.
     model : Optional[str]
         provider 기본 모델 override. None 이면 provider 의 model_name.
+    provider : Optional[LLMProvider]
+        v1.9.0 P0#3 — 명시 provider 인스턴스. None 이면 state.provider (본문 provider).
+        judge_then_loop 이 ``resolve_judge_provider`` 로 얻은 별도 인스턴스 전달
+        가능 → "Judge 가 자기 답 자기 평가" 약점 회피.
     """
     from .provider_bootstrap import ensure_provider
     from ..events.types import StageSubstepEvent
 
-    await ensure_provider(state, stage_id=stage_id)
-    provider = state.provider
+    if provider is None:
+        await ensure_provider(state, stage_id=stage_id)
+        provider = state.provider
     if not provider:
         raise PipelineAbortError("LLM provider not initialized", stage_id)
 

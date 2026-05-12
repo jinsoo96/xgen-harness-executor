@@ -5,6 +5,89 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-05-11
+
+### 🚨 BREAKING — Claude Code MCP-style PD strict + 메타 도구 Skills 화 + Auto-load on first call
+
+#### F. Auto-load SKILL on first call (provider 무관 fix)
+
+Claude Code 의 Skills 는 lazy (LLM 이 Skill(name) 자율 호출) 인데, 우리 환경 (Qwen/vLLM/외부 모델) 은 instruction following 약해 Skill trigger 안 함 → 무한 루프 회귀.
+
+fix: `s07_act._execute_single` 에 hook — 도구 X 처음 실행 시 그 도구의 SKILL body 가 `state.loaded_skills` 에 자동 박힘 + 결과 footer 에 안내. 다음 turn `<loaded_skills>` 섹션에 자동 합류 → LLM 두번째 호출부터 가이드 받음.
+
+특징:
+- **provider 무관** — system 측 동작, LLM instruction following 무관 (Claude / OpenAI / Qwen / vLLM / Bedrock 모두 동일)
+- **첫 호출 = 가이드 없이 시도** (description ~150자 만으로). 약한 모델 첫 시도 fail 가능
+- **두번째 호출부터 SKILL body 손에** — 회복 path 보장 → 무한 루프 방지
+- **호출 안 한 도구 = body 박지 X** — 토큰 동적 절감
+- footer 안내: `ℹ Detailed usage guide for \`X\` was auto-loaded — consult <loaded_skills> before the next call`
+
+session 고정 (이미 v1.8.0 인프라) 자동 합류. 한 번 load = session 끝까지 유지.
+
+---
+
+사용자 정합 (5-tier graph):
+```
+L1 (system_prompt 첫 턴): 메타 도구 8개만 eager — "지도 간편화"
+L2 (자율 발견):  search_tools / discover_tools / discover_collection / discover_prompt / check_policy
+L3 (확인):       ToolSearch (schema 승격) / fetch_pd (본문) / discover_X(name) (정확히 뭐냐)
+L4 (실 호출):    mcp_xxx / api_loader_xxx / agents_xxx / rag_search → 컨텍스트
+L5 (합성):       답변
+```
+
+매 turn LLM 이 그래프 자유 traversal (한 turn 에 parallel tool_use, L4→L2 회귀 가능 등). Claude Code agent loop + MCP deferred default 정합.
+
+#### A. default 패러다임 변경 (BREAKING)
+
+`xgen_harness/stages/s04_tool/stage.py` — `has_explicit_selection=False` (사용자가 selected_tools 명시 X) 시 동작:
+
+- **옛 (v1.7)**: 모든 도구 eager (47개 schema 가 system_prompt 의 tools= 에 박힘)
+- **신 (v1.8)**: 메타 도구 8개만 eager / 사용자 박은 빌트인 노드 도구는 deferred (이름+1줄 desc 만 system_prompt 의 [deferred] 섹션에). LLM 이 search_tools / ToolSearch 로 능동 발견·승격.
+
+호스트 override (옛 동작 환원):
+```python
+from xgen_harness import register_default_tool_strategy
+register_default_tool_strategy("eager_all")  # v1.7 옛 동작 환원
+```
+
+`selected_tools` 명시 워크플로우는 영향 X — 명시한 것 eager / 나머지 deferred (옛/신 동일).
+
+#### B. 메타 도구 description 영어 통일 + Skills 패턴
+
+8개 메타 도구 description 재작성. 구조: **WHEN / HOW / RETURNS / NEXT**.
+
+| 도구 | 강조 |
+|---|---|
+| `discover_tools` | "if not in eager list, search_tools first → ToolSearch to make callable" |
+| `search_tools` | "most user-installed tools are deferred by default and need this discovery first" |
+| `ToolSearch` | "after search_tools surfaces a tool you want to call — deferred can't be invoked until promoted" |
+| `fetch_pd` | "preview already in conversation → fetch_pd for full body. don't fetch redundantly" |
+| `check_policy` | "before calling sensitive tools (external API, DB write, destructive)" |
+| `discover_prompt` | "templates are reference material, not callable" |
+| `discover_collection` | "<reference_resources> shows name but description is vague — sample first before rag_search" |
+| `compact` | "scope: tool_results_before:N / history_before:N / pd_store:<kind>" |
+| `rag_search` | (v1.7.5 강화 + 영어 통일) "INDEX (not full bodies) → fetch_pd for chunks you need" |
+
+#### C. Public API
+
+- `register_default_tool_strategy(mode)` — "deferred_default" (v1.8 신) / "eager_all" (v1.7 옛)
+- `get_default_tool_strategy()` — 현재 mode 디버그/UI 용
+
+#### D. 영향 평가
+
+- **첫 응답 시간**: 1~2 turn 증가 (LLM 이 search_tools + ToolSearch 추가 호출)
+- **토큰 비용**: system_prompt 의 도구 schema 영역 47→8 슬림 (안 쓰이는 도구 schema 박지 X). 추가 turn 비용 ↑ 와 trade-off — 평균 절감.
+- **PD 정합**: ✅ Claude Code MCP-style strict
+- **사용자 UX**: 약한 회귀 (첫 응답 늦어짐). Stage 3 토글 명시로 즉시 eager 가능
+
+#### E. 마이그레이션
+
+- 옛 동작 그대로 원하면 → `register_default_tool_strategy("eager_all")` 호스트 startup 시 호출
+- 첫 응답 빠르게 원하면 → Stage 3 에서 자주 쓰는 도구만 토글 ON (selected_tools 명시) — 명시한 것 즉시 eager, 나머지 deferred 자동
+- 새 default 가 진짜 PD strict — 사용자 모델 ("지도 간편화 → 빠르게 점진 발견") 정합
+
+---
+
 ## [1.7.5] — 2026-05-11
 
 ### 🚨 PD isomorphic 정합 — RAG 무한 루프 fix + prompt template 메타 노출

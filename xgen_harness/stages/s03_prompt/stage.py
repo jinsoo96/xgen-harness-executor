@@ -53,13 +53,24 @@ DEFAULT_IDENTITIES: dict[str, str] = {
 }
 
 DEFAULT_RULES: dict[str, str] = {
+    # v1.8.0 — 사용자 검증 (claude-cli-test/bench/harnesses.py RESTRICTIONS_ONLY) 정합:
+    # "Don't" 명령형 12줄 ~120 tok = Qwen 같은 약한 모델에서 검증된 +31% 효과 패턴.
+    # 친절한 길고 친절한 가이드 (~500 tok 이상) 보다 짧고 명령형이 더 강함.
     "default": (
         "<rules>\n"
-        "- Always respond in the same language as the user's input.\n"
-        "- When using tools, explain what you're doing and why.\n"
-        "- If a tool call fails, try an alternative approach before giving up.\n"
-        "- Cite sources when using information from reference documents.\n"
-        "- Be concise but thorough.\n"
+        "If <active_resources> lists ANY resource → TRY the matching tool BEFORE saying \"no tools available\". Don't claim absence without trying.\n"
+        "Don't call the same tool with the same args twice.\n"
+        "Don't repeat a search query that returned 0 results — change keywords or stop.\n"
+        "Don't call discover_collection on the same collection name twice.\n"
+        "Don't keep trying after all attached collections returned empty — STOP and tell the user.\n"
+        "Don't speculate when tools return no data — say \"no relevant data found\" and stop.\n"
+        "Don't fetch_pd the same id twice — it's idempotent.\n"
+        "Don't add filler. Lead with the answer, not the reasoning.\n"
+        "Trust tool results — don't second-guess them.\n"
+        "Cite source when using reference documents.\n"
+        "Use the same language as the user.\n"
+        "If a tool fails, try an alternative ONCE — don't keep retrying.\n"
+        "If exhausted, report briefly and STOP. Don't loop.\n"
         "</rules>"
     ),
 }
@@ -273,10 +284,22 @@ class SystemPromptStage(Stage):
                     return maybe_dict
                 return {"name": str(maybe_dict) or default_name}
 
-            lines: list[str] = ["<reference_resources>"]
-            lines.append("사용자가 첨부한 자원입니다. 질문에 관련되면 활용하세요.")
+            # v1.8.0 — T1 인식 강화: <reference_resources> → <active_resources> + 명령형.
+            # PD T1 (지도 인식) 가 정확해야 T2 (도구 호출) 가 정확. LLM 이 자원 보고
+            # 즉시 행동하도록 명령형 안내 박음.
+            # v1.9.0 Option C — s06 자동 search 폐기. 첫 응답에 자원 활용하려면 LLM 이
+            # 즉시 도구 호출해야 함. 명령형 한층 강화:
+            #   "사용자 질문이 자원과 관련 있어 보이면 답변 작성 전에 반드시 즉시
+            #    해당 도구 호출. 모른다고 답하지 말 것 — 먼저 검색하고 답하라."
+            lines: list[str] = ["<active_resources>"]
+            lines.append(
+                "These resources are attached to the workflow. "
+                "**If the user query is related to any of them, you MUST call the matching "
+                "tool BEFORE answering — do not assume, do not say you don't know without "
+                "checking first.** Each item below ends with → the tool to call."
+            )
             if rag_collections_attached:
-                lines.append("- RAG 컬렉션:")
+                lines.append("- 문서 (의미적 유사도 검색 → `rag_search(query, collection_name)`):")
                 # v1.7.2 — description 빈 칸인 컬렉션 추적 → 가이드 라인 끝에 추가.
                 missing_desc_count = 0
                 for col in rag_collections_attached:
@@ -306,7 +329,9 @@ class SystemPromptStage(Stage):
                         "rag_search(collection_name=..., query=...) 로 직접 검색해 확인하세요."
                     )
             if ontology_collections_attached:
-                lines.append("- 지식 그래프:")
+                lines.append(
+                    "- 지식 그래프 (관계·계층 검색 → `query_graph(question, collection)`):"
+                )
                 for col in ontology_collections_attached:
                     m = onto_meta.get(col, {}) if isinstance(onto_meta.get(col), dict) else {}
                     desc = (m.get("description") or "").strip()
@@ -318,7 +343,10 @@ class SystemPromptStage(Stage):
                         line += f" ({nodes:,} nodes)" if isinstance(nodes, int) else f" ({nodes})"
                     lines.append(line)
             if db_connections_attached:
-                lines.append("- DB 연결:")
+                lines.append(
+                    "- DB 연결 (SQL 쿼리 → `mcp_DatabaseLoader` / `mcp_DatabaseReader` / "
+                    "`mcp_postgresql_mcp` 등; deferred 면 `search_tools(query='database')` 로 발견 후 호출):"
+                )
                 for conn in db_connections_attached:
                     if isinstance(conn, dict):
                         cn = conn.get("name") or conn.get("connection_name") or str(conn)
@@ -339,7 +367,10 @@ class SystemPromptStage(Stage):
                         line += f" — tables: {sample}{more}"
                     lines.append(line)
             if files_attached:
-                lines.append("- 파일:")
+                lines.append(
+                    "- 파일 (자동 컨텍스트 주입 — 별도 도구 호출 X; 표/CSV 는 "
+                    "`file_system_table_data_mcp`, 일반 read/write 는 `file_system_filesystem_storage`):"
+                )
                 for fname in files_attached:
                     if isinstance(fname, dict):
                         fn = fname.get("name") or fname.get("file_name") or str(fname)
@@ -370,7 +401,10 @@ class SystemPromptStage(Stage):
             # MCP sessions 메타 (사용자가 mcp_sessions 박았으면 ToolSource 가 등록 + 메타 전달)
             mcp_meta = state.metadata.get("mcp_sessions_meta") or {}
             if mcp_meta:
-                lines.append("- MCP 세션:")
+                lines.append(
+                    "- MCP 세션 (각 세션의 도구는 deferred — `search_tools(query=...)` 로 발견 후 "
+                    "`ToolSearch(names=[...])` 으로 승격):"
+                )
                 for sname, m in mcp_meta.items():
                     if not isinstance(m, dict):
                         m = {}
@@ -382,10 +416,11 @@ class SystemPromptStage(Stage):
                     if when:
                         line += f": {when[:80]}"
                     lines.append(line)
-            lines.append("</reference_resources>")
+            lines.append("</active_resources>")
             ref_section = "\n".join(lines)
-            # rag 섹션 우선순위와 동일 — 도구 안내 직후, history 직전
-            sections.append((SECTION_PRIORITIES["rag"] - 0.1, "reference_resources", ref_section))
+            # v1.8.0 — T1 인식 prominent: rules 직후 (planning 전) 우선. LLM 이 더 빨리
+            # 본 후 즉시 행동 trigger. 옛 위치 (rag - 0.1) → rules + 0.5 로 승격.
+            sections.append((SECTION_PRIORITIES["rules"] + 0.5, "active_resources", ref_section))
 
         # v1.7.5 — `<available_prompt_templates>` 섹션. PD isomorphic 정합.
         # L1 (system_prompt 메타) 에 등록된 prompt template 의 이름 + 첫 줄 (description
@@ -431,6 +466,30 @@ class SystemPromptStage(Stage):
         except Exception as _e:
             # 메타 노출 실패는 본문 prompt 흐름 깨면 안 됨 — graceful skip.
             logger.debug("[s03_prompt] available_prompt_templates 섹션 skip: %s", _e)
+
+        # v1.8.0 — Claude Code Skills 패턴: <loaded_skills> 섹션. LLM 이 Skill('이름')
+        # 호출로 lazy load 한 markdown body 들이 매 turn system_prompt 에 박힘
+        # (session 고정). 한 번 load 하면 재호출 X — body 가 system_prompt 에 이미 있음.
+        try:
+            loaded = dict(getattr(state.tool, "loaded_skills", {}) or {})
+            if loaded:
+                skill_lines = ["<loaded_skills>"]
+                skill_lines.append(
+                    "다음은 이번 session 에서 Skill('이름') 으로 lazy load 한 메타 도구 "
+                    "사용 가이드입니다. 이미 system_prompt 에 박혀있으므로 같은 skill 을 "
+                    "재호출하지 마세요."
+                )
+                for sname, sbody in loaded.items():
+                    skill_lines.append(f"\n### {sname}\n")
+                    skill_lines.append(sbody)
+                skill_lines.append("\n</loaded_skills>")
+                skill_section = "\n".join(skill_lines)
+                # tools 섹션 다음 우선순위 — 도구 카탈로그 직후 사용 가이드 자연 합류
+                sections.append(
+                    (SECTION_PRIORITIES["tools"] + 0.1, "loaded_skills", skill_section)
+                )
+        except Exception as _e:
+            logger.debug("[s03_prompt] loaded_skills 섹션 skip: %s", _e)
 
         # v1.6 — Policy guards LLM 가시화. data-driven (register API + entry_points).
         # 빌트인 4 종 (max_iterations / cost_budget_usd / context_window / s05_guards) +
@@ -735,11 +794,18 @@ class SystemPromptStage(Stage):
             sorted_cats = [c for c in sorted_cats if c != "deferred"] + ["deferred"]
 
         for cat in sorted_cats:
-            lines.append(f"\n[{cat}]")
             if cat == "deferred":
+                # v1.8.0 — strict PD: deferred 도구 list 자체를 system_prompt 에서 제거.
+                # 이름/desc 박으면 system_prompt 두꺼워지고 (~3000자) 사용자 의도 (지도 간편화)
+                # 위반. LLM 은 search_tools(query=...) 또는 discover_tools() 무조건 호출해야
+                # deferred 도구 발견 가능 — 진짜 strict PD. 첫 응답 1 turn 늘어남은 trade-off.
+                count = len(groups[cat])
                 lines.append(
-                    "  (schemas hidden to save context — call ToolSearch(names=[...]) to load before invoking)"
+                    f"\n[deferred] ({count} tools — list hidden. Use search_tools(query=...) "
+                    f"or discover_tools() to find, then ToolSearch(names=[...]) to load.)"
                 )
+                continue
+            lines.append(f"\n[{cat}]")
             for tool in groups[cat]:
                 name = tool.get("name", "unknown")
                 desc = tool.get("description", "")

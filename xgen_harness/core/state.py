@@ -55,6 +55,10 @@ class ToolGroup:
     # 다음 llm_call 의 tools= 에 자연스럽게 누적된다 (dynamic catalogue).
     deferred: list[dict[str, str]] = field(default_factory=list)
     loaded_names: set[str] = field(default_factory=set)
+    # v1.8.0 — Claude Code Skills 패턴. Skill('도구이름') 호출로 lazy load 한 markdown
+    # body 를 session 끝까지 유지. s03_prompt 의 <loaded_skills> 섹션이 이 dict 의
+    # 모든 entry 를 매 turn 박음. 한 번 load 한 skill 은 재호출 X (Claude Code 정합).
+    loaded_skills: dict[str, str] = field(default_factory=dict)
     pending_calls: list[dict[str, Any]] = field(default_factory=list)
     results: list[dict[str, Any]] = field(default_factory=list)
     executed_count: int = 0

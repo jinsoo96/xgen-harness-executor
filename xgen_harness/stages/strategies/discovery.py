@@ -30,6 +30,42 @@ def get_progressive_threshold() -> int:
     return SEARCH_TOOLS_THRESHOLD
 
 
+# v1.8.0 — default tool 노출 모드 (s04_tool 의 selected_tools 명시 X 시 동작).
+#   "deferred_default" (신 default): 사용자 박은 빌트인 노드 도구 = deferred,
+#                                     LLM 이 search_tools / ToolSearch 로 능동 발견
+#   "eager_all" (옛 default): 모든 도구 즉시 eager (백워드 호환)
+# 호스트가 register_default_tool_strategy("eager_all") 으로 옛 동작 환원 가능.
+_DEFAULT_TOOL_STRATEGY: str = "deferred_default"
+
+
+def register_default_tool_strategy(mode: str) -> None:
+    """v1.8.0 — selected_tools 명시 X 시 default 동작 외부 override.
+
+    Args:
+        mode: "deferred_default" (Claude Code MCP-style PD strict, v1.8 신 default)
+              또는 "eager_all" (모든 도구 즉시 eager, v1.7 옛 default)
+
+    호스트 (xgen-workflow / 외부 wheel) 가 호출. 옛 워크플로우 호환 위해 임시 환원,
+    또는 도메인 특화 정책 (예: "사내 도구 카탈로그 작아 항상 eager").
+    """
+    if mode not in ("deferred_default", "eager_all"):
+        raise ValueError(
+            f"Invalid mode: {mode!r}. Must be 'deferred_default' or 'eager_all'."
+        )
+    global _DEFAULT_TOOL_STRATEGY
+    _DEFAULT_TOOL_STRATEGY = mode
+
+
+def _get_default_tool_strategy() -> str:
+    """현재 default tool 노출 모드 (s04_tool 가 read)."""
+    return _DEFAULT_TOOL_STRATEGY
+
+
+def get_default_tool_strategy() -> str:
+    """공개 alias — 디버그/UI 용."""
+    return _DEFAULT_TOOL_STRATEGY
+
+
 class ProgressiveDiscovery(ToolDiscoveryStrategy):
     """Progressive Disclosure 3단계 — 기본 전략 (v1.2.0 Claude Code 정합).
 

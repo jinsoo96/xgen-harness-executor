@@ -116,7 +116,7 @@ class HarnessSession:
             system_prompt=config_data.get("system_prompt", ""),
             disabled_stages=set(config_data.get("disabled_stages", [])),
             artifacts=config_data.get("artifacts", {}),
-            max_iterations=config_data.get("max_iterations", 10),
+            max_iterations=config_data.get("max_iterations", 5),
             validation_threshold=config_data.get("validation_threshold", 0.7),
         )
 

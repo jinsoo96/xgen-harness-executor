@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.7.5"
-description = "XGEN Harness v1.7.5 — PD isomorphic 정합 (RAG 무한 루프 fix + prompt template 메타 노출). snippet 120→250, chunk 메타 박음, '같은 쿼리 반복 금지' description, register_progressive_policy 추가. + system_prompt 에 <available_prompt_templates> 섹션 신규 + discover_prompt list 모드 description+length 박음 — L1 메타 → L2 자율 fetch 흐름 정합."
+version = "1.9.0"
+description = "XGEN Harness v1.9.0 — BREAKING: Option C 라디칼 (s06_context pre-search 폐기, 모든 search 는 LLM 자율 도구 호출). RAG / Ontology / Gallery / MCP search isomorphic 단일 경로. 옛 s06 의 9 stage_params (top_k / score_threshold / metadata_filter / files / reranker / rerank_top_k / rag_pd_mode / rag_pd_snippet_size / rag_ingestion_mode) 는 RAGSearchTool 의 default args 로 자동 이주. s03 <active_resources> 명령형 강화 ('답변 전 반드시 도구 호출'). fetch_synthesize 가 Claude Code 서브에이전트 패턴으로 재설계 (read_chunk / search_in_body / done() — body 가 sub system prompt 박히던 거 lazy load). 도구 N연속 실패 graceful fallback. judge_provider 별도 인스턴스 (UI 약속 실현)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

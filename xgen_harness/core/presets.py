@@ -77,7 +77,10 @@ PRESETS: dict[str, Preset] = {
             "s09_finalize": "default",
         },
         temperature=0.3,
-        max_iterations=10,
+        # v1.8.0 — 10 → 5 하향. 5-tier PD graph 가 5 turn 안에 완결되도록 정합:
+        # T1 메타 인식 → T2 도구 호출 → T3 결과 합성 또는 추가 → T4 최종 시도 → T5 합성/종료.
+        # 약한 모델 (Qwen 등) 이 자율 stop 안 해도 5 iter 안에 강제 종료 → UX 손상 적음.
+        max_iterations=5,
     ),
 
     "evaluator": Preset(

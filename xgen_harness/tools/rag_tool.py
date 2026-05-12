@@ -33,7 +33,9 @@ logger = logging.getLogger("harness.tools.rag")
 _PROGRESSIVE_POLICY: dict[str, Any] = {
     "enabled": True,                # default ON — PD 패턴 정상 작동
     "auto_threshold_chars": 0,      # 0 = 자동 임계 미사용. 명시 인자만 override
-    "snippet_size": 250,            # v1.7.4 — 120 → 250 ("지도" 본분 유지 + 정보량 ↑)
+    # v1.8.0 — 250 → 600. 사용자 명시: "fetch_pd 청크 들이붓지 마라, search 결과로 합성".
+    # snippet 길게 = 인덱스만으로 합성 가능 → fetch_pd 의존도 ↓.
+    "snippet_size": 600,
 }
 
 
@@ -82,6 +84,14 @@ class RAGSearchTool(Tool):
         state_ref: Optional[Any] = None,
         progressive: Optional[bool] = None,
         snippet_size: Optional[int] = None,
+        # v1.9.0 — Option C 정합. s06 의 옛 9 stage_params 가 도구 default args 로
+        # 이주. LLM 이 명시 인자 안 박으면 이 default 사용. UI 사용자 의도 (top_k=10,
+        # reranker=True 등) 자동 적용. None = 미지정 → search() 호출 시 생략.
+        default_score_threshold: Optional[float] = None,
+        default_filter: Optional[dict] = None,
+        default_reranker: Optional[bool] = None,
+        default_rerank_top_k: Optional[int] = None,
+        default_file_names: Optional[list[str]] = None,
     ):
         # v1.7.3 — progressive 가 미명시(None) 면 _PROGRESSIVE_POLICY 의 enabled +
         # auto_threshold_chars 가 결정. 명시 True/False 면 그것 우선.
@@ -92,6 +102,20 @@ class RAGSearchTool(Tool):
         self._state = state_ref
         self._progressive_explicit = progressive
         self._snippet_size_override = snippet_size
+        # v1.9.0 — s06 옛 stage_params 이주분
+        self._default_score_threshold = default_score_threshold
+        # default_filter + default_file_names 합성 (files 가 file_name 키로 자동 union)
+        merged_filter: dict = {}
+        if isinstance(default_filter, dict):
+            merged_filter.update(default_filter)
+        if default_file_names:
+            existing = merged_filter.get("file_name") or []
+            if not isinstance(existing, list):
+                existing = [existing]
+            merged_filter["file_name"] = list({*existing, *default_file_names})
+        self._default_filter = merged_filter or None
+        self._default_reranker = default_reranker
+        self._default_rerank_top_k = default_rerank_top_k
 
     @property
     def name(self) -> str:
@@ -100,20 +124,15 @@ class RAGSearchTool(Tool):
     @property
     def description(self) -> str:
         collections_str = ", ".join(self._collections)
-        # v1.7.4 — PD 패턴 명시. 검색 = 풍부한 인덱스 (지도) 반환, 원문은 fetch_pd 로 가져감.
-        # LLM 에게 "지도 → 필요한 원문 fetch → 합성 답변" 흐름을 명확히 학습시킨다.
+        # v1.8.0 — search 도구 1회 사용, 인덱스로 합성. fetch_pd 의존 X.
+        # 답변에서 "RAG/컬렉션" 같은 기술용어 X — "문서" 라고 자연스럽게 표현.
         return (
-            f"Search the user-attached document collections (RAG). The user has explicitly "
-            f"attached these collections to ground the answer: [{collections_str}]. "
-            f"Call this tool FIRST if the user's question could plausibly be answered by "
-            f"information in these collections (e.g. domain-specific data, organization "
-            f"records, internal knowledge). Returns an INDEX (map) of relevant chunks — each "
-            f"entry shows source, chunk position, length, and a 250-char preview. To read "
-            f"the full body of a specific chunk, call fetch_pd(kind='rag', id='<id>'). "
-            f"Strategy: read the index first to decide WHICH chunks are worth fetching, "
-            f"then fetch only those, then synthesize. Avoid repeating the same search query "
-            f"— if the index doesn't show what you need, try a different query or report "
-            f"insufficient data and stop."
+            f"Search attached documents [{collections_str}] semantically. "
+            f"Returns a rich INDEX (600-char snippet + source + chunk position). "
+            f"Synthesize directly from snippets — most questions answerable without "
+            f"fetching full chunks. Don't repeat same query. Search isn't time-sorted. "
+            f"If 0 results: change query, try other document set, or STOP. "
+            f"In your answer, refer to results as 'documents' (not 'RAG' / 'collection')."
         )
 
     @property
@@ -176,8 +195,13 @@ class RAGSearchTool(Tool):
         try:
             result_text = await self._search_documents(query, collection_name, top_k)
             if not result_text:
+                # v1.8.0 — RESTRICTIONS_ONLY 톤. 명령형 단축.
+                others = [c for c in self._collections if c != collection_name]
+                others_str = (", ".join(others)) if others else "(none)"
                 return ToolResult.success(
-                    f"No results found for query: '{query}' in collection '{collection_name}'."
+                    f"0 results for query='{query}' on '{collection_name}'. "
+                    f"Don't repeat. Change keywords, or try: {others_str}, "
+                    f"or query_graph for relationships, or STOP."
                 )
             return ToolResult.success(result_text, collection=collection_name, top_k=top_k)
         except Exception as e:
@@ -192,6 +216,10 @@ class RAGSearchTool(Tool):
         v1.7.3 — 기본 동작은 결과를 통째 박는 eager 포맷 ([DOC_N] tagged content).
         결과 본문 합산이 _PROGRESSIVE_POLICY['auto_threshold_chars'] 를 초과하거나
         생성자에서 progressive=True 명시한 경우에만 인덱스+snippet + pd_store 모드.
+
+        v1.9.0 — Option C: s06 의 옛 9 stage_params 가 도구 default args 로 이주됨.
+        score_threshold / filter / rerank / rerank_top_k 가 None 이 아니면 그대로
+        search 에 전달 (UI 사용자 의도 보존).
         """
         from ..errors import ToolError
         if self._doc_service is None or not hasattr(self._doc_service, "search"):
@@ -201,9 +229,41 @@ class RAGSearchTool(Tool):
                 tool_name="rag_search",
             )
 
-        results = await self._doc_service.search(
-            query, collection_name, limit=top_k, score_threshold=0.0,
-        ) or []
+        # v1.9.0 — default args 합류. None 면 search 가 자체 default 사용.
+        search_kwargs: dict = {
+            "limit": top_k,
+            "score_threshold": (
+                float(self._default_score_threshold)
+                if self._default_score_threshold is not None
+                else 0.0
+            ),
+        }
+        if self._default_filter:
+            search_kwargs["filter"] = self._default_filter
+        if self._default_reranker is not None:
+            search_kwargs["rerank"] = bool(self._default_reranker)
+        if self._default_rerank_top_k is not None:
+            search_kwargs["rerank_top_k"] = int(self._default_rerank_top_k)
+        try:
+            results = await self._doc_service.search(
+                query, collection_name, **search_kwargs,
+            ) or []
+        except TypeError:
+            # 옛 DocumentService 구현이 rerank/filter 같은 신규 인자 미지원 — 단계 폴백.
+            for unsupported in ("rerank_top_k", "rerank", "filter"):
+                search_kwargs.pop(unsupported, None)
+                try:
+                    results = await self._doc_service.search(
+                        query, collection_name, **search_kwargs,
+                    ) or []
+                    break
+                except TypeError:
+                    continue
+            else:
+                # 최소 인자로 한 번 더
+                results = await self._doc_service.search(
+                    query, collection_name, limit=top_k, score_threshold=0.0,
+                ) or []
         if not results:
             return ""
 

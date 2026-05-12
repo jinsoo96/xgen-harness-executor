@@ -106,6 +106,11 @@ from .orchestrator.multi_agent_planner import register_fan_out_strategy
 from .stages.strategies._decide import register_decide_defaults
 from .stages.strategies.token_tracker import register_model_pricing
 from .tools.rag_tool import register_progressive_policy, get_progressive_policy
+from .stages.strategies.discovery import (
+    register_default_tool_strategy,
+    get_default_tool_strategy,
+)
+from .tools.skill_registry import register_skill_body, list_skill_names, get_skill_body
 from .stages.s03_prompt.stage import (
     register_identity,
     register_rules,
@@ -425,4 +430,11 @@ __all__ = [
     # v1.7.3 — RAG progressive PD policy (default OFF, auto-on > 50KB)
     "register_progressive_policy",
     "get_progressive_policy",
+    # v1.8.0 — default tool exposure mode (deferred_default vs eager_all)
+    "register_default_tool_strategy",
+    "get_default_tool_strategy",
+    # v1.8.0 — Claude Code Skills 패턴 (body lazy + session 고정)
+    "register_skill_body",
+    "list_skill_names",
+    "get_skill_body",
 ]

@@ -1,13 +1,29 @@
 """
-S06 Context — 컨텍스트 수집 + 윈도우 관리
+S06 Context — scope 선언 + 컨텍스트 윈도우 관리 (v1.9.0 Option C 라디칼)
 
-역할:
-1. stage_params에서 선택된 RAG 컬렉션으로 문서 검색 (xgen-documents API)
-2. stage_params에서 선택된 DB 연결의 스키마 요약 조회 (ServiceProvider.database 위임)
-3. 검색 결과를 system_prompt에 추가
-4. 토큰 예산 초과 시 컨텍스트 압축
+역할 (v1.9.0):
+1. scope 선언 — rag_collections / ontology_collections / folders / files / db_connections
+   를 metadata 에 노출. 실제 search 는 LLM 이 s07 에서 rag_search / query_graph /
+   갤러리 search tool 등을 자율 호출 (단일 경로).
+2. folders 자동 확장 — folder_id 에 속한 collection 들을 rag_collections 에 합류
+3. DB 스키마 요약 주입 — DocumentService.database.get_schema_summary 위임 (경량, search X)
+4. Intent routing — user_input → metadata_filter 자동 결정 (rag_search 의 default filter
+   로 합류, BC)
+5. 토큰 예산 관리 + cascade (L3/L4/L5) compaction
 
-실행기가 하드코딩하지 않음 — stage_params에서 리소스를 읽어서 동적 실행.
+v1.9.0 BREAKING (이전 동작 vs):
+- ❌ doc_service.search 자동 호출 제거 (rag_tool_mode='context'/'both' 모두 폐기)
+- ❌ doc_service.ontology_query 자동 호출 제거 (ontology_tool_mode='context'/'both' 폐기)
+- ❌ system_prompt 에 RAG/GraphRAG 결과 통째 주입 제거
+- ✅ 옛 stage_params (top_k / score_threshold / metadata_filter / files / reranker /
+   rerank_top_k / rag_pd_mode / rag_pd_snippet_size / rag_ingestion_mode) 는 s04 가
+   RAGSearchTool / QueryGraphTool 생성 시 default args 로 자동 이주 (UI 사용자 의도
+   보존). 첫 응답 1 turn 지연 + max_iter 압박 감수.
+
+근거: feedback_recursive_autonomy — 재귀적 자율주행. s06 이 강제 fetch 박으면 LLM
+자율 판단 빼앗김. 모든 자원이 "도구로 등가" — RAG / Ontology / Gallery / MCP isomorphic.
+사용자 호소 (2026-05-12): "고결하게 로직짜야할거같아서 이경우엔 뭐 저경우엔 뭐하는
+식으로 짜면안됨". 즉 단일 경로.
 """
 
 import logging
@@ -56,14 +72,15 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
         return 6
 
     def should_bypass(self, state: PipelineState) -> bool:
-        # 첫 번째 루프에서만 RAG 검색 실행 (이후는 토큰 관리만)
+        # v1.9.0 — 첫 loop = scope/intent/DB 스키마 + budget. 이후 loop = budget 만.
+        # 옛 "첫 루프만 RAG search" 의미는 폐기 (Option C — search 자체 안 함).
         return state.loop_iteration > 1
 
     async def execute(self, state: PipelineState) -> dict:
         config = state.config
         results = {
-            "rag_chunks": 0, "rag_collections": 0, "db_results": 0, "compacted": False,
-            "ontology_results": 0, "folders_expanded": 0, "reranked": False,
+            "rag_collections": 0, "db_results": 0, "compacted": False,
+            "ontology_collections": 0, "folders_expanded": 0,
             "intent_routed": False,
         }
 
@@ -104,255 +121,36 @@ class ContextStage(CascadeCompactionMixin, IntentRoutingMixin, Stage):
                 except Exception as e:
                     logger.warning("[Context] folder expansion failed: %s", e)
 
-        # v1.4.0 R3 — RAG 검색을 도구 호출로 위임. rag_tool_mode 가 'tool' 이면 s06 의
-        # 자체 doc_service.search 호출 SKIP. s04 가 등록한 rag_search 빌트인이 LLM 손에
-        # 노출되어 LLM 이 직접 search 호출 → progressive PD 로 결과 합성. s06 책임은
-        # 이제 "참조 컬렉션 선택 → 도구 wiring" + "히스토리 압축 (cascade)" 만.
-        # 'context' 또는 'both' 면 기존 behavior (s06 자체 검색) 유지 — 백워드 호환.
-        _rag_tool_mode_for_self_search = str(
-            self.get_param("rag_tool_mode", state, "tool") or "tool"
-        ).strip().lower()
-        _do_self_rag_search = (
-            rag_collections and state.user_input
-            and _rag_tool_mode_for_self_search in ("context", "both")
-        )
-        if _do_self_rag_search:
-            # verbose: RAG fetch 시작
-            from ...events.types import StageSubstepEvent as _Sub
-            top_k = int(self.get_param("rag_top_k", state, None) or 0)
-            await state.emit_verbose(_Sub(
-                stage_id=self.stage_id, substep="rag_fetch_start",
-                meta={"collections": rag_collections, "top_k": top_k},
-            ))
-            # **우선**: ServiceProvider.documents 위임 (외부 회사가 자기 구현 주입 가능).
-            # **폴백**: ServiceProvider 없을 때만 직접 httpx → xgen-documents 스키마.
-            services = state.metadata.get("services")
-            doc_service = getattr(services, "documents", None) if services else None
-            rag_context = ""
-            if doc_service and hasattr(doc_service, "search"):
-                parts: list[str] = []
-                from ...utils.docs import extract_source, extract_text, extract_score
-                score_threshold = float(self.get_param("score_threshold", state, 0.0))
-                # metadata_filter — xgen-documents DocumentSearchRequest.filter 로 전달.
-                # 우선순위: stage_params.metadata_filter (명시) > state.metadata.auto_metadata_filter (RR2 intent routing).
-                # dict 또는 JSON 문자열(UI textarea) 모두 허용, 파싱 실패 시 무시.
-                raw_filter = self.get_param("metadata_filter", state, None)
-                metadata_filter: dict | None = None
-                if isinstance(raw_filter, dict) and raw_filter:
-                    metadata_filter = raw_filter
-                elif isinstance(raw_filter, str) and raw_filter.strip():
-                    try:
-                        import json as _json
-                        parsed = _json.loads(raw_filter)
-                        if isinstance(parsed, dict) and parsed:
-                            metadata_filter = parsed
-                    except Exception as e:
-                        logger.debug("[Context] metadata_filter JSON 파싱 실패: %s", e)
-                if metadata_filter is None:
-                    # RR2 intent routing 이 s05 에서 세팅했을 수 있음 (fallback)
-                    auto = state.metadata.get("auto_metadata_filter") if hasattr(state, "metadata") else None
-                    if isinstance(auto, dict) and auto:
-                        metadata_filter = auto
-                        logger.info("[Context] using auto_metadata_filter from intent routing: %s", auto)
-                # v0.26.1 — `files` stage_param 자동 라우팅 (frontend 의 files multi_select UI 가
-                # 의미 있게 동작하도록). 사용자가 selected_files 에 file_name 들을 박으면
-                # metadata_filter 의 `file_name` 키로 합쳐서 검색 범위를 자동 좁힘.
-                # 이전엔 files 필드가 dead 였음 (엔진이 read 안 함) — 이제 진짜 wiring.
-                files_selected = self.get_param("files", state, []) or []
-                if isinstance(files_selected, list) and files_selected:
-                    if metadata_filter is None:
-                        metadata_filter = {}
-                    elif not isinstance(metadata_filter, dict):
-                        metadata_filter = {}
-                    # 기존 file_name 키와 union (사용자가 textarea 로 직접 박은 것 보존)
-                    existing = metadata_filter.get("file_name", []) if isinstance(metadata_filter.get("file_name"), list) else []
-                    merged = list({*existing, *files_selected})
-                    metadata_filter["file_name"] = merged
-                    logger.info("[Context] files routed to metadata_filter.file_name: %d items", len(merged))
-                # 서버 단 rerank — toggle 파라미터. bool(False)=False / bool(True)=True.
-                # 단, 과거 저장된 워크플로우가 문자열 "False" 로 들어올 수 있어 명시 비교.
-                _v = self.get_param("reranker", state, False)
-                reranker_enabled = (_v is True) or (isinstance(_v, str) and _v.strip().lower() == "true")
-                rerank_top_k_param = self.get_param("rerank_top_k", state, None)
-                try:
-                    rerank_top_k_int = int(rerank_top_k_param) if rerank_top_k_param is not None else None
-                except (TypeError, ValueError):
-                    rerank_top_k_int = None
-                # RAG Progressive Disclosure 모드 — Claude Code 5-Level Compression 의 정신을
-                # RAG 단에 적용. eager (기존) 는 청크 본문을 system_prompt 에 통으로 넣고,
-                # progressive 는 인덱스만 넣고 본문은 pd_stores 에 보관. LLM 은
-                # fetch_pd(kind='rag', id='<col>#<i>') 로 필요한 청크만 pull.
-                rag_pd_mode = str(self.get_param("rag_pd_mode", state, "eager") or "eager").strip().lower()
-                if rag_pd_mode not in ("eager", "progressive"):
-                    rag_pd_mode = "eager"
-                rag_pd_snippet = int(self.get_param("rag_pd_snippet_size", state, None) or 0)
-                for col in rag_collections:
-                    try:
-                        # 변수명 search_hits — 상단 results dict 와 혼동 방지 (v0.8.35 이전 regression fix)
-                        search_hits = await doc_service.search(
-                            state.user_input, col, limit=top_k, score_threshold=score_threshold,
-                            filter=metadata_filter, rerank=reranker_enabled, rerank_top_k=rerank_top_k_int,
-                        ) or []
-                        if search_hits:
-                            part = f"## {col} ({len(search_hits)}건)\n\n"
-                            for i, r in enumerate(search_hits):
-                                if not isinstance(r, dict):
-                                    continue
-                                src = extract_source(r) or r.get("file_name", "")
-                                score = extract_score(r)
-                                text = extract_text(r) or r.get("chunk_text", "")
-                                if rag_pd_mode == "progressive":
-                                    # 인덱스 한 줄만. 본문은 pd_stores["rag"] 에 보관.
-                                    rid = f"{col}#{i+1}"
-                                    snippet = (text[:rag_pd_snippet] + "…") if len(text) > rag_pd_snippet else text
-                                    snippet = snippet.replace("\n", " ")
-                                    part += (
-                                        f"[{i+1}] id={rid} · {src} ({score:.3f}) · {snippet}\n"
-                                    )
-                                    state.pd_store(
-                                        kind="rag",
-                                        resource_id=rid,
-                                        preview=snippet,
-                                        full=text,
-                                        meta={
-                                            "collection": col,
-                                            "index": i + 1,
-                                            "source": src,
-                                            "score": score,
-                                            "chars": len(text),
-                                        },
-                                    )
-                                else:
-                                    part += f"[{i+1}] {src} ({score:.3f})\n{text}\n\n"
-                            if rag_pd_mode == "progressive":
-                                part += (
-                                    "\n(본문이 필요하면 fetch_pd(kind='rag', id='<위 id>') 호출. "
-                                    "예: fetch_pd(kind='rag', id='" + f"{col}#1" + "'))\n"
-                                )
-                            parts.append(part)
-                    except Exception as e:
-                        logger.warning("[Context] DocumentService.search failed for %s: %s", col, e)
-                rag_context = "\n\n".join(parts)
-            else:
-                # v0.11.25 — httpx 직접 호출 폴백 제거. 엔진은 xgen-documents API 스키마를
-                # 모른다. DocumentService 가 ServiceProvider 로 주입되지 않았으면 RAG 는
-                # graceful skip — 외부 조직이 독립 실행 시 자기 ServiceProvider 를 붙이거나
-                # RAG 를 비활성화하면 된다.
-                logger.info("[Context] DocumentService not injected — RAG search skipped")
-                rag_context = ""
-            # rerank — DocumentService.rerank 위임.
-            # Protocol: rerank(query, documents: list[str], top_k, user_id) -> [{"index", "score"}, ...]
-            # xgen-documents 의 reranker provider 는 서버 기동 시 설정되므로, 본 Stage 는
-            # reranker 파라미터를 "rerank 활성 토글" 로만 사용합니다 (truthy 면 호출).
-            _v = self.get_param("reranker", state, False)
-            reranker_enabled = (_v is True) or (isinstance(_v, str) and _v.strip().lower() == "true")
-            if reranker_enabled and rag_context:
-                services = state.metadata.get("services")
-                doc_service = getattr(services, "documents", None) if services else None
-                if doc_service and hasattr(doc_service, "rerank"):
-                    try:
-                        import re as _re
-                        # 2 줄 이상 공백으로 분리된 블록을 청크로 간주. 쿼리 시점에 조립된
-                        # `## collection (N건)` 헤더 블록 구조를 그대로 유지합니다.
-                        chunks = [c.strip() for c in _re.split(r"\n{2,}", rag_context) if c.strip()]
-                        if chunks:
-                            rerank_top_k = int(self.get_param("rerank_top_k", state, top_k))
-                            ranked = await doc_service.rerank(
-                                query=state.user_input,
-                                documents=chunks,
-                                top_k=rerank_top_k,
-                            ) or []
-                            if ranked:
-                                # ranked: [{"index": i, "score": s}, ...] — score 내림차순 가정
-                                ordered_chunks: list[str] = []
-                                seen_idx: set[int] = set()
-                                for item in ranked[:rerank_top_k]:
-                                    idx = item.get("index") if isinstance(item, dict) else None
-                                    if isinstance(idx, int) and 0 <= idx < len(chunks) and idx not in seen_idx:
-                                        ordered_chunks.append(chunks[idx])
-                                        seen_idx.add(idx)
-                                if ordered_chunks:
-                                    rag_context = "\n\n".join(ordered_chunks)
-                                    results["reranked"] = True
-                                    results["rerank_top_k"] = rerank_top_k
-                    except Exception as e:
-                        logger.warning("[Context] rerank failed: %s", e)
-            if rag_context:
-                # v0.11.18 — rag_ingestion_mode 로 system prompt 주입 여부 제어.
-                #   system_prompt (기본): 현재 동작 — RAG 를 system prompt 에 주입 (LLM 이 즉시 활용)
-                #   tool_only: system prompt 주입 skip. LLM 은 rag_search 도구 호출로만 RAG 접근.
-                #              → tool_result 누적 → L3 microcompact 발동 조건 충족.
-                #   both: 현재 `rag_tool_mode=both` 와 정합. system prompt 에도 있고 도구로도 접근.
-                rag_ing_mode = str(self.get_param("rag_ingestion_mode", state, "system_prompt") or "system_prompt").strip().lower()
-                if rag_ing_mode not in ("system_prompt", "tool_only", "both"):
-                    rag_ing_mode = "system_prompt"
-                # rag_tool_mode 가 'tool' 이면 ingestion mode 가 system_prompt 라도 tool_only 로 정정
-                # (사용자 의도: RAG 를 도구로만 쓰겠다).
-                rag_tool_mode_val = str(self.get_param("rag_tool_mode", state, "both") or "both").strip().lower()
-                if rag_tool_mode_val == "tool" and rag_ing_mode == "system_prompt":
-                    rag_ing_mode = "tool_only"
-                    logger.info("[Context] rag_tool_mode=tool → rag_ingestion_mode auto-corrected to tool_only")
-
-                if rag_ing_mode in ("system_prompt", "both"):
-                    state.system_prompt = f"{state.system_prompt}\n\n{rag_context}"
-                    # enhance_prompt — RAG 컨텍스트 뒤에 사용자 지정 "응답 향상" 지시를 붙입니다.
-                    enhance_prompt = str(self.get_param("enhance_prompt", state, "") or "").strip()
-                    if enhance_prompt:
-                        state.system_prompt = (
-                            f"{state.system_prompt}\n\n"
-                            f"<enhance_prompt>\n{enhance_prompt}\n</enhance_prompt>"
-                        )
-                        results["enhance_prompt_applied"] = True
-                    results["rag_chunks"] = rag_context.count("[")  # 대략적 청크 수
-                    results["rag_collections"] = len(rag_collections)
-                    # v1.0 — UI 가시성: 컬렉션 이름 목록도 노출. 사용자가 "어떤 collection 썼나" 즉시 확인.
-                    results["rag_collection_names"] = list(rag_collections)
-                    logger.info("[Context] RAG: %d collections, added to system prompt (mode=%s)",
-                                len(rag_collections), rag_ing_mode)
-                else:
-                    # tool_only — system prompt 주입 skip. state.rag_context 는 남겨둬 s04 RAGSearchTool 이 참조.
-                    # 결과 카운트 표시는 유지 (추적용).
-                    results["rag_chunks"] = rag_context.count("[")
-                    results["rag_collections"] = len(rag_collections)
-                    results["rag_ingestion_mode"] = "tool_only"
-                    logger.info("[Context] RAG: %d collections, tool_only mode (system prompt skip)",
-                                len(rag_collections))
-            from ...events.types import StageSubstepEvent as _Sub2
-            await state.emit_verbose(_Sub2(
-                stage_id=self.stage_id, substep="rag_fetch_complete",
-                meta={"chunks": results.get("rag_chunks", 0)},
-            ))
-
-        # ── 1.5 Ontology / GraphRAG — v1.5.0 R3: 도구 위임 (자체 자동 호출 비활성)
-        # rag_tool_mode 패턴 정합 — ontology_tool_mode default 'tool' 이면 s04 가
-        # query_graph 빌트인 등록해 LLM 이 호출 결정. s06 자체 자동 호출은 'context'
-        # 또는 'both' 명시 시만 (백워드 호환).
+        # ── 1.5 v1.9.0 Option C — scope 노출만, 자동 search 폐기 ──
+        # 옛 동작 (v1.8.x 이하): rag_tool_mode='context'/'both' 면 s06 가 doc_service.search
+        # 직접 호출 → system_prompt 박음. ontology 도 동일.
+        # 신 동작 (v1.9.0): s06 은 자동 search 안 함. rag_collections / ontology_collections
+        # 는 metadata 에만 노출, s04 가 RAGSearchTool / QueryGraphTool 등록 → s07 에서 LLM
+        # 이 자율 호출. 9 stage_params (top_k / score_threshold / metadata_filter / files /
+        # reranker / rerank_top_k / rag_pd_mode / rag_pd_snippet_size / rag_ingestion_mode)
+        # 는 s04 가 도구 default args 로 자동 이주 — 사용자 의도 보존.
+        #
+        # 사용자 호소 (2026-05-12): "이경우엔 뭐 저경우엔 뭐 짜면안됨" → 단일 경로.
+        # 옛 stage_params 박힌 워크플로우 = s04 가 read 해서 도구 default args 로 박음.
+        # s03 의 <active_resources> 명령형 지시 → LLM 이 자율 도구 호출 (BC 완화).
+        if rag_collections:
+            state.metadata["rag_collections"] = list(rag_collections)
         ontology_collections: list[str] = list(self.get_param("ontology_collections", state, []) or [])
-        ontology_tool_mode = str(
-            self.get_param("ontology_tool_mode", state, "tool") or "tool"
-        ).strip().lower()
-        if (ontology_collections and state.user_input
-                and ontology_tool_mode in ("context", "both")):
-            services = state.metadata.get("services")
-            doc_service = getattr(services, "documents", None) if services else None
-            if doc_service and hasattr(doc_service, "ontology_query"):
-                try:
-                    onto_chunks: list[str] = []
-                    for col in ontology_collections:
-                        try:
-                            r = await doc_service.ontology_query(state.user_input, col)
-                            if r:
-                                onto_chunks.append(f"[graph:{col}]\n{r if isinstance(r, str) else str(r)[:2000]}")
-                        except Exception as e:
-                            logger.warning("[Context] ontology_query (%s) failed: %s", col, e)
-                    if onto_chunks:
-                        state.system_prompt = (state.system_prompt or "") + (
-                            "\n\n<graph_rag>\n" + "\n\n".join(onto_chunks) + "\n</graph_rag>"
-                        )
-                        results["ontology_results"] = len(onto_chunks)
-                        logger.info("[Context] ontology: %d collections injected", len(onto_chunks))
-                except Exception as e:
-                    logger.warning("[Context] ontology pipeline error: %s", e)
+        if ontology_collections:
+            state.metadata["ontology_collections"] = list(ontology_collections)
+        results["rag_collections"] = len(rag_collections)
+        results["rag_collection_names"] = list(rag_collections)
+        results["ontology_collections"] = len(ontology_collections)
+        results["ontology_collection_names"] = list(ontology_collections)
+        # files 도 metadata 에 노출 — s04 가 RAGSearchTool.default_filter.file_name 로 합류.
+        _files_for_metadata = list(self.get_param("files", state, []) or [])
+        if _files_for_metadata:
+            state.metadata["files"] = _files_for_metadata
+        if rag_collections or ontology_collections:
+            logger.info(
+                "[Context] scope: rag=%d cols, ontology=%d cols (search 는 s07 도구 호출 시점)",
+                len(rag_collections), len(ontology_collections),
+            )
 
         # ── 2. DB 연결 — services.database.get_schema_summary 로 위임 ──
         # 라이브러리는 connection_name 같은 추상 식별자만 다루고,

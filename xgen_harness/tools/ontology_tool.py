@@ -53,12 +53,11 @@ class QueryGraphTool(Tool):
     @property
     def description(self) -> str:
         cols = ", ".join(self._collections)
+        # v1.8.0 — frontmatter. 자세한 사용법은 Skill('query_graph').
         return (
-            f"Query knowledge graph (ontology / GraphRAG) for relationship-rich questions. "
-            f"Backend runs multi-turn ReAct over SPARQL + semantic chunks + SQL. "
-            f"Available graph collections: [{cols}]. "
-            f"Use this when the question needs entity relationships, hierarchical or "
-            f"network reasoning beyond plain document search (rag_search)."
+            f"GraphRAG / ontology search (multi-turn ReAct over SPARQL + chunks + SQL) "
+            f"for relationship/hierarchy questions on collections [{cols}]. "
+            f"Call Skill('query_graph') for detailed usage."
         )
 
     @property
