@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.9.0"
-description = "XGEN Harness v1.9.0 — BREAKING: Option C 라디칼 (s06_context pre-search 폐기, 모든 search 가 LLM 자율 도구 호출 단일 경로). RAG/Ontology/Gallery/MCP isomorphic. 옛 s06 9 stage_params → RAGSearchTool default args 자동 이주. s03 <active_resources> 명령형 강화. fetch_synthesize 가 Claude Code 서브에이전트 패턴 재설계 (read_chunk / search_in_body / done — body lazy load). 도구 N연속 실패 graceful fallback. judge_provider 별도 인스턴스 (UI 약속 실현)."
+version = "1.10.0"
+description = "XGEN Harness v1.10.0 — 외부 wire 인프라 + Python 채널 컴파일러. interfaces/ (DocService / OntologyService Protocol) + adapters/qdrant + config/sources (Dict / Env / File 3 builtin + 5 단계 resolution chain + deep merge + runtime_defaults 자동 register) + Pipeline.from_config(doc_service=, provider=) inject + compile.python_compile (transpile JSON → Python 소스 트리, FastMCP entry 포함) + compile.python_pack (wheel/sdist/tarball/source 빌드). xgen 에서 말려나온 워크플로우를 사용자가 pip install 해서 자기 인프라 wire 로 cluster 동치 동작."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

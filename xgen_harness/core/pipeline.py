@@ -48,10 +48,19 @@ class Pipeline:
         config: HarnessConfig,
         stages: list[Stage],
         event_emitter: Optional[EventEmitter] = None,
+        *,
+        doc_service: object = None,
+        provider: object = None,
     ):
         self.config = config
         self.event_emitter = event_emitter or EventEmitter()
         self._all_stages = stages
+
+        # v1.10.0 — 외부 wire (사용자가 from_config 인자로 inject) 보관.
+        # run(state) 진입 시 state 가 같은 attribute 가 없으면 여기 박은 인스턴스가 주입됨.
+        # cluster 측은 옛 방식대로 XgenAdapter 가 state 에 직접 박는다 — BC 충돌 없음.
+        self._injected_doc_service = doc_service
+        self._injected_provider = provider
 
         # Phase별 분류
         self.ingress_stages = [s for s in stages if s.phase == "ingress"]
@@ -66,6 +75,9 @@ class Pipeline:
         config: HarnessConfig,
         event_emitter: Optional[EventEmitter] = None,
         registry: Optional["ArtifactRegistry"] = None,
+        *,
+        doc_service: object = None,
+        provider: object = None,
     ) -> "Pipeline":
         """설정으로부터 파이프라인 생성.
 
@@ -76,17 +88,38 @@ class Pipeline:
         v1.1.0 — Planner 항상 OFF 직선 흐름. harness_mode/use_planner 제거.
         s00_harness Stage 자체는 레지스트리에 남아있되 ingress 최상단 prepend 안 함.
         본문 LLM 호출(main_call)은 Phase B 에서 s00 인스턴스를 통해 그대로 호출.
+
+        v1.10.0 — `doc_service` / `provider` 키워드 인자로 외부 인프라 주입 가능.
+        cluster (xgen-workflow harness_bridge) 가 옛 방식대로 state 에 직접 박던 경로는
+        그대로 유효 (BC). 외부 사용자는 from_config 인자로 inject:
+
+            from xgen_harness.adapters import QdrantDocService, create_provider
+            pipeline = Pipeline.from_config(
+                config,
+                doc_service=QdrantDocService(url="..."),
+                provider=create_provider("openai", api_key="..."),
+            )
         """
         from .registry import _get_default_registry
         reg = registry or _get_default_registry()
         stages = reg.build_pipeline_stages(config)
-        return cls(config, stages, event_emitter)
+        return cls(
+            config, stages, event_emitter,
+            doc_service=doc_service, provider=provider,
+        )
 
     async def run(self, state: PipelineState) -> PipelineState:
         """파이프라인 실행 — 3 Phase (v0.13.0 단일 provider + iterative planning)."""
         state.event_emitter = self.event_emitter
         state.config = self.config
         state.start_time = time.time()
+
+        # v1.10.0 — Pipeline.from_config 인자로 inject 된 doc_service / provider 를
+        # state 에 박음 (state 에 이미 박혀있으면 그쪽 우선 — cluster wire BC 보장).
+        if self._injected_doc_service is not None and getattr(state, "doc_service", None) is None:
+            state.doc_service = self._injected_doc_service
+        if self._injected_provider is not None and getattr(state, "provider", None) is None:
+            state.provider = self._injected_provider
 
         try:
             # ━━━━ v0.14.0 — LLM provider 1 회 선초기화 ━━━━

@@ -6,8 +6,22 @@ Adapters — 외부 시스템과 하네스를 연결하는 어댑터 계층
 
 v0.22.0 — XgenAdapter 는 이식측(xgen-workflow/harness_bridge)으로 이관됨.
 엔진 코어는 ResourceRegistry 프로토콜·Protocol 기반 duck-typing 만 노출.
+
+v1.10.0 — 외부 사용자가 자기 인프라에 wire 하는 어댑터:
+    - QdrantDocService — DocService Protocol 의 Qdrant 직결 구현
+    - LLM provider 는 providers/ 에 그대로 (OpenAI / Anthropic), create_provider 팩토리 re-export.
 """
 
 from .resource_registry import ResourceRegistry, ResourceInfo
+from .qdrant import QdrantDocService
 
-__all__ = ["ResourceRegistry", "ResourceInfo"]
+# Provider 는 providers/ 에 이미 정의됨 — adapters 표면에서도 편의 re-export
+from ..providers import create_provider, register_provider
+
+__all__ = [
+    "ResourceRegistry",
+    "ResourceInfo",
+    "QdrantDocService",
+    "create_provider",
+    "register_provider",
+]

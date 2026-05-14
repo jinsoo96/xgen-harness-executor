@@ -63,6 +63,20 @@ from .gallery import (
     get_gallery,
     ENTRY_POINT_GROUP,
 )
+# v1.10.0 — Python 채널 (PyPI 패키지 빌더). npm 채널과 병행. 사용자가
+# `/harness` Compile 모달에서 Python 토글 ON 시 cluster compile endpoint 가
+# 아래 함수 호출 → wheel/sdist/tarball/source 산출 → PyPI publish 또는 다운로드.
+from .python_compile import (
+    transpile_to_python,
+    write_package,
+)
+from .python_pack import (
+    build_wheel,
+    build_sdist,
+    pack_tarball,
+    compile_and_pack,
+    BuildError,
+)
 
 __all__ = [
     # external_inputs
@@ -100,4 +114,12 @@ __all__ = [
     "discover_galleries",
     "get_gallery",
     "ENTRY_POINT_GROUP",
+    # Python 채널 (v1.10.0+)
+    "transpile_to_python",
+    "write_package",
+    "build_wheel",
+    "build_sdist",
+    "pack_tarball",
+    "compile_and_pack",
+    "BuildError",
 ]

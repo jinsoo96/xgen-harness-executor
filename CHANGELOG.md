@@ -5,6 +5,105 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-05-14
+
+### 외부 wire 인프라 — "xgen 에서 말렸지만 외부 요소 wire"
+
+사용자가 `pip install xgen-harness` 한 다음 자기 인프라 (Qdrant / LLM key) 를 wire 해서 cluster 와 동치 동작하는 산출물 흐름의 기반.
+
+#### A. `interfaces/` — Protocol 추출
+
+- `xgen_harness.interfaces.DocService` — `search(query, collection_name, **kwargs) -> list[dict]`
+- `xgen_harness.interfaces.OntologyService` — `ontology_query(question, collection_name, **kwargs)`
+- `LLMProvider` / `ProviderEvent` / `ProviderEventType` 은 `providers.base` 에서 re-export
+
+cluster 측 `doc_service` 인스턴스가 자연 duck-typing 으로 Protocol 만족 — cluster wire BC 유지.
+
+#### B. `adapters/qdrant.py` — Qdrant 직결
+
+`QdrantDocService(url, api_key=None, embedder=None)` — httpx 기반, qdrant-client 의존 X. `adapters/__init__.py` 가 `create_provider` / `register_provider` re-export.
+
+#### C. `config/` — 다중 source resolution
+
+- `xgen_harness.config.ConfigSource` Protocol (`load() -> dict`)
+- 3 builtin: `DictConfigSource` / `EnvConfigSource(prefix, env)` / `FileConfigSource(path, format)`
+- `deep_merge(base, overlay)` — nested dict 재귀 merge
+
+env naming convention: `XGEN_HARNESS_*` prefix + `__` (double underscore) nested 구분자. JSON/bool/int/str 자동 디코드.
+
+#### D. `HarnessConfig.resolve(sources=[...])`
+
+5 단계 resolution chain (위가 우선):
+1. 코드 인자
+2. `EnvConfigSource(prefix="XGEN_HARNESS_")`
+3. `FileConfigSource("./xgen-harness.toml")`
+4. `DictConfigSource(CLUSTER_DEFAULTS)` (transpile 산출물 박은 default)
+5. SDK builtin default
+
+`runtime_defaults` 키 자동 추출 → `register_runtime_default` 전역 호출. 서브에이전트 (`synth_raw_threshold` / `synth_sub_max_turns`) + fallback (`tool_consecutive_failure_limit`) 환경값이 cluster 동치.
+
+#### E. `Pipeline.from_config(doc_service=, provider=)` inject
+
+```python
+pipeline = Pipeline.from_config(
+    config,
+    doc_service=QdrantDocService(url="..."),
+    provider=create_provider("openai", api_key="..."),
+)
+```
+
+`run(state)` 진입 시 state 에 이미 없으면 inject 인스턴스 wire. cluster `XgenAdapter` 가 state 직접 박던 옛 경로 유효.
+
+#### F. Python 채널 컴파일러 — `compile.python_compile` / `compile.python_pack`
+
+xgen 워크플로우 → pip install 가능한 PyPI 패키지 빌드.
+
+```python
+from xgen_harness.compile import compile_and_pack
+
+wheel = compile_and_pack(
+    {"harness_config": cluster_config_dict},
+    package_name="plateer-xgen-wf-abc",
+    package_version="0.1.0",
+    include_mcp=True,
+    out_dir="./dist",
+    format="wheel",  # wheel / sdist / tarball / source
+)
+```
+
+산출물 구조:
+```
+plateer-xgen-wf-abc-0.1.0/
+├── pyproject.toml                ← xgen-harness exact pin (1:1 미러)
+├── README.md                     ← 사용/외부 wire 가이드
+├── plateer_xgen_wf_abc/
+│   ├── __init__.py               ← build_pipeline / CLUSTER_DEFAULTS export
+│   ├── flow.py                   ← CLUSTER_DEFAULTS dict + 5 단계 resolution + Pipeline 구축
+│   ├── __main__.py               ← CLI entry (python -m <pkg>)
+│   ├── mcp.py                    ← FastMCP 서버 entry (옵션)
+│   └── config.toml.example       ← 외부 override 템플릿
+```
+
+사용자 4 시나리오 (같은 패키지 위에서):
+1. CLI — `python -m my_workflow "안녕"`
+2. 라이브러리 — `from my_workflow import build_pipeline`
+3. Python MCP 서버 — `python -m my_workflow.mcp`
+4. Node MCP bridge — 기존 `@plateer-xgen/mcp-harness`
+
+PD / 서브에이전팅 / judge / fallback 로직은 SDK 안 builtin, 산출물에 코드 0 — `pip install xgen-harness` 의존성으로 자동 따라옴.
+
+#### G. 기타
+
+- fastapi router skip hotfix (None 케이스 추가 skip)
+- 신규 테스트 30 케이스 (`tests/test_v1_10_external_wire.py` + `tests/test_v1_11_python_compile.py`) — 총 52 PASS
+- `xgen_harness.compile` top-level exports: `transpile_to_python` / `write_package` / `build_wheel` / `build_sdist` / `pack_tarball` / `compile_and_pack` / `BuildError`
+
+#### BC 영향
+
+없음. 모든 신규 인터페이스 옵션 / 추가 keyword / 신규 모듈. cluster (xgen-workflow harness_bridge) 와 npm 컴파일 채널 (`compile_workflow_to_npm`) 무수정 동작.
+
+---
+
 ## [1.9.0] — 2026-05-12
 
 ### 🚨 BREAKING — Option C 라디칼 (s06_context pre-search 폐기) + Claude Code 서브에이전트 패턴 fetch_synthesize 재설계

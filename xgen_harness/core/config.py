@@ -377,6 +377,60 @@ class HarnessConfig:
             return cls.from_json(f.read())
 
     @classmethod
+    def resolve(
+        cls,
+        sources: "list",
+        *,
+        register_runtime_defaults: bool = True,
+    ) -> "HarnessConfig":
+        """다중 source 에서 HarnessConfig 생성 (v1.10.0).
+
+        5 단계 resolution chain 의 핵심. sources 는 우선순위 순서 (앞이 강함).
+        sources[0] 의 값이 sources[1] / sources[2] / ... 의 같은 키를 덮음.
+        None 항목은 자동 skip (FileConfigSource missing_ok 패턴).
+
+        합쳐진 dict 의 `runtime_defaults` 키는 자동 추출 → `register_runtime_default`
+        전역 호출 (서브에이전트 / fallback 환경값이 SDK 안 builtin 에 박힘).
+
+        Args:
+            sources: ConfigSource 구현체 리스트 (앞이 우선). None 항목 skip.
+            register_runtime_defaults: True 면 `runtime_defaults` 키를 전역
+                runtime_default 레지스트리에 등록 (default True).
+
+        예:
+            from xgen_harness.config import DictConfigSource, EnvConfigSource, FileConfigSource
+
+            config = HarnessConfig.resolve(sources=[
+                EnvConfigSource(prefix="XGEN_HARNESS_"),
+                FileConfigSource("./xgen-harness.toml"),
+                DictConfigSource(CLUSTER_DEFAULTS),
+            ])
+        """
+        from ..config.sources import deep_merge
+
+        # None 항목 skip (FileConfigSource missing_ok 시 None 박힐 수 있음)
+        sources = [s for s in sources if s is not None]
+        if not sources:
+            return cls()
+
+        # 우선순위 정책: sources[0] 이 가장 강함 → reversed 로 base 부터 차곡차곡 overlay
+        merged: dict = {}
+        for source in reversed(sources):
+            loaded = source.load() if hasattr(source, "load") else {}
+            if not isinstance(loaded, dict):
+                continue
+            merged = deep_merge(merged, loaded)
+
+        # runtime_defaults 키 추출 → 전역 register (HarnessConfig 필드 아님)
+        runtime_defaults = merged.pop("runtime_defaults", None) if register_runtime_defaults else None
+        if runtime_defaults and isinstance(runtime_defaults, dict):
+            from .runtime_defaults import register_runtime_default
+            for rd_key, rd_value in runtime_defaults.items():
+                register_runtime_default(rd_key, rd_value)
+
+        return cls.from_dict(merged)
+
+    @classmethod
     def from_workflow(cls, harness_config: dict[str, Any], workflow_data: dict[str, Any]) -> "HarnessConfig":
         """workflow_data에서 설정 생성"""
         agent_config = _extract_agent_config_from_nodes(workflow_data)
