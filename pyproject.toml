@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.10.1"
-description = "XGEN Harness v1.10.0 — 외부 wire 인프라 + Python 채널 컴파일러. interfaces/ (DocService / OntologyService Protocol) + adapters/qdrant + config/sources (Dict / Env / File 3 builtin + 5 단계 resolution chain + deep merge + runtime_defaults 자동 register) + Pipeline.from_config(doc_service=, provider=) inject + compile.python_compile (transpile JSON → Python 소스 트리, FastMCP entry 포함) + compile.python_pack (wheel/sdist/tarball/source 빌드). xgen 에서 말려나온 워크플로우를 사용자가 pip install 해서 자기 인프라 wire 로 cluster 동치 동작."
+version = "1.10.2"
+description = "XGEN Harness v1.10.2 — transpile 산출물에 사용자 편의 1 줄 helper. build_pipeline(simple=, enable_logging=, overrides=) + run / run_sync top-level export + MissingApiKeyError 친화적 안내 + --simple / --verbose CLI 플래그. v1.10.0 외부 wire 인프라 (interfaces/, adapters/qdrant, config/sources Dict/Env/File 5 단계 chain, Pipeline.from_config doc_service/provider inject, compile.python_compile, compile.python_pack) 위에 사용자 onboarding 마찰 제거."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

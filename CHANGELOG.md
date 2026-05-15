@@ -5,6 +5,62 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] — 2026-05-15
+
+### 사용자 편의 — transpile 산출물 자체에 1 줄 helper
+
+전 버전까지 산출물 사용자가 `Pipeline` / `PipelineState` / `asyncio.run` / `final_output` / API key env 셋업을 직접 조립해야 했고, 사용설명서가 길어 onboarding 마찰. v1.10.2 부터 transpile 산출물이 친화적 default 와 helper 를 자체 박은 채 나옴.
+
+#### 새 top-level API (산출물 패키지)
+
+```python
+import saytest
+
+# 가장 단순 — 1 줄
+print(saytest.run_sync("안녕"))
+
+# 도구 끄고 자연어 답만 (vLLM/Qwen 같이 표준 tool_calls 안 쓰는 모델 안전)
+print(saytest.run_sync("안녕", simple=True))
+
+# 이벤트 로그 stdout 자동 출력 — 디버그/학습
+print(saytest.run_sync("안녕", enable_logging=True))
+
+# 설정 override (CLUSTER_DEFAULTS 위에 deep-merge)
+saytest.run_sync("안녕", overrides={
+    "stage_params": {"s06_context": {"top_k": 20}}
+})
+
+# 비동기 (Jupyter / asyncio 환경)
+import asyncio
+asyncio.run(saytest.run("안녕"))
+
+# 세밀 제어 (직접 Pipeline 다룸 — 기존 path 보존)
+pipe = saytest.build_pipeline()
+```
+
+산출물 top-level export: `build_pipeline`, `run`, `run_sync`, `CLUSTER_DEFAULTS`, `MissingApiKeyError`.
+
+#### `MissingApiKeyError` — 친화적 에러
+
+API key env 미설정 시 raw httpx `Illegal header value b'Bearer '` 대신 PowerShell / bash 명령 예시 + 외부 vLLM endpoint 힌트가 박힌 한국어 안내.
+
+`vllm` / `google` / `bedrock` provider 는 키 검증 안 함 — `"EMPTY"` 자동 박음.
+
+#### CLI 플래그 (`python -m <pkg>`)
+
+- `--simple` — 도구 stage 끄고 자연어 답만
+- `--verbose` — 이벤트 로그 stdout 출력
+
+`__main__.py` 가 예외를 잡아 `❌ ErrorName: msg` 친화적 출력 후 exit code 2 — traceback 노출 X.
+
+#### 영향
+
+- 산출물 사용자 코드 양 5+ 줄 → 1 줄
+- 사용설명서로 떼우던 onboarding 부분이 코드에 박힘
+- v1.10.0~1 산출물과 BC — `build_pipeline` 기존 호출 인자 X 인 case 가 default 동작
+
+엔진 본체 (`xgen_harness/`) 무변동 — `compile/python_compile.py` 의 `_render_init` / `_render_flow` / `_render_main` 템플릿만 변경.
+
 ## [1.10.0] — 2026-05-14
 
 ### 외부 wire 인프라 — "xgen 에서 말렸지만 외부 요소 wire"
