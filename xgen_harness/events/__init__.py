@@ -1,4 +1,5 @@
 from .emitter import EventEmitter
+from .stdout_logger import enable_stdout_logging
 from .types import (
     HarnessEvent,
     StageEnterEvent,
@@ -17,6 +18,7 @@ from .types import (
 
 __all__ = [
     "EventEmitter",
+    "enable_stdout_logging",
     "HarnessEvent",
     "StageEnterEvent",
     "StageExitEvent",

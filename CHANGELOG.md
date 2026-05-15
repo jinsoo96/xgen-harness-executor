@@ -5,6 +5,61 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.4] — 2026-05-15
+
+### PD 로그 스트리밍 — manual-wire 사용자도 1 줄
+
+#### 문제
+
+v1.10.2 의 `build_pipeline(enable_logging=True)` 는 transpile 산출물의 `CLUSTER_DEFAULTS` 위에서 도는 사용자에게만 통함. 실제 사용자가 자기 vLLM endpoint / Playwright MCP 같은 커스텀 ToolSource 를 직접 주입할 땐 `Pipeline.from_config(config, provider=my_provider)` 를 직접 호출해야 하고, 이 경로에서는 `enable_logging` 이 닿지 않음.
+
+```python
+provider = create_provider("vllm", api_key="EMPTY", model="Qwen3.5-27b", base_url="http://...")
+register_tool_source(PlaywrightSource())
+pipe = Pipeline.from_config(config, provider=provider)
+result = await pipe.run(state)
+print(result.final_output)
+# ↑ 답은 나오지만 PD 메타 도구 / 서브에이전트 / judge 가 어떻게 돌았는지 못 봄
+```
+
+PD 로직은 로그 스트리밍이 핵심 — 실전 디버깅이 막힘.
+
+#### 해결
+
+엔진 top-level 에 `enable_stdout_logging(pipe)` helper 박음. 어떤 방식으로 만든 Pipeline 이든 1 줄이면 stdout 으로 모든 이벤트 흘러나옴.
+
+```python
+from xgen_harness import Pipeline, PipelineState, enable_stdout_logging
+
+provider = create_provider("vllm", ...)
+register_tool_source(PlaywrightSource())
+pipe = Pipeline.from_config(config, provider=provider)
+enable_stdout_logging(pipe)  # ← 이 한 줄
+result = await pipe.run(state)
+```
+
+#### 출력 포맷
+
+```
+[StageEnterEvent] stage=s06_context
+[ToolCallEvent] stage=s07_act tool=search_tools text='{"query":"playwright"}'
+[ToolResultEvent] stage=s07_act tool=search_tools text='[{"name":"browser_..."}]'
+[MessageEvent] stage=s07_act text='조회된 도구 중 browser_navigate 를...'
+[EvaluationEvent] stage=s08_decide
+[DoneEvent]
+```
+
+`max_text_len=80` default (긴 content / text 필드 자동 잘림). `unsubscribe()` callable 반환 — long-running 환경에서 명시적 정리.
+
+#### 추가 변경
+
+- `xgen_harness.events.stdout_logger` 모듈 신설
+- `xgen_harness.events` / `xgen_harness` 양쪽에서 export
+- transpile 산출물의 `_wire_stdout_logger` 도 엔진 helper 재사용 (산출물 측 중복 코드 12 줄 → 2 줄)
+- `EventEmitter` 직접 받아 동작도 가능 — Pipeline 안 만든 시점에서 emitter 만 따로 박는 케이스 지원
+
+엔진 본체 무변동 — events/ 하위에 새 파일 + 두 곳에 import 추가만.
+
 ## [1.10.3] — 2026-05-15
 
 ### Bugfix — 숫자 시작 패키지명 wheel 빌드 실패

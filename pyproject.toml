@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.10.3"
-description = "XGEN Harness v1.10.3 — transpile bugfix. 숫자 시작 패키지명 (예: 0515_test) 시 _sanitize_module_name 의 strip(_) 순서 회귀로 [project.scripts] entry-point 가 invalid Python identifier 가 되어 wheel 빌드 실패하던 케이스 fix. v1.10.2 의 1 줄 helper (run_sync / simple / enable_logging / overrides / MissingApiKeyError) + v1.10.0 외부 wire 인프라 위에 안정성 보강."
+version = "1.10.4"
+description = "XGEN Harness v1.10.4 — enable_stdout_logging 엔진 top-level helper. Pipeline.from_config 로 커스텀 provider / ToolSource 를 직접 조립한 manual-wire 사용자도 1 줄로 stdout 이벤트 스트림 (PD 메타 도구 / 서브에이전트 / judge 추적). transpile 산출물 _wire_stdout_logger 도 엔진 helper 재사용. v1.10.3 의 _sanitize_module_name fix + v1.10.2 의 1 줄 helper + v1.10.0 외부 wire 인프라 위에 PD 로그 스트리밍 핵심 강화."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

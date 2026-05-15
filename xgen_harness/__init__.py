@@ -46,6 +46,7 @@ from .core.top_level_field_schema import (
     get_top_level_field_schema,
 )
 from .events.emitter import EventEmitter
+from .events.stdout_logger import enable_stdout_logging
 from .events.types import (
     HarnessEvent,
     StageEnterEvent,
@@ -252,6 +253,7 @@ __all__ = [
     "register_stage",
     # Events
     "EventEmitter",
+    "enable_stdout_logging",
     "HarnessEvent",
     "StageEnterEvent",
     "StageExitEvent",
