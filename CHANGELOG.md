@@ -5,6 +5,32 @@ All notable changes to `xgen-harness` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.3] — 2026-05-15
+
+### Bugfix — 숫자 시작 패키지명 wheel 빌드 실패
+
+`_sanitize_module_name` 순서 회귀 fix.
+
+`0515_test` 같이 숫자로 시작하는 패키지명을 입력하면 module 이름은 Python 식별자 규칙상 숫자 시작 불가라 `_0515_test` 로 prefix 박아야 함. 기존 로직:
+
+```python
+name = re.sub(r"[^A-Za-z0-9_]", "_", package_name)
+if name and name[0].isdigit():
+    name = "_" + name           # `_0515_test` 박음
+name = name.lower().strip("_")  # ← 박은 underscore 다시 떼버림 → `0515_test`
+```
+
+결과 `[project.scripts]` 에 `0515_test = "0515_test.__main__:cli_main"` 가 박혀 setuptools `python-entrypoint-reference` validate 실패 + `python -m build --wheel` 거부.
+
+```
+configuration error: `project.scripts.0515_test` must be python-entrypoint-reference
+GIVEN VALUE: "0515_test.__main__:cli_main"
+```
+
+순서 변경 — `strip("_")` + `.lower()` 를 digit guard **앞에** 박음. 결과 underscore prefix 가 살아남아 valid identifier.
+
+검증: 8 케이스 모두 `str.isidentifier()=True` 확인 (`0515_test` → `_0515_test`, `2to3` → `_2to3`, `123` → `_123`, `___` → `workflow` 등).
+
 ## [1.10.2] — 2026-05-15
 
 ### 사용자 편의 — transpile 산출물 자체에 1 줄 helper

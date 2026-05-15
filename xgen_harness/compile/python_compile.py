@@ -130,12 +130,18 @@ def write_package(tree: dict[str, str], out_dir: str | Path) -> Path:
 
 
 def _sanitize_module_name(package_name: str) -> str:
-    """PyPI 패키지명 (예: "plateer-xgen-wf-abc") → Python 모듈명 ("plateer_xgen_wf_abc")."""
+    """PyPI 패키지명 (예: "plateer-xgen-wf-abc") → Python 모듈명 ("plateer_xgen_wf_abc").
+
+    Python 식별자 규칙: 영문/_/숫자만, 숫자 시작 금지.
+    `0515_test` 같은 PyPI-valid 지만 module-invalid 이름은 `_` prefix 박음.
+    `[project.scripts]` 의 entry-point 가 Python 식별자여야 빌드 통과.
+    """
     name = re.sub(r"[^A-Za-z0-9_]", "_", package_name)
-    # 숫자로 시작하면 underscore prefix
+    # 양 끝 underscore + 소문자화를 먼저 (digit prefix 가 strip 으로 제거되는 회귀 회피)
+    name = name.lower().strip("_")
+    # 숫자 시작 가드는 normalize 후 — `_` prefix 가 다음 strip 으로 사라지지 않게 마지막.
     if name and name[0].isdigit():
         name = "_" + name
-    name = name.lower().strip("_")
     return name or "workflow"
 
 
