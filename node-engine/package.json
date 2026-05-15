@@ -1,6 +1,6 @@
 {
   "name": "xgen-harness-engine-node",
-  "version": "0.28.0-alpha.1",
+  "version": "0.28.0-alpha.2",
   "description": "TypeScript engine for xgen-harness — reads spec.json (compiled from Python harness workflow) and runs the same 13-stage pipeline. fully equivalent.",
   "license": "UNLICENSED",
   "private": false,

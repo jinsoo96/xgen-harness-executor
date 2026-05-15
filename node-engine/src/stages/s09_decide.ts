@@ -36,6 +36,28 @@ export class S09Decide extends BaseStage {
       state.loop_decision = LOOP_CONTINUE;
       return { decision: LOOP_CONTINUE, reason: "pending tool calls" };
     }
+
+    // 방금 turn 에 tool 호출 → s07 가 flushToolResults() 로 pending 을 비우면서
+    // messages 에 tool_result block 을 user 메시지로 추가했음. 이 경우 LLM 이
+    // 결과를 보고 final answer 를 생성해야 하므로 LOOP_CONTINUE.
+    // 이전 회귀: pending=0 만 보고 즉시 COMPLETE 처리해 산출물 외부 실행 시
+    // tool 결과 받았는데 답변 본문이 빈 채로 종료.
+    const lastMsg = state.messages[state.messages.length - 1];
+    const lastIsToolResult =
+      lastMsg !== undefined &&
+      lastMsg.role === "user" &&
+      Array.isArray(lastMsg.content) &&
+      (lastMsg.content as unknown[]).some(
+        (b) => typeof b === "object" && b !== null && (b as { type?: string }).type === "tool_result",
+      );
+    if (lastIsToolResult) {
+      state.loop_decision = LOOP_CONTINUE;
+      return {
+        decision: LOOP_CONTINUE,
+        reason: "tool results just added — next LLM call to synthesize",
+      };
+    }
+
     const threshold = this.getParam<number>("validation_threshold", state, 0.7);
     if (state.validation_score < threshold) {
       state.retry_count++;

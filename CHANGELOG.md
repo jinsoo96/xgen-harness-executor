@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.10.5 (2026-05-16)
+
+### Fixed
+- **node-engine s09_decide loop bug** — 산출물 외부 실행 시 tool 호출 후 LLM 결과 합성 누락 (iterations=1 한 번에 종료) 회귀 해결.
+  s07_act 가 flushToolResults() 로 pending 을 비운 직후, 마지막 메시지가 tool_result 블록이면 LOOP_CONTINUE 로 다음 iter 강제.
+  이전: tools_executed>0 인데 LLM output 본문 0
+  이후: iterations=2, LLM 이 RAG 결과 받아 합성 답변 생성
+- **engine dep bump**: xgen-harness-engine-node 0.28.0-alpha.1 → 0.28.0-alpha.2 (위 fix 포함)
+
+
 All notable changes to `xgen-harness` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
