@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.11.3 (2026-05-17)
+
+### Removed (PD 정신 회복)
+- **SYNTHESIS MODE 지시 / reasoning trace 가이드 / 예시 박기** (v1.11.1~v1.11.2 패치) 폐기.
+  PD = LLM 이 환경 (사용자가 박은 active_resources / tools / capabilities /
+  system_prompt) 만 보고 자율적으로 도구 호출 + 합성. 엔진 코드가
+  "사용자에게 묻지 마라" / "reasoning trace 한 줄 박아라" 같은 행동/톤/출력
+  형식을 강제하면 그 자율성 깎는 짓.
+  라이브 적발 (5/17 사용자): 합성 지시문 + 하드코딩 예시가 LLM 결정 공간 침범.
+  사용자가 자기 system_prompt 에 톤/형식 박는 게 PD 모델 정합.
+
+### 유지
+- 합성 보강 호출 트리거 (intro<200 + tool_use 후 final answer 미생성) 와
+  도구 비활성으로 재호출하는 안전망은 그대로. 환경 한 가지만 바꾼다.
+- v1.11.0 의 외부 자족 dispatch + PD builtin engine-node 이식.
+
 ## v1.11.2 (2026-05-17)
 
 ### Added

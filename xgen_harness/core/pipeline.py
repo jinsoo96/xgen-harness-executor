@@ -277,44 +277,21 @@ class Pipeline:
                     "[Pipeline] tool 후 합성 답변 보강 호출 (intro=%d자 < %d, 도구 비활성)",
                     _intro_len, _SHORT_INTRO_THRESHOLD,
                 )
-                saved_tools = state.tool_definitions
-                saved_sys = state.system_prompt
-                state.tool_definitions = []  # 도구 비활성으로 final answer 강제
-                # v1.11.1 — 보강 호출은 "도구 결과로 최종 답변 합성" 전용 모드.
-                # 기존 system_prompt 끝에 명시 지시 append — LLM 이 자율적으로
-                # 도구 결과를 종합해 답변하고, 사용자에게 추가 확인을 요청하지 않게 한다.
-                # 라이브 회귀: 도구 결과 받은 후에도 "...정보를 알려주시면 진행하겠습니다"
-                # 식 사용자 확인 톤 반복 (2026-05-16 사용자 로그).
+                # 보강 호출은 환경 한 가지만 바꾼다: 도구 비활성.
+                # 누적된 도구 결과 + 대화 컨텍스트 + 사용자가 박은 system_prompt 가
+                # LLM 이 보는 지도의 전부. 행동 / 톤 / 출력 형식은 LLM 자율.
                 #
-                # v1.11.2 — reasoning trace 가이드 추가. Claude Code 처럼 LLM 이
-                # 어떤 도구를 어떤 의도로 호출했고 무엇을 발견했는지 답변에 짧게
-                # 녹임. 라이브 적발: 5/17 사용자 — 답은 정상인데 PD 흐름이 답에
-                # 안 보임 ("뭘 어떻게 했는지 알려줘야 할 것 아니냐").
-                _synthesis_directive = (
-                    "\n\n[SYNTHESIS MODE — 최종 응답 단계]\n"
-                    "도구 결과가 이미 누적되어 있다. 이 단계의 목표는:\n"
-                    "1) 누적된 도구 결과 + 대화 컨텍스트만으로 최종 답변을 작성한다.\n"
-                    "2) 사용자에게 추가 정보를 묻지 않는다 (예: '연결 정보를 알려주세요', "
-                    "'파일 목록을 가져올까요?' 같은 확인 요청 금지).\n"
-                    "3) 결과가 부족하면 그 한계까지 명시한 후 도달한 결론을 답한다.\n"
-                    "4) 새 도구 호출을 제안하지 말 것 — 도구는 비활성 상태다.\n"
-                    "5) **답변 본문은 두 부분으로 구성:**\n"
-                    "   (a) 응답 첫머리에 1~3 줄 reasoning trace — 어떤 도구를 왜 "
-                    "호출했고 무엇을 얻었는지 자연스럽게 요약. 이미 호출된 도구만 "
-                    "기술 (새 호출 X). 형식 예:\n"
-                    "       > assort 컬렉션에서 '주문 데이터' 의미로 rag_search 호출 → 5건 매칭.\n"
-                    "       > fetch_synthesize 로 본문 요약.\n"
-                    "   (b) 줄 바꿈 후 실제 답변 — 도구 결과 정리 / 결론.\n"
-                    "   reasoning trace 는 보고서가 아니라 가벼운 한두 줄 흐름 메모."
-                )
-                state.system_prompt = (saved_sys or "") + _synthesis_directive
+                # v1.11.1~v1.11.2 의 SYNTHESIS MODE 지시 / reasoning trace 예시 박기는
+                # 폐기 (2026-05-17). PD 정신 (LLM 이 환경 보고 자율 결정) 위반이라
+                # 사용자 지적. 톤/형식 강제는 사용자가 자기 system_prompt 에 박을 일.
+                saved_tools = state.tool_definitions
+                state.tool_definitions = []
                 try:
                     await self._invoke_main_call(state, s00_stage)
                 except Exception as e:
                     logger.warning("[Pipeline] final 보강 호출 실패: %s", e)
                 finally:
                     state.tool_definitions = saved_tools
-                    state.system_prompt = saved_sys
 
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))
