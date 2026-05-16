@@ -31,26 +31,34 @@ def get_progressive_threshold() -> int:
 
 
 # v1.8.0 — default tool 노출 모드 (s04_tool 의 selected_tools 명시 X 시 동작).
-#   "deferred_default" (신 default): 사용자 박은 빌트인 노드 도구 = deferred,
-#                                     LLM 이 search_tools / ToolSearch 로 능동 발견
-#   "eager_all" (옛 default): 모든 도구 즉시 eager (백워드 호환)
-# 호스트가 register_default_tool_strategy("eager_all") 으로 옛 동작 환원 가능.
-_DEFAULT_TOOL_STRATEGY: str = "deferred_default"
+#   "strict" (v1.12.1 신 default): 사용자 명시 안 한 도구는 카탈로그 완전 제외 —
+#                                   search_tools 검색 결과에서도 안 보임. 메타 도구
+#                                   (search_tools/discover_tools/ToolSearch) 와 자원
+#                                   매칭 도구 (rag_search/query_graph) 만 자동 노출.
+#                                   진정한 PD = LLM 이 사용자가 박은 환경만 본다.
+#   "deferred_default" (v1.8.0~v1.12.0 default): 사용자 박은 빌트인 노드 도구 = deferred,
+#                                                 LLM 이 search_tools / ToolSearch 로 능동 발견
+#   "eager_all" (옛 default, v1.7 이전): 모든 도구 즉시 eager (백워드 호환)
+# 호스트가 register_default_tool_strategy(...) 로 변경 가능.
+_DEFAULT_TOOL_STRATEGY: str = "strict"
 
 
 def register_default_tool_strategy(mode: str) -> None:
     """v1.8.0 — selected_tools 명시 X 시 default 동작 외부 override.
 
     Args:
-        mode: "deferred_default" (Claude Code MCP-style PD strict, v1.8 신 default)
-              또는 "eager_all" (모든 도구 즉시 eager, v1.7 옛 default)
+        mode:
+          - "strict" (v1.12.1 default): 사용자 명시 도구 + 자원 매칭 + 메타만 노출.
+            search_tools 도 이 화이트리스트 안에서만 검색.
+          - "deferred_default" (v1.8~v1.12.0): 사용자 박은 도구 = deferred (search 로 발견)
+          - "eager_all" (v1.7 이전): 모든 도구 즉시 eager
 
     호스트 (xgen-workflow / 외부 wheel) 가 호출. 옛 워크플로우 호환 위해 임시 환원,
     또는 도메인 특화 정책 (예: "사내 도구 카탈로그 작아 항상 eager").
     """
-    if mode not in ("deferred_default", "eager_all"):
+    if mode not in ("strict", "deferred_default", "eager_all"):
         raise ValueError(
-            f"Invalid mode: {mode!r}. Must be 'deferred_default' or 'eager_all'."
+            f"Invalid mode: {mode!r}. Must be 'strict' / 'deferred_default' / 'eager_all'."
         )
     global _DEFAULT_TOOL_STRATEGY
     _DEFAULT_TOOL_STRATEGY = mode

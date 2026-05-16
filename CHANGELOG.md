@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.12.1 (2026-05-17)
+
+### Changed (PD 정신 엄격화 — default 동작 변경)
+- **s04_tool 의 default 모드: `deferred_default` → `strict`**.
+  사용자가 명시 안 한 도구는 카탈로그에서 **완전 제외** — search_tools 검색
+  결과에서도 안 보임. 메타 도구 (search_tools / discover_tools / ToolSearch)
+  와 자원 매칭 도구 (rag_search / query_graph — ToolSource 합집합 후 별도
+  등록 경로) 만 자동 노출.
+
+  **회귀 적발 (5/17 사용자 로그)**: 사용자가 RAG 컬렉션만 박은 워크플로우
+  에서 LLM 이 `search_tools` → `ToolSearch(mcp_DatabaseLoader)` 로 안 박은
+  도구 승격 호출. PD 정신 위반 — 사용자가 박은 환경 외 도구가 LLM 에 보임.
+
+  **fix**: `selected_tools` 명시 X + 비-메타 도구 + 자원 매칭 도구 아님
+  → `state.tool_schemas` / `state.deferred_tools` 양쪽에 안 박힘 (skip).
+
+  **이전 동작 복원**: 호스트가
+  `register_default_tool_strategy("deferred_default")` 호출하면 v1.8~v1.12.0
+  동작으로 환원. 큰 카탈로그 + LLM 자율 탐색을 원하는 사내 워크플로우용.
+
+  **`eager_all` 모드**: v1.7 이전 옛 동작 (모든 도구 즉시 eager) 보존.
+
 ## v1.12.0 (2026-05-17)
 
 ### Added — 외부 산출물 자족도 완성 (PD 양쪽 동등화)

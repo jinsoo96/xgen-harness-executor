@@ -178,25 +178,48 @@ class ToolIndexStage(Stage):
                 if tags:
                     td.setdefault("metadata", {})["tags"] = list(tags)
 
-                # eager / deferred 결정. v1.8.0 — Claude Code MCP-style PD 정합.
-                # 옛 default: has_explicit_selection=False  → 모두 eager (47개 schema 박힘)
-                # 신 default: has_explicit_selection=False  → 메타 도구만 eager / 사용자
-                #             박은 빌트인 노드 도구는 deferred (LLM 이 search_tools /
-                #             ToolSearch 로 능동 발견·승격). "지도 간편화 → 점진 발견"
-                #             패러다임 = 진짜 Progressive Disclosure.
-                # 호스트 override: register_default_tool_strategy("eager_all") 로 옛
-                #             동작 환원 가능. 명시 strategy="eager_load" 도 같은 효과.
+                # eager / deferred / skip 결정. v1.12.1 — strict 모드 추가.
+                #
+                # 모드별 동작 (selected_tools 명시 X 워크플로우 기준):
+                #   - "strict" (v1.12.1 default): 사용자 명시 도구 + 자원 매칭 + 메타
+                #     외 모든 도구 카탈로그 완전 제외 (deferred 도 X). search_tools
+                #     검색 결과에서도 안 보임. 진정한 PD.
+                #   - "deferred_default" (v1.8~v1.12.0): 사용자 박은 도구 = deferred.
+                #     LLM 이 search_tools / ToolSearch 로 발견·승격 가능.
+                #   - "eager_all" (옛 default): 모든 도구 eager.
                 # selected_tools 명시 워크플로우는 영향 X — 명시한 것 eager / 나머지 deferred.
+                #
+                # 메타 도구 / 자원 매칭 도구 식별 — tags 기반:
+                #   - "builtin" / "pd" / "system" tag → 메타 도구 (search_tools 등)
+                #   - 자원 매칭 도구 (rag_search / query_graph) 는 위 ToolSource 합집합엔
+                #     보통 안 들어옴 (s04 가 별도 등록). 여기서는 메타만 항상 통과.
                 from ..strategies.discovery import _get_default_tool_strategy
                 _default_mode = _get_default_tool_strategy()
-                if not has_explicit_selection:
-                    is_eager = (_default_mode == "eager_all")
-                else:
+                _is_meta_tool = bool(set(tags or []) & {"builtin", "pd", "system"})
+
+                if has_explicit_selection:
+                    # 명시 워크플로우 — 명시한 것만 eager / 나머지 deferred.
                     is_eager = False
                     if global_allow is not None and nm in global_allow:
                         is_eager = True
                     if sub_allow is not None and nm in sub_allow:
                         is_eager = True
+                    skip_completely = False
+                elif _default_mode == "eager_all":
+                    is_eager = True
+                    skip_completely = False
+                elif _default_mode == "strict":
+                    # 메타 도구만 eager, 그 외 카탈로그 완전 제외.
+                    is_eager = _is_meta_tool
+                    skip_completely = not _is_meta_tool
+                else:  # "deferred_default"
+                    is_eager = False
+                    skip_completely = False
+
+                if skip_completely:
+                    # 카탈로그 자체에서 제외 — schema 캐시도 안 채움. search_tools /
+                    # ToolSearch 가 발견 못 함. PD strict.
+                    continue
 
                 # schema 캐시는 항상 채움 — ToolSearch / discover_tools 가 조회.
                 state.tool_schemas[nm] = td
