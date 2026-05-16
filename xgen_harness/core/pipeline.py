@@ -278,13 +278,30 @@ class Pipeline:
                     _intro_len, _SHORT_INTRO_THRESHOLD,
                 )
                 saved_tools = state.tool_definitions
+                saved_sys = state.system_prompt
                 state.tool_definitions = []  # 도구 비활성으로 final answer 강제
+                # v1.11.1 — 보강 호출은 "도구 결과로 최종 답변 합성" 전용 모드.
+                # 기존 system_prompt 끝에 명시 지시 append — LLM 이 자율적으로
+                # 도구 결과를 종합해 답변하고, 사용자에게 추가 확인을 요청하지 않게 한다.
+                # 라이브 회귀: 도구 결과 받은 후에도 "...정보를 알려주시면 진행하겠습니다"
+                # 식 사용자 확인 톤 반복 (2026-05-16 사용자 로그).
+                _synthesis_directive = (
+                    "\n\n[SYNTHESIS MODE — 최종 응답 단계]\n"
+                    "도구 결과가 이미 누적되어 있다. 이 단계의 목표는:\n"
+                    "1) 누적된 도구 결과 + 대화 컨텍스트만으로 최종 답변을 작성한다.\n"
+                    "2) 사용자에게 추가 정보를 묻지 않는다 (예: '연결 정보를 알려주세요', "
+                    "'파일 목록을 가져올까요?' 같은 확인 요청 금지).\n"
+                    "3) 결과가 부족하면 그 한계까지 명시한 후 도달한 결론을 답한다.\n"
+                    "4) 새 도구 호출을 제안하지 말 것 — 도구는 비활성 상태다."
+                )
+                state.system_prompt = (saved_sys or "") + _synthesis_directive
                 try:
                     await self._invoke_main_call(state, s00_stage)
                 except Exception as e:
                     logger.warning("[Pipeline] final 보강 호출 실패: %s", e)
                 finally:
                     state.tool_definitions = saved_tools
+                    state.system_prompt = saved_sys
 
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))

@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.11.0"
-description = "XGEN Harness v1.11.0 — xgen-node 외부 자족 dispatch + PD builtin engine-node 이식. 노드의 external_dispatch 메타 (url/method/query_template/secret_header_map/secret_body_map) 를 spec.tool_definitions 의 call_spec 으로 freeze → engine-node 가 cluster 의존 없이 외부 SaaS API (Naver/Tavily/Brave 등) 직접 호출. PD builtin (search_tools / discover_tools) 가 engine-node 에 빌트인 — 외부 산출물에서도 LLM 자율 도구 발견. _env_hints 가 secret_header_map / secret_body_map 도 README ENV 안내에 인입. v1.10.x 의 7 freeze 리소스 dataclass 유지."
+version = "1.11.1"
+description = "XGEN Harness v1.11.1 — 합성 보강 호출에 SYNTHESIS MODE 지시 추가. 도구 결과 받은 후 LLM 이 사용자에게 추가 정보 요청 반복하던 회귀 fix (2026-05-16 라이브 로그 적발). v1.11.0 의 외부 자족 dispatch + PD builtin engine-node 이식 유지."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
