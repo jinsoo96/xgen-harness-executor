@@ -224,6 +224,22 @@ class HarnessConfig:
     #              "required": bool, "default": Any, "description": str}}
     external_inputs: dict = field(default_factory=dict)
 
+    # --- 리소스 선언 (v1.10.6+, spec freeze 단일 진실 소스) ---
+    # 워크플로우가 사용하는 외부 리소스 — 산출물 spec.config 에 freeze 되어
+    # 외부 실행자가 자기 인프라에 같은 이름으로 wire 할 수 있게 함. 이식측이
+    # `_merge_freeze_resources` wrapper 로 보강하던 7 키 (5/16 worklog) 를
+    # 엔진측 dataclass 로 승격 — to_dict / from_dict / from_workflow 자동 처리.
+    #
+    # 값은 raw 보존 (list[str] / list[dict] / dict 등 워크플로우 박은 형식 그대로).
+    # 컬렉션 이름의 UI 표시명 ↔ UUID 변환은 이식측 책임 (cluster DB 조회 필요).
+    mcp_sessions: list = field(default_factory=list)         # MCP 세션 이름/메타 리스트
+    rag_collections: list = field(default_factory=list)      # Qdrant 컬렉션 이름 리스트
+    db_connections: list = field(default_factory=list)       # DB 연결 이름 리스트
+    ontology_collections: list = field(default_factory=list) # GraphRAG / 온톨로지 컬렉션
+    files: list = field(default_factory=list)                # 단일 파일 경로/메타
+    folders: list = field(default_factory=list)              # 폴더 경로/메타
+    node_overrides: dict = field(default_factory=dict)       # node_id → override dict
+
     # --- 기타 (정책 — sentinel) ---
     cost_budget_usd: Optional[float] = None     # 실행당 USD 예산 cap
     context_window: Optional[int] = None        # 컨텍스트 윈도우 (provider context limit)
@@ -543,6 +559,15 @@ class HarnessConfig:
             capabilities=list(harness_config.get("capabilities", []) or []),
             capability_params=dict(harness_config.get("capability_params", {}) or {}),
             external_inputs=dict(harness_config.get("external_inputs", {}) or {}),
+            # v1.10.6 — 7 리소스 필드 raw 보존 (spec freeze 단일 진실 소스).
+            # 이식측 wrapper 가 보강하던 영역을 엔진측 root 로 승격.
+            mcp_sessions=list(harness_config.get("mcp_sessions", []) or []),
+            rag_collections=list(harness_config.get("rag_collections", []) or []),
+            db_connections=list(harness_config.get("db_connections", []) or []),
+            ontology_collections=list(harness_config.get("ontology_collections", []) or []),
+            files=list(harness_config.get("files", []) or []),
+            folders=list(harness_config.get("folders", []) or []),
+            node_overrides=dict(harness_config.get("node_overrides", {}) or {}),
             preset=preset_name,
         )
 

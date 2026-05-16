@@ -96,6 +96,7 @@ def transpile_to_python(
         module_name=module_name,
         description=workflow_description,
         include_mcp=include_mcp,
+        cluster_defaults=cluster_defaults,
     )
     files[f"{module_name}/__init__.py"] = _render_init(module_name=module_name)
     files[f"{module_name}/flow.py"] = _render_flow(
@@ -212,8 +213,11 @@ def _render_readme(
     module_name: str,
     description: str,
     include_mcp: bool,
+    cluster_defaults: dict | None = None,
 ) -> str:
+    from ._env_hints import render_required_envs_markdown
     desc = description.strip() or "xgen 에서 말려나온 하네스 워크플로우 패키지."
+    env_section = render_required_envs_markdown(cluster_defaults or {}, header_level=2) if cluster_defaults is not None else ""
     mcp_section = ""
     if include_mcp:
         mcp_section = (
@@ -226,7 +230,8 @@ def _render_readme(
     return (
         f"# {package_name}\n\n"
         f"{desc}\n\n"
-        "## 설치\n\n"
+        + (env_section + "\n" if env_section else "")
+        + "## 설치\n\n"
         "```bash\n"
         f"pip install {package_name}"
         + (f"[mcp]" if include_mcp else "")

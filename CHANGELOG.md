@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.10.6 (2026-05-16)
+
+### Added
+- **7 freeze 리소스 필드 dataclass 승격** — `mcp_sessions / rag_collections / db_connections / ontology_collections / files / folders / node_overrides`.
+  `HarnessConfig` dataclass 에 직접 박혀 `to_dict / from_dict / from_workflow` 가 자동 처리.
+  이전: 이식측 `_merge_freeze_resources` wrapper 로 보강 (5/16 회귀 fix).
+  이후: 엔진측 root — wrapper 없이도 산출물 `spec.config` 가 워크플로우의 모든 리소스 선택값을 freeze.
+- **산출물 README 의 Required Environment 섹션 자동 생성** — `xgen_harness/compile/_env_hints.py` 신규 모듈.
+  spec.config 의 박힌 값을 보고 외부 실행자가 wire 해야 할 env 변수 (OPENAI_API_KEY / QDRANT_URL / MCP_STATION_URL / DATABASE_URL 등) 자동 추론 + Markdown 테이블 렌더.
+  npm wrapper `_render_readme` + Python wheel `_render_readme` 양쪽 동일 helper.
+
+### Compat
+- 이식측 wrapper `_merge_freeze_resources` 는 BC 유지 (rag_collections UUID 매핑 책임 별개). v1.10.6 엔진과 함께 사용해도 idempotent.
+
 ## v1.10.5 (2026-05-16)
 
 ### Fixed

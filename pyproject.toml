@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.10.5"
-description = "XGEN Harness v1.10.4 — enable_stdout_logging 엔진 top-level helper. Pipeline.from_config 로 커스텀 provider / ToolSource 를 직접 조립한 manual-wire 사용자도 1 줄로 stdout 이벤트 스트림 (PD 메타 도구 / 서브에이전트 / judge 추적). transpile 산출물 _wire_stdout_logger 도 엔진 helper 재사용. v1.10.3 의 _sanitize_module_name fix + v1.10.2 의 1 줄 helper + v1.10.0 외부 wire 인프라 위에 PD 로그 스트리밍 핵심 강화."
+version = "1.10.6"
+description = "XGEN Harness v1.10.6 — 7 freeze 리소스 필드 (mcp_sessions / rag_collections / db_connections / ontology_collections / files / folders / node_overrides) 를 HarnessConfig dataclass 로 승격. 이식측 wrapper 가 보강하던 영역을 엔진측 root 로 통합 — to_dict / from_dict / from_workflow 자동 처리. + 산출물 README 의 'Required Environment' 섹션 자동 생성 (spec.config 보고 OPENAI/QDRANT/MCP_STATION/DATABASE_URL 등 추론). npm wrapper + Python wheel 양쪽 동일 helper (compile/_env_hints.py). v1.10.5 의 node-engine s09 fix 유지."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

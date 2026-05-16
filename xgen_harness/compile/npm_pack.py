@@ -323,10 +323,20 @@ def _render_package_json(
 
 
 def _render_readme(snapshot: WorkflowSnapshot, package_name: str, bin_name: str) -> str:
+    from ._env_hints import render_required_envs_markdown
+    # snapshot 의 harness_config dict 를 보고 required env 추론.
+    # WorkflowSnapshot.to_dict() 또는 직접 노출된 dict 접근 — 안전하게 폴백.
+    try:
+        snap_dict = snapshot.to_dict() if hasattr(snapshot, "to_dict") else {}
+        config_for_env = snap_dict.get("harness_config") or snap_dict.get("config") or {}
+    except Exception:
+        config_for_env = {}
+    env_section = render_required_envs_markdown(config_for_env, header_level=2)
     return f"""# {package_name}
 
 `{snapshot.gallery_name}` v{snapshot.gallery_version} — auto-generated harness MCP server.
 
+{env_section}
 ## Run as MCP server
 
 ```bash
