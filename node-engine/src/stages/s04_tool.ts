@@ -8,6 +8,11 @@
 import { BaseStage, type StrategyInfo } from "../pipeline/stage";
 import type { PipelineState } from "../types";
 import type { FrozenToolDefinition } from "../spec/schema";
+import {
+  buildPdBuiltinDefinitions,
+  BUILTIN_SEARCH_TOOLS_NAME,
+  BUILTIN_DISCOVER_TOOLS_NAME,
+} from "../tools/builtins";
 
 export class S04Tool extends BaseStage {
   readonly stage_id = "s04_tool";
@@ -84,6 +89,22 @@ export class S04Tool extends BaseStage {
       state.metadata.capabilities_active = caps;
     }
 
+    // ─── PD builtin 자동 합류 ─────────────────────────────────────
+    // strategy 가 "progressive_3level" (기본) 이고 frozen 도구가 있으면 LLM 이
+    // 카탈로그를 자율적으로 탐색할 수 있도록 search_tools / discover_tools 두
+    // 빌트인을 카탈로그에 함께 노출. Python cluster runtime 의 builtin 등록과 동등.
+    let pdBuiltinAdded = 0;
+    if (strategy !== "eager_load" && out.length > 0) {
+      const existing = new Set(out.map((t) => t.name));
+      for (const td of buildPdBuiltinDefinitions()) {
+        if (existing.has(td.name)) continue;
+        // builtin 도 globalAllow 가 있으면 거기에 들어있을 때만 합류.
+        if (globalAllow && !globalAllow.has(td.name)) continue;
+        out.push(td);
+        pdBuiltinAdded++;
+      }
+    }
+
     state.tool_definitions = out;
     // annotations payload 분리 (Python state.tool.annotations)
     for (const t of out) {
@@ -96,6 +117,7 @@ export class S04Tool extends BaseStage {
       tools_indexed: out.length,
       definitions_bound: out.length,
       capabilities_bound: capabilityBound,
+      pd_builtin_added: pdBuiltinAdded,
     };
   }
 

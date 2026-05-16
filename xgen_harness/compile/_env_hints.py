@@ -29,10 +29,21 @@ def _provider_to_env(provider: str) -> str | None:
     return mapping.get(p)
 
 
-def derive_required_envs(config: dict[str, Any]) -> list[dict[str, str]]:
+def derive_required_envs(
+    config: dict[str, Any],
+    *,
+    tool_definitions: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
     """spec.config / harness_config dict → required env 항목 리스트.
 
     각 항목: {"name": "OPENAI_API_KEY", "purpose": "...", "example": "sk-..."}
+
+    Args:
+        config: HarnessConfig dict (또는 spec.config).
+        tool_definitions: spec.tool_definitions list. 각 항목의 ``call_spec.
+            secrets_keys`` 가 비어있지 않으면 노드별 시크릿 자리를 ENV 안내로
+            추가. 외부 산출물이 cluster bridge 로 forward 될 때 사용자가 채워야
+            하는 자리 (예: ``XGEN_TOOL__MCP_NAVER_NEWS_MCP__NAVER_CLIENT_ID``).
     """
     out: list[dict[str, str]] = []
 
@@ -94,12 +105,59 @@ def derive_required_envs(config: dict[str, Any]) -> list[dict[str, str]]:
         "example": "qwen2.5-72b-instruct",
     })
 
+    # 노드 시크릿 자리 — tool_definitions[i].call_spec 의 3 경로 모두 인입:
+    #   1) secrets_keys: ENV 이름 = 헤더 이름 동일 패턴
+    #   2) secret_header_map: { header_name: env_key } 명시 매핑 (Naver/Brave 등)
+    #   3) secret_body_map: { body_placeholder: env_key } 명시 매핑 (Tavily 등)
+    # freeze 시점에 노드별 사용자 입력 자리를 ENV 이름으로 변환해 박아둔 항목.
+    # 외부 실행자가 자기 환경에 ENV 박으면 engine-node 가 헤더/바디에 inject 해
+    # 외부 API 직접 호출 (cluster 의존 0). 중복 ENV 이름은 dedup.
+    seen_env: set[str] = {item["name"] for item in out}
+
+    def _add_env(env_name: str, tool_name: str) -> None:
+        env_name = (env_name or "").strip()
+        if not env_name or env_name in seen_env:
+            return
+        seen_env.add(env_name)
+        param_label = ""
+        if "__" in env_name:
+            tail = env_name.split("__")[-1]
+            param_label = tail.replace("_", " ").lower()
+        purpose = (
+            f"`{tool_name}` 노드의 사용자 입력 자리"
+            + (f" ({param_label})" if param_label else "")
+        )
+        out.append({
+            "name": env_name,
+            "purpose": purpose,
+            "example": "(자기 발급 키 입력)",
+        })
+
+    for td in tool_definitions or []:
+        if not isinstance(td, dict):
+            continue
+        cspec = td.get("call_spec") or {}
+        if not isinstance(cspec, dict):
+            continue
+        tool_name = td.get("name") or ""
+        for k in (cspec.get("secrets_keys") or []):
+            _add_env(str(k), tool_name)
+        for env_name in (cspec.get("secret_header_map") or {}).values():
+            _add_env(str(env_name), tool_name)
+        for env_name in (cspec.get("secret_body_map") or {}).values():
+            _add_env(str(env_name), tool_name)
+
     return out
 
 
-def render_required_envs_markdown(config: dict[str, Any], *, header_level: int = 2) -> str:
+def render_required_envs_markdown(
+    config: dict[str, Any],
+    *,
+    header_level: int = 2,
+    tool_definitions: list[dict[str, Any]] | None = None,
+) -> str:
     """Markdown 섹션 문자열 (헤더 + 테이블). 항목 0 이어도 안내 줄 1 행."""
-    envs = derive_required_envs(config)
+    envs = derive_required_envs(config, tool_definitions=tool_definitions)
     h = "#" * header_level
     lines = [
         f"{h} Required Environment",

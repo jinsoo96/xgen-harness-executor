@@ -15,7 +15,15 @@ export const SPEC_VERSION = "1.0";
 
 // ─── Tool Definition (frozen) ─────────────────────────────────────
 
-export const FrozenToolCallKind = z.enum(["http", "mcp_session", "rag", "noop"]);
+export const FrozenToolCallKind = z.enum([
+  "http",
+  "mcp_session",
+  "rag",
+  "noop",
+  // PD builtin — engine-node 자체에서 spec.tool_definitions 카탈로그 메타 탐색.
+  "builtin:search_tools",
+  "builtin:discover_tools",
+]);
 export type FrozenToolCallKind = z.infer<typeof FrozenToolCallKind>;
 
 export const FrozenToolDefinitionSchema = z.object({

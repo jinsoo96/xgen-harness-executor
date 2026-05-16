@@ -12,6 +12,10 @@
 
 import type { FrozenToolDefinition } from "../spec/schema";
 import type { PipelineState } from "../types";
+import {
+  dispatchBuiltinSearchTools,
+  dispatchBuiltinDiscoverTools,
+} from "./builtins";
 
 export interface ToolDispatchResult {
   content: string;
@@ -30,12 +34,32 @@ export async function dispatchToolCall(
       return dispatchMcpSession(def, args, state);
     case "rag":
       return dispatchRag(def, args, state);
+    case "builtin:search_tools":
+      return dispatchBuiltinSearchTools(args, state.tool_definitions || []);
+    case "builtin:discover_tools":
+      return dispatchBuiltinDiscoverTools(args, state.tool_definitions || []);
     case "noop":
     default:
       return { content: "(noop)", is_error: false };
   }
 }
 
+/**
+ * 외부 자족 dispatch — call_spec.url 이 직접 외부 API URL.
+ *
+ * call_spec 구조 (v0.29+):
+ *   - url           : 외부 API endpoint (cluster bridge 가 아닌 진짜 외부 URL)
+ *   - method        : "GET" | "POST" | "PUT" | "DELETE" | "PATCH"
+ *   - headers       : 정적 헤더 (Content-Type 등)
+ *   - secrets_keys  : ENV 키 list — process.env[key] 를 동명 헤더로 inject
+ *   - secret_header_map: { header_name: env_key } — ENV 값을 명시 헤더 이름으로 inject.
+ *     예: {"X-Naver-Client-Id": "XGEN_TOOL__MCP_NAVER_NEWS_MCP__NAVER_CLIENT_ID"}.
+ *     secrets_keys 와 달리 ENV 이름과 헤더 이름이 다를 때 사용.
+ *   - query_template: { param_key: "{{arg_name}}" or 고정값 } — GET / query string.
+ *     ``"{{name}}"`` 패턴은 args[name] 으로 치환. 치환값 없으면 항목 생략.
+ *   - body_template : { field: "{{arg_name}}" or 고정값 } — POST / body.
+ *     동일 ``{{name}}`` 치환. 미사용 args 도 body 에 spread (BC).
+ */
 async function dispatchHttp(
   def: FrozenToolDefinition,
   args: Record<string, unknown>,
@@ -44,25 +68,63 @@ async function dispatchHttp(
   const url = (spec.url as string) || "";
   const method = ((spec.method as string) || "POST").toUpperCase();
   const headers: Record<string, string> = { ...(spec.headers as Record<string, string> || {}) };
-  // secret env injection
+
+  // 시크릿 ENV → 헤더 inject (두 패턴).
+  //   1) secrets_keys: ENV 이름 = 헤더 이름 동일 (단순 패턴)
+  //   2) secret_header_map: { header_name: env_key } 명시 매핑 (Naver/Tavily 등 외부 API 의
+  //      고유 헤더 이름 — X-Naver-Client-Id 등)
   const secrets = (spec.secrets_keys as string[]) || [];
   for (const key of secrets) {
     const val = process.env[key];
     if (val) headers[key] = val;
   }
-  // body — args 그대로 또는 body_template merge
-  const tmpl = (spec.body_template as Record<string, unknown>) || {};
-  const body = { ...tmpl, ...args };
+  const secretHeaderMap = (spec.secret_header_map as Record<string, string>) || {};
+  for (const [headerName, envKey] of Object.entries(secretHeaderMap)) {
+    const val = process.env[envKey];
+    if (val) headers[headerName] = val;
+  }
+
+  // secret_body_map — body 의 ``__secret_<name>`` placeholder 를 ENV 값으로 치환.
+  // Tavily 처럼 body 안 api_key 박는 API 패턴 지원. 헤더 인증과 별개.
+  const secretBodyMap = (spec.secret_body_map as Record<string, string>) || {};
+  const secretArgs: Record<string, unknown> = {};
+  for (const [placeholder, envKey] of Object.entries(secretBodyMap)) {
+    const val = process.env[envKey];
+    if (val) secretArgs[placeholder] = val;
+  }
+
+  // query / body 템플릿 치환. secretArgs 를 args 에 합쳐서 placeholder 매칭 가능.
+  const queryTmpl = (spec.query_template as Record<string, unknown>) || {};
+  const bodyTmpl = (spec.body_template as Record<string, unknown>) || {};
+  const renderArgs = { ...args, ...secretArgs };
+  const queryParams = renderTemplate(queryTmpl, renderArgs);
+  const bodyMerged: Record<string, unknown> = {
+    ...renderTemplate(bodyTmpl, renderArgs),
+    ...args,
+  };
 
   if (!url) return { content: "http call_spec.url 누락", is_error: true };
+
+  // 최종 URL — GET / DELETE / 또는 query_template 명시되면 query string 추가.
+  let finalUrl = url;
+  const hasQuery = Object.keys(queryParams).length > 0;
+  if (hasQuery || method === "GET" || method === "DELETE") {
+    // GET / DELETE 시 args 도 query 로 (body 안 쓰는 method) — 단 query_template 명시면 그 것만.
+    const qpSource =
+      hasQuery ? queryParams : (method === "GET" || method === "DELETE") ? args : {};
+    const qs = buildQueryString(qpSource);
+    if (qs) finalUrl = url + (url.includes("?") ? "&" : "?") + qs;
+  }
 
   try {
     const init: RequestInit = {
       method,
       headers: { "content-type": "application/json", ...headers },
     };
-    if (method !== "GET") init.body = JSON.stringify(body);
-    const resp = await fetch(url, init);
+    if (method !== "GET" && method !== "DELETE") {
+      init.body = JSON.stringify(bodyMerged);
+    }
+    const resp = await fetch(finalUrl, init);
     const text = await resp.text();
     if (!resp.ok) {
       return { content: `${resp.status} ${text.slice(0, 500)}`, is_error: true };
@@ -71,6 +133,53 @@ async function dispatchHttp(
   } catch (e) {
     return { content: (e as Error).message, is_error: true };
   }
+}
+
+/**
+ * "{{name}}" 패턴 치환 — args 에 매칭되는 값 있으면 그 값, 없으면 항목 제거.
+ * 고정값 (string/number/bool) 은 그대로. nested dict 도 재귀.
+ */
+function renderTemplate(
+  tmpl: Record<string, unknown>,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(tmpl)) {
+    if (typeof v === "string") {
+      const m = v.match(/^\{\{(\w+)\}\}$/);
+      if (m) {
+        const argName = m[1];
+        if (argName in args && args[argName] !== undefined && args[argName] !== null) {
+          out[k] = args[argName];
+        }
+        // 미매치는 항목 생략 (optional argument 패턴)
+        continue;
+      }
+      out[k] = v;
+    } else if (Array.isArray(v)) {
+      out[k] = v;
+    } else if (v && typeof v === "object") {
+      out[k] = renderTemplate(v as Record<string, unknown>, args);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function buildQueryString(params: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(item))}`);
+      }
+    } else {
+      parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+    }
+  }
+  return parts.join("&");
 }
 
 async function dispatchMcpSession(

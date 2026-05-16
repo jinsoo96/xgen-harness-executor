@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.11.0 (2026-05-16)
+
+### Added — 외부 자족 dispatch (cluster 의존 제거)
+- **xgen-node external_dispatch 메타** — 노드 클래스 attribute `external_dispatch` 가
+  외부 API 시그니처 (`url`, `method`, `query_template`, `body_template`,
+  `secret_header_map`, `secret_body_map`, `llm_args`) 를 노출하면 freeze 가 그것만으로
+  `spec.tool_definitions[i].call_spec` 생성. engine-node 가 cluster 없이 외부 SaaS API
+  (Naver Open API / Tavily / Brave 등) 직접 호출.
+- **node-engine dispatchHttp 보강**:
+  - `secret_header_map`: ENV → 명시 헤더 inject (예: `X-Naver-Client-Id`)
+  - `secret_body_map`: ENV → body placeholder 치환 (예: Tavily 의 body 안 api_key)
+  - `query_template`: GET/POST 양쪽에서 `{{name}}` 치환 + query string
+  - GET / DELETE 시 query string 자동 변환
+- **PD builtin engine-node 이식** — `search_tools` / `discover_tools` 빌트인.
+  `s04_tool` 이 strategy = `progressive_3level` (기본) 시 자동 카탈로그 합류. LLM 이
+  외부 환경에서도 cluster 와 동일한 PD 자율 탐색 가능.
+- **`_env_hints.derive_required_envs`** — `tool_definitions` kwarg 추가.
+  `secrets_keys` / `secret_header_map` / `secret_body_map` 3 종 모두 README 안내에 인입.
+
+### Removed
+- cluster bridge URL 패턴 freeze (이식측 / 엔진 모두) — 외부 자족 원칙 위반이라 폐기.
+
+### Compat
+- spec schema `call_spec` 은 자유 dict — Python ↔ TS 간 새 필드 추가에 깨지지 않음.
+- `call_kind` enum 에 `builtin:search_tools` / `builtin:discover_tools` 추가 (TS 측).
+  Python 엔진은 자유 string 이라 호환.
+- npm engine peer dep: `xgen-harness-engine-node` `^0.29.0`.
+
 ## v1.10.6 (2026-05-16)
 
 ### Added

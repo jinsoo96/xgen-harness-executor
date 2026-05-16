@@ -57,7 +57,7 @@ BIN_NAME_PREFIX = "xgen-harness-"
 # npmjs registry 에서 자동 다운로드. **이게 라운드트립의 키** — wrapper 는 minio
 # presigned tarball, engine-node 는 npmjs 에서.
 # alpha tag 단계: ^0.28.0 은 prerelease 안 받으니 정확 매칭. stable 시 ^ 로.
-DEFAULT_ENGINE_DEP = "0.28.0-alpha.2"
+DEFAULT_ENGINE_DEP = "^0.29.0"
 ENGINE_PACKAGE = "xgen-harness-engine-node"
 
 
@@ -153,8 +153,13 @@ def build_npm_package(
         )
 
         # README.md (optional, light)
+        # spec.tool_definitions 가 박혀 있으면 노드별 시크릿 자리도 ENV 안내에
+        # 포함되도록 spec 객체째 전달. snapshot 만으론 tool_definitions 가 안 보임.
         readme = skeleton / "README.md"
-        readme.write_text(_render_readme(snapshot, package_name, bin_name), encoding="utf-8")
+        readme.write_text(
+            _render_readme(snapshot, package_name, bin_name, spec=spec),
+            encoding="utf-8",
+        )
 
         # npm pack — npm 이 있으면 사용, 없으면 tar gz fallback
         tarball = _run_npm_pack_or_fallback(skeleton, out_dir, package_name, version)
@@ -322,7 +327,13 @@ def _render_package_json(
     }
 
 
-def _render_readme(snapshot: WorkflowSnapshot, package_name: str, bin_name: str) -> str:
+def _render_readme(
+    snapshot: WorkflowSnapshot,
+    package_name: str,
+    bin_name: str,
+    *,
+    spec: Any = None,
+) -> str:
     from ._env_hints import render_required_envs_markdown
     # snapshot 의 harness_config dict 를 보고 required env 추론.
     # WorkflowSnapshot.to_dict() 또는 직접 노출된 dict 접근 — 안전하게 폴백.
@@ -331,7 +342,19 @@ def _render_readme(snapshot: WorkflowSnapshot, package_name: str, bin_name: str)
         config_for_env = snap_dict.get("harness_config") or snap_dict.get("config") or {}
     except Exception:
         config_for_env = {}
-    env_section = render_required_envs_markdown(config_for_env, header_level=2)
+    # spec 이 있으면 tool_definitions 도 ENV 안내에 포함 (노드 시크릿 자리).
+    tool_defs: list[dict[str, Any]] | None = None
+    if spec is not None:
+        try:
+            spec_dict = spec.to_dict() if hasattr(spec, "to_dict") else dict(spec)
+            tool_defs = spec_dict.get("tool_definitions") or []
+            if not isinstance(tool_defs, list):
+                tool_defs = []
+        except Exception:
+            tool_defs = None
+    env_section = render_required_envs_markdown(
+        config_for_env, header_level=2, tool_definitions=tool_defs,
+    )
     return f"""# {package_name}
 
 `{snapshot.gallery_name}` v{snapshot.gallery_version} — auto-generated harness MCP server.

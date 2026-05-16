@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.10.6"
-description = "XGEN Harness v1.10.6 — 7 freeze 리소스 필드 (mcp_sessions / rag_collections / db_connections / ontology_collections / files / folders / node_overrides) 를 HarnessConfig dataclass 로 승격. 이식측 wrapper 가 보강하던 영역을 엔진측 root 로 통합 — to_dict / from_dict / from_workflow 자동 처리. + 산출물 README 의 'Required Environment' 섹션 자동 생성 (spec.config 보고 OPENAI/QDRANT/MCP_STATION/DATABASE_URL 등 추론). npm wrapper + Python wheel 양쪽 동일 helper (compile/_env_hints.py). v1.10.5 의 node-engine s09 fix 유지."
+version = "1.11.0"
+description = "XGEN Harness v1.11.0 — xgen-node 외부 자족 dispatch + PD builtin engine-node 이식. 노드의 external_dispatch 메타 (url/method/query_template/secret_header_map/secret_body_map) 를 spec.tool_definitions 의 call_spec 으로 freeze → engine-node 가 cluster 의존 없이 외부 SaaS API (Naver/Tavily/Brave 등) 직접 호출. PD builtin (search_tools / discover_tools) 가 engine-node 에 빌트인 — 외부 산출물에서도 LLM 자율 도구 발견. _env_hints 가 secret_header_map / secret_body_map 도 README ENV 안내에 인입. v1.10.x 의 7 freeze 리소스 dataclass 유지."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
