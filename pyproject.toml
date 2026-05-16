@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.11.1"
-description = "XGEN Harness v1.11.1 — 합성 보강 호출에 SYNTHESIS MODE 지시 추가. 도구 결과 받은 후 LLM 이 사용자에게 추가 정보 요청 반복하던 회귀 fix (2026-05-16 라이브 로그 적발). v1.11.0 의 외부 자족 dispatch + PD builtin engine-node 이식 유지."
+version = "1.11.2"
+description = "XGEN Harness v1.11.2 — SYNTHESIS MODE 에 reasoning trace 가이드 추가. 합성 답변 첫머리에 어떤 도구를 왜 호출했고 무엇을 얻었는지 1~3 줄 요약을 LLM 이 자율적으로 박게 한다 (Claude Code 식 흐름 노출). 5/17 사용자 라이브 로그 적발 — 답변은 정상이나 PD 흐름이 보이지 않음. v1.11.0 의 외부 자족 + v1.11.1 의 SYNTHESIS MODE 기반 유지."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

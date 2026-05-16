@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.11.2 (2026-05-17)
+
+### Added
+- **SYNTHESIS MODE reasoning trace 가이드** — 합성 답변 첫머리에 1~3 줄로
+  어떤 도구를 왜 호출했고 무엇을 얻었는지 자연스럽게 요약하도록 LLM 에
+  지시. Claude Code 식 PD 흐름 노출 패턴.
+  라이브 적발 (5/17 사용자 로그): rag_search + fetch_synthesize 로 답변
+  정상 도달했으나 답변 본문에 "왜 / 어떻게" 가 빠져 사용자가 흐름 파악
+  불가. SYNTHESIS MODE 5번 항목 (a) reasoning trace + (b) 실제 답변 2-part
+  구조 명시.
+
 ## v1.11.1 (2026-05-16)
 
 ### Fixed
