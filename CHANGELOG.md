@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.11.5 (2026-05-17)
+
+### Added — 환경 토폴로지 명시 노출
+- **`<harness_stages>` 영역** — STAGE_TOPOLOGY 단일 진리원본 dict 정의 +
+  s03_prompt 가 매 turn system_prompt 에 박음. LLM 이 자기가 어느 환경
+  (s00~s10) 에 있는지 fact 로 인지. 행동 강제 X.
+- **`<meta_tools_by_stage>` 영역** — STAGE_TAG_GROUPS 매핑 (도구 tags /
+  category → stage) 으로 indexed 된 도구를 stage 별 자동 그룹화.
+  매핑 안 되면 "기타" 그룹. 새 도구는 자기 tags 만 박으면 자동 분류.
+
+### Reverted (v1.11.4 over-correction 정정)
+- **DEFAULT_RULES["default"] 복원** — 13 줄 RESTRICTIONS_ONLY 톤은 사용자
+  검증 패턴 (Qwen +31% / Claude 식 short directive). v1.11.4 폐기 후 LLM 이
+  RAG 컬렉션 무시 회귀 (5/17 사용자 로그). PD 위반인 건 SYNTHESIS MODE 같은
+  큰 합성 강제만이고 조각 조각 박힌 directive 는 환경의 일부로 유지.
+
+### 원칙 정리
+- PD 위반: LLM 의 자율 합성 흐름 자체를 막는 큰 강제 (e.g. synthesis_kick
+  의 도구 비활성 + 재호출, SYNTHESIS MODE / reasoning trace 예시 박기).
+- PD 정합: 조각 조각 박힌 short directive (사용자 검증 + 모델 약점 보완),
+  환경 노출 (stage 토폴로지, 도구 매핑, active_resources).
+
 ## v1.11.4 (2026-05-17)
 
 ### Removed — PD 정신 회복 (다중 영역 행동 강제 톤 일괄 폐기)

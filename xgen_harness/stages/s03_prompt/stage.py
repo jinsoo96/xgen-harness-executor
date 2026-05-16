@@ -27,12 +27,45 @@ SECTION_PRIORITIES = {
     "identity": 1,
     "rules": 2,
     "planning": 2.5,  # v1.0: CoT/ReAct 지시 — rules 다음, tools 전 (구 s05_strategy 흡수)
+    "harness_stages": 2.7,  # v1.11.5: stage 토폴로지 — rules 다음, tools 전
+    "meta_tools_by_stage": 2.8,  # v1.11.5: stage 별 도구 매핑
     "tools": 3,
     "rag": 4,
     "history": 5,
     "custom": 6,
     "footer": 7,
 }
+
+
+# ─── Stage Topology (v1.11.5) — 단일 진리원본 ─────────────────────
+# LLM 에 노출할 stage 한 줄 설명. 사용자가 캔버스에서 박은 환경값 / 도구 카탈로그 와
+# 별개로, **현재 harness 가 어떤 stage 로 구성됐는지** 환경 fact 로 노출.
+# PD 정신: LLM 이 자기가 어느 환경 슬롯에 있는지 인지 → 자율 결정.
+# 행동 강제 X, fact 만.
+STAGE_TOPOLOGY: list[dict[str, str]] = [
+    {"id": "s00_harness", "label": "Harness", "desc": "하네스 진입/종료. Planner orchestrator role."},
+    {"id": "s01_input", "label": "Input", "desc": "사용자 입력 + external_inputs 결합."},
+    {"id": "s02_history", "label": "History", "desc": "대화 이력 + memory_collection."},
+    {"id": "s03_prompt", "label": "Prompt", "desc": "system_prompt 조립 (이 stage)."},
+    {"id": "s04_tool", "label": "Tool", "desc": "도구 카탈로그 indexing + capability binding + PD builtin 합류."},
+    {"id": "s05_policy", "label": "Policy", "desc": "policy_pack 적용."},
+    {"id": "s06_context", "label": "Context", "desc": "맥락 관리 — RAG/Ontology 자동 search 폐기, 도구로 위임."},
+    {"id": "s07_act", "label": "Act", "desc": "도구 디스패치 (sequential / parallel_read / strict_no_error)."},
+    {"id": "s08_decide", "label": "Decide", "desc": "loop 결정 (judge)."},
+    {"id": "s09_judge", "label": "Judge", "desc": "응답 평가 / loop 종료 판단."},
+    {"id": "s10_finalize", "label": "Finalize", "desc": "egress + done event."},
+]
+
+
+# 도구 tag / category → stage 매핑. 도구 자체 메타 (tags / category) 기반 자동 그룹화.
+# 도구가 여러 stage 에 묶이면 첫 매칭 사용. 매핑 안 되면 "기타".
+STAGE_TAG_GROUPS: list[tuple[str, set[str]]] = [
+    # (stage_id, 이 stage 에 묶이는 tag/category 집합)
+    ("s04_tool", {"builtin", "pd", "system"}),
+    ("s06_context", {"rag", "ontology"}),
+    ("s07_act", {"mcp", "api", "search", "synthesis", "web", "http", "tools", "skill"}),
+    ("s09_judge", {"judge"}),
+]
 
 # ─── 공개 레지스트리 (v1.0 — 박제 풀기) ───────────────────────────────
 # 모든 프롬프트 텍스트를 등록 기반으로 관리. 외부 작업자/사용자가 자기 도메인
@@ -56,6 +89,11 @@ DEFAULT_RULES: dict[str, str] = {
     # v1.8.0 — 사용자 검증 (claude-cli-test/bench/harnesses.py RESTRICTIONS_ONLY) 정합:
     # "Don't" 명령형 12줄 ~120 tok = Qwen 같은 약한 모델에서 검증된 +31% 효과 패턴.
     # 친절한 길고 친절한 가이드 (~500 tok 이상) 보다 짧고 명령형이 더 강함.
+    #
+    # v1.11.5 (5/17): 조각조각 박힌 RESTRICTIONS_ONLY 톤은 사용자 검증 환경 패턴.
+    # 큰 합성 강제 (SYNTHESIS MODE / reasoning trace 예시 박기) 만 PD 위반이고
+    # 이런 short directive 는 환경의 일부로 유지. 폐기 시 LLM 이 RAG 컬렉션
+    # 무시하는 회귀 적발 (5/17 사용자 로그).
     "default": (
         "<rules>\n"
         "If <active_resources> lists ANY resource → TRY the matching tool BEFORE saying \"no tools available\". Don't claim absence without trying.\n"
@@ -566,6 +604,25 @@ class SystemPromptStage(Stage):
                 f"<previous_results>\n{history}\n</previous_results>",
             ))
 
+        # 7. (v1.11.5) Harness Stages — 환경 fact. LLM 이 자기 환경 토폴로지 인지.
+        harness_stages_section = self._build_harness_stages_section()
+        if harness_stages_section:
+            sections.append((
+                SECTION_PRIORITIES["harness_stages"],
+                "harness_stages",
+                harness_stages_section,
+            ))
+
+        # 8. (v1.11.5) Meta Tools by Stage — 현재 indexed 된 도구 카탈로그를 stage 별
+        #    그룹화 (도구 자체 tags / category 자동 매핑). 환경 fact.
+        meta_tools_section = self._build_meta_tools_by_stage_section(state)
+        if meta_tools_section:
+            sections.append((
+                SECTION_PRIORITIES["meta_tools_by_stage"],
+                "meta_tools_by_stage",
+                meta_tools_section,
+            ))
+
         # 조립: 우선순위 순서대로
         sections.sort(key=lambda x: x[0])
         assembled = "\n\n".join(content for _, _, content in sections)
@@ -703,6 +760,67 @@ class SystemPromptStage(Stage):
 
         # 2. stage_params.thinking_mode 폴백 (default=auto)
         return self.get_param("thinking_mode", state, "auto")
+
+    def _build_harness_stages_section(self) -> str:
+        """v1.11.5 — STAGE_TOPOLOGY 를 보고 <harness_stages> 영역 문자열 생성.
+
+        환경 fact 만. 행동 강제 X. 모든 stage 가 default 로 활성이므로 disabled_stages
+        등 사용자 환경값을 검사할 수도 있지만 (s00 의 책임 영역), 여기서는 단순
+        토폴로지 노출. PD 정신: LLM 이 자기가 어느 환경에 있는지 인지하게 한다.
+        """
+        if not STAGE_TOPOLOGY:
+            return ""
+        lines = ["<harness_stages>"]
+        for st in STAGE_TOPOLOGY:
+            lines.append(f"- {st['id']} ({st['label']}): {st['desc']}")
+        lines.append("</harness_stages>")
+        return "\n".join(lines)
+
+    def _build_meta_tools_by_stage_section(self, state: PipelineState) -> str:
+        """v1.11.5 — 현재 indexed 된 도구를 stage 별 그룹화.
+
+        도구의 tags / category 자체를 보고 STAGE_TAG_GROUPS 매핑으로 자동 그룹.
+        매핑 안 되면 "기타" 그룹. 도구 자체 메타가 단일 진리원본 — 새 노드/도구
+        추가 시 그 노드/도구의 tags 만 박으면 자동 분류.
+        """
+        defs = state.tool_definitions or []
+        if not defs:
+            return ""
+        groups: dict[str, list[str]] = {}  # stage_id → tool name list
+        unmapped: list[str] = []
+        for td in defs:
+            name = td.get("name") if isinstance(td, dict) else None
+            if not name:
+                continue
+            tags_raw = td.get("tags") if isinstance(td, dict) else None
+            cat_raw = td.get("category") if isinstance(td, dict) else None
+            haystack: set[str] = set()
+            if isinstance(tags_raw, list):
+                haystack.update(str(t).lower() for t in tags_raw if t)
+            if isinstance(cat_raw, str) and cat_raw:
+                haystack.add(cat_raw.lower())
+            matched = None
+            for stage_id, tag_set in STAGE_TAG_GROUPS:
+                if haystack & tag_set:
+                    matched = stage_id
+                    break
+            if matched is None:
+                unmapped.append(name)
+            else:
+                groups.setdefault(matched, []).append(name)
+        if not groups and not unmapped:
+            return ""
+        lines = ["<meta_tools_by_stage>"]
+        # STAGE_TAG_GROUPS 의 순서대로 출력 (작성된 순서가 표시 순서)
+        for stage_id, _ in STAGE_TAG_GROUPS:
+            tools = groups.get(stage_id)
+            if not tools:
+                continue
+            lines.append(f"- {stage_id}: {', '.join(tools)}")
+        if unmapped:
+            lines.append(f"- 기타: {', '.join(unmapped)}")
+        lines.append("</meta_tools_by_stage>")
+        return "\n".join(lines)
 
     def _build_planning_instruction(self, mode: str, state: PipelineState) -> str:
         """thinking_mode 에 따라 planning_instruction 문자열 생성.
