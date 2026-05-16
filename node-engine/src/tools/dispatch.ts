@@ -105,15 +105,46 @@ async function dispatchHttp(
 
   if (!url) return { content: "http call_spec.url 누락", is_error: true };
 
+  // URL path substitution — `https://api.github.com/repos/{owner}/{repo}/issues` 의
+  // `{owner}` / `{repo}` 같은 placeholder 를 args 값으로 치환.
+  // `path_params` 명시되면 그 키들만 path 로 (나머지는 body / query). 명시 안 되면
+  // URL 안 `{name}` 모두 args 에서 매칭 시도. path 로 소비된 키는 body/query 에서 제외.
+  const pathParams = (spec.path_params as string[]) || [];
+  const consumedAsPath: Set<string> = new Set();
+  let resolvedUrl = url;
+  const pathPlaceholderRe = /\{(\w+)\}/g;
+  resolvedUrl = resolvedUrl.replace(pathPlaceholderRe, (match, name) => {
+    const v = (renderArgs as Record<string, unknown>)[name];
+    if (v === undefined || v === null) return match;
+    consumedAsPath.add(name);
+    return encodeURIComponent(String(v));
+  });
+  if (pathParams.length > 0) {
+    for (const p of pathParams) consumedAsPath.add(p);
+  }
+  // path 로 소비된 키는 query/body 에서 제외.
+  for (const k of consumedAsPath) {
+    delete queryParams[k];
+    delete bodyMerged[k];
+  }
+
   // 최종 URL — GET / DELETE / 또는 query_template 명시되면 query string 추가.
-  let finalUrl = url;
+  let finalUrl = resolvedUrl;
   const hasQuery = Object.keys(queryParams).length > 0;
   if (hasQuery || method === "GET" || method === "DELETE") {
     // GET / DELETE 시 args 도 query 로 (body 안 쓰는 method) — 단 query_template 명시면 그 것만.
-    const qpSource =
-      hasQuery ? queryParams : (method === "GET" || method === "DELETE") ? args : {};
+    let qpSource: Record<string, unknown>;
+    if (hasQuery) qpSource = queryParams;
+    else if (method === "GET" || method === "DELETE") {
+      // path 로 소비된 키 제외한 args
+      qpSource = Object.fromEntries(
+        Object.entries(args).filter(([k]) => !consumedAsPath.has(k))
+      );
+    } else {
+      qpSource = {};
+    }
     const qs = buildQueryString(qpSource);
-    if (qs) finalUrl = url + (url.includes("?") ? "&" : "?") + qs;
+    if (qs) finalUrl = resolvedUrl + (resolvedUrl.includes("?") ? "&" : "?") + qs;
   }
 
   try {

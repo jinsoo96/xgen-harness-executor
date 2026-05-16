@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.12.0 (2026-05-17)
+
+### Added — 외부 산출물 자족도 완성 (PD 양쪽 동등화)
+- **engine-node s03_prompt 풍부화** — Python s03 와 동일한 환경 노출:
+  - `<identity>` (사용자 system_prompt)
+  - `<rules>` (DEFAULT_RULES_RESTRICTIONS — Python 과 동기)
+  - `<active_resources>` (spec.config 의 rag_collections / mcp_sessions /
+    ontology_collections / db_connections / files / folders + 매칭 도구)
+  - `<harness_stages>` (STAGE_TOPOLOGY 11개 stage 한 줄)
+  - `<meta_tools_by_stage>` (도구 tags / call_kind 자동 그룹화)
+  외부 npm 산출물 LLM 도 cluster 와 동일 환경 토폴로지 fact 인지.
+- **`node-engine/src/stages/_topology.ts`** 신설 (단일 진리원본).
+
+### Added — 복잡 mcp 노드 multi-action 지원
+- **freeze actions map 전개** — `external_dispatch.actions` map 이면 노드 1 개를
+  여러 도구로 전개. tool_name = `{node_safe}__{action_safe}` (예:
+  `mcp_slack_mcp__post_message`, `mcp_slack_mcp__list_channels`).
+- **parent_auth + action_meta merge** — 노드 공통 secret_*_map 위에 action 별
+  추가 인증 가능. headers / body_template / query_template / path_params 도 동일.
+- **dispatch URL path substitution** — `https://api.github.com/repos/{owner}/{repo}`
+  같은 path placeholder 를 args 값으로 치환. `path_params` 명시 지원.
+  path 로 소비된 키는 body/query 에서 자동 제외.
+- **Slack 노드 external_dispatch 예시** — 4 action (post_message /
+  list_channels / conversations_history / search_messages) Bearer 인증.
+
+### 보류 (Phase C — auth_handlers registry)
+- GitHub App JWT / OAuth 2.0 refresh token 같은 복잡 인증 handler 는 별개 트랙.
+  단순 Bearer / Basic / 헤더-키 인증은 v1.12.0 으로 충분.
+
 ## v1.11.5 (2026-05-17)
 
 ### Added — 환경 토폴로지 명시 노출

@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.11.5"
-description = "XGEN Harness v1.11.5 — <harness_stages> + <meta_tools_by_stage> 환경 영역 신설. stage 토폴로지 + 도구 tag/category 자동 그룹화로 LLM 이 자기 환경을 fact 로 인지. DEFAULT_RULES 의 조각 조각 박힌 RESTRICTIONS_ONLY 톤은 사용자 검증 패턴이라 유지 (v1.11.4 over-correction 정정). v1.11.0 의 외부 자족 dispatch + PD builtin engine-node 이식 유지."
+version = "1.12.0"
+description = "XGEN Harness v1.12.0 — 외부 산출물 자족도 완성 + 복잡 mcp 노드 multi-action 지원. (1) engine-node s03 풍부화: <identity>+<rules>+<active_resources>+<harness_stages>+<meta_tools_by_stage> 영역을 cluster 와 동일 형식으로 외부 산출물에서도 LLM 에 노출. (2) freeze actions map 전개: 노드 1 개 → N 도구 (예: Slack 의 post_message/list_channels/conversations_history/search_messages 4 도구). (3) dispatch URL path substitution. (4) Slack external_dispatch 예시 노드."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

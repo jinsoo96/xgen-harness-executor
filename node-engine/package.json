@@ -1,6 +1,6 @@
 {
   "name": "xgen-harness-engine-node",
-  "version": "0.29.1",
+  "version": "0.30.0",
   "description": "TypeScript engine for xgen-harness — reads spec.json (compiled from Python harness workflow) and runs the same 13-stage pipeline. v0.29.1: PD builtin description / 결과 메시지의 next-action 권유 톤 제거 (PD 정신 회복). v0.29.0 의 외부 자족 dispatch (secret_header_map / secret_body_map / query_template) + PD builtin (search_tools / discover_tools) 유지.",
   "license": "UNLICENSED",
   "private": false,
