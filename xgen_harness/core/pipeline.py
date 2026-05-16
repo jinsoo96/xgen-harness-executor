@@ -257,41 +257,18 @@ class Pipeline:
                             max_attempts=self.config.max_retries,
                         ))
 
-            # v0.26.7 — UX 함정 방지: max_iter 도달 + tool 호출 후 final answer 미생성 케이스.
-            # v0.26.18 — 짧은 intro + tool_use 종료 케이스도 같은 safeguard 로 흡수.
-            # 라이브 적발 사례: max_iter=1 + 도구 활성 시 LLM 이 "분석해드리겠습니다."(37자)
-            # 만 흘리고 도구 호출, 도구 결과는 들어왔는데 합성 답변 못 만들고 끝나
-            # 사용자에게 37자만 도달. tool_use 가 일어났고 (의도적으로) max_iter 가 닫혀
-            # 자연 follow-up 이 없으면, 짧은 intro 길이도 "synthesize 못함" 신호로 간주.
-            # 200자는 'I will...' 류 단순 intro 와 실 답변의 경험적 경계.
-            _SHORT_INTRO_THRESHOLD = 200
-            _intro_len = len(state.last_assistant_text or "")
-            _needs_synthesis_kick = (
-                state.tools_executed_count > 0
-                and not state.final_output
-                and _intro_len < _SHORT_INTRO_THRESHOLD
-                and s00_stage is not None
-            )
-            if _needs_synthesis_kick:
-                logger.info(
-                    "[Pipeline] tool 후 합성 답변 보강 호출 (intro=%d자 < %d, 도구 비활성)",
-                    _intro_len, _SHORT_INTRO_THRESHOLD,
-                )
-                # 보강 호출은 환경 한 가지만 바꾼다: 도구 비활성.
-                # 누적된 도구 결과 + 대화 컨텍스트 + 사용자가 박은 system_prompt 가
-                # LLM 이 보는 지도의 전부. 행동 / 톤 / 출력 형식은 LLM 자율.
-                #
-                # v1.11.1~v1.11.2 의 SYNTHESIS MODE 지시 / reasoning trace 예시 박기는
-                # 폐기 (2026-05-17). PD 정신 (LLM 이 환경 보고 자율 결정) 위반이라
-                # 사용자 지적. 톤/형식 강제는 사용자가 자기 system_prompt 에 박을 일.
-                saved_tools = state.tool_definitions
-                state.tool_definitions = []
-                try:
-                    await self._invoke_main_call(state, s00_stage)
-                except Exception as e:
-                    logger.warning("[Pipeline] final 보강 호출 실패: %s", e)
-                finally:
-                    state.tool_definitions = saved_tools
+            # v1.11.4 (2026-05-17) — synthesis_kick 전면 폐기.
+            #
+            # v0.26.7 ~ v1.11.3 동안 살아있던 safeguard. 도구 호출 후 intro 짧으면
+            # 도구 비활성 + 재호출로 final answer 강제. 그러나:
+            #   - state.tool_definitions=[] 가 환경 강제 변경 → LLM 자율 깎음.
+            #   - LLM 이 도구 결과 받고 자연스레 답변 작성하는 흐름 (도구 호출 →
+            #     reasoning trace 자연 노출 → 결론) 자체를 막아 답변에서 "찾아가는
+            #     과정" 이 사라짐. 사용자 라이브 적발 (5/17).
+            #
+            # PD 정신: LLM 이 환경 (도구 카탈로그 + 도구 결과 + history + 사용자가 박은
+            # max_iter / system_prompt) 보고 100% 자율 결정. max_iter 부족하면 사용자가
+            # 그 환경값을 늘릴 일이지 엔진이 강제 안전망 박을 일 아님.
 
             # Phase C: Egress (1회)
             logger.info("[Pipeline] Phase C: Egress (%d stages)", len(self.egress_stages))
@@ -527,10 +504,12 @@ class Pipeline:
         _pending = list(getattr(state, "fetched_pending", []) or [])
         _sp_orig = state.system_prompt
         if _pending:
+            # v1.11.4 — PD 정신: fetched body 본문 자체가 환경 노출. "이번에 답변에
+            # 인용하세요" 같은 행동 강제 톤 폐기. 본문은 이번 turn 만 유효한 환경
+            # 슬롯이며, 활용 여부는 LLM 자율.
             _injection_lines = ["<recently_fetched>"]
             _injection_lines.append(
-                "다음은 이번 turn 에 호출한 fetch_pd 의 본문입니다. 이 본문은 이번 응답 합성 시점에만 "
-                "노출되며 다음 turn 부터 사라집니다. 필요한 정보는 이번에 답변에 인용하세요."
+                "이번 turn 에 호출한 fetch_pd 본문. 다음 turn 에는 노출되지 않음."
             )
             for entry in _pending:
                 _kind = entry.get("kind", "?")

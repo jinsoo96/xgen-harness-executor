@@ -246,19 +246,19 @@ class ExecuteStage(Stage):
                                     _marker_close, _skill_block + "\n" + _marker_close,
                                 )
                             else:
+                                # v1.11.4 — PD 정신 회복: 환경 노출만, 행동 강제 톤 제거.
+                                # "무모하게 반복 호출하지 마세요" / "NEXT 패턴을 따르세요"
+                                # 등 LLM 행동 강제 표현 폐기. skill body 가 무엇인지만
+                                # 환경으로 노출하고, 활용 여부는 LLM 자율.
                                 _sp = _sp + (
                                     f"\n\n{_marker_open}\n"
-                                    f"다음은 이번 session 에서 도구를 호출한 후 자동 load 된 "
-                                    f"메타 도구 사용 가이드입니다. 이미 system_prompt 에 박혀있으므로 "
-                                    f"같은 도구를 무모하게 반복 호출하지 마세요. 가이드의 NEXT / "
-                                    f"common-mistake 패턴을 따르세요."
+                                    f"이번 session 에서 호출한 도구의 자동 로드 가이드 본문."
                                     f"{_skill_block}\n{_marker_close}"
                                 )
                             state.system_prompt = _sp
-                            # v1.8.0 — RESTRICTIONS_ONLY 톤. 명령형 1줄.
                             result_text = (
                                 result_text +
-                                f"\n\n[guide for `{tool_name}` loaded — check <loaded_skills>]"
+                                f"\n\n[guide for `{tool_name}` loaded — see <loaded_skills>]"
                             )
             except Exception as _se:
                 logger.debug("[Execute] auto-load skill skip for %s: %s", tool_name, _se)

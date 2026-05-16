@@ -284,19 +284,14 @@ class SystemPromptStage(Stage):
                     return maybe_dict
                 return {"name": str(maybe_dict) or default_name}
 
-            # v1.8.0 — T1 인식 강화: <reference_resources> → <active_resources> + 명령형.
-            # PD T1 (지도 인식) 가 정확해야 T2 (도구 호출) 가 정확. LLM 이 자원 보고
-            # 즉시 행동하도록 명령형 안내 박음.
-            # v1.9.0 Option C — s06 자동 search 폐기. 첫 응답에 자원 활용하려면 LLM 이
-            # 즉시 도구 호출해야 함. 명령형 한층 강화:
-            #   "사용자 질문이 자원과 관련 있어 보이면 답변 작성 전에 반드시 즉시
-            #    해당 도구 호출. 모른다고 답하지 말 것 — 먼저 검색하고 답하라."
+            # v1.11.4 — PD 정신 회복: <active_resources> 는 사용자가 박은 환경의
+            # 노출일 뿐. "MUST / do not assume / 반드시 즉시 호출" 등 LLM 행동 강제
+            # 톤은 폐기. 각 항목 옆에 호출 도구만 같이 박는다 — 활용 여부 / 시점 /
+            # 방식은 LLM 자율.
             lines: list[str] = ["<active_resources>"]
             lines.append(
                 "These resources are attached to the workflow. "
-                "**If the user query is related to any of them, you MUST call the matching "
-                "tool BEFORE answering — do not assume, do not say you don't know without "
-                "checking first.** Each item below ends with → the tool to call."
+                "Each item below pairs with → the tool that operates on it."
             )
             if rag_collections_attached:
                 lines.append("- 문서 (의미적 유사도 검색 → `rag_search(query, collection_name)`):")
@@ -320,13 +315,11 @@ class SystemPromptStage(Stage):
                     if total:
                         line += f" ({total:,} docs)"
                     lines.append(line)
-                # description 빈 칸이면 LLM 에게 명시 가이드 — "메타 부족 시 직접 검색해 확인".
-                # 사용자가 컬렉션 description 안 박은 경우에도 rag_search 호출 유도.
+                # v1.11.4 — PD 정신: 환경 상태 (description 빈 칸인 컬렉션 N개) 만
+                # 노출. "직접 검색해 확인하세요" 같은 행동 지시는 폐기.
                 if missing_desc_count > 0:
                     lines.append(
-                        "  ※ 일부 컬렉션은 description 이 비어있습니다. "
-                        "사용자 질문이 컬렉션 이름과 관련 있어 보이거나 내용을 모르겠다면 "
-                        "rag_search(collection_name=..., query=...) 로 직접 검색해 확인하세요."
+                        f"  ※ {missing_desc_count} 컬렉션은 description 메타 없음."
                     )
             if ontology_collections_attached:
                 lines.append(

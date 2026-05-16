@@ -55,10 +55,9 @@ class DiscoverToolsTool(Tool):
 
     @property
     def description(self) -> str:
-        # v1.8.0 — RESTRICTIONS_ONLY 톤.
+        # v1.11.4 — PD 정신: 도구 메타만, 사용 순서 강제 톤 폐기.
         return (
-            "List eager tools, or get full schema (tool_name='X'). "
-            "If not in eager → search_tools first."
+            "List eager tools, or get full schema for a specific tool (tool_name='X')."
         )
 
     @property
@@ -129,10 +128,9 @@ class SearchToolsTool(Tool):
 
     @property
     def description(self) -> str:
-        # v1.8.0 — RESTRICTIONS_ONLY 톤.
+        # v1.11.4 — PD 정신: 도구 메타만, 사용 순서 강제 톤 폐기.
         return (
-            "Find tools by keyword (eager + deferred). Most user-installed tools "
-            "are deferred — search first, then ToolSearch to promote."
+            "Search the tool catalog by keyword (eager + deferred)."
         )
 
     @property
@@ -192,12 +190,7 @@ class SearchToolsTool(Tool):
             n = td.get("name", "?")
             d = (td.get("description") or "")[:120]
             lines.append(f"- {n} (score={s}): {d}")
-        # v1.4.0 — Claude Code 패턴 정합. 두 다음 단계 명확히 안내.
-        # ToolSearch = schema 합류 (다음 turn 호출 가능) / discover_tools = schema 조회만.
-        lines.append(
-            "\nNext: ToolSearch(names=[...]) to load and make callable, "
-            "or discover_tools(tool_name=...) to inspect schema only."
-        )
+        # v1.11.4 — PD 정신: 결과 자체가 환경 노출. 다음 행동 권유 폐기.
         return ToolResult.success("\n".join(lines))
 
     def _score_terms(self, terms: list[str], category_filter: str) -> list[tuple[int, dict]]:
@@ -249,10 +242,8 @@ class SearchToolsTool(Tool):
                 lines.append(f"- {n}: {d}")
             if len(by_cat[cat]) > per_cat:
                 lines.append(f"  ... +{len(by_cat[cat]) - per_cat} more")
-        lines.append(
-            "\nNext: search_tools with English keyword (e.g. 'naver', 'news', 'search') "
-            "or discover_tools() for full list. To load and call: ToolSearch(names=['<picked>'])."
-        )
+        # v1.11.4 — PD 정신: 환경 상태 (카테고리별 도구 샘플) 만 노출. 다음 행동
+        # 강제 권유 (e.g. 'naver' / 'news' 같은 keyword 예시 박기) 폐기.
         return "\n".join(lines)
 
 

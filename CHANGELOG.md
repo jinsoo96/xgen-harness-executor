@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.11.4 (2026-05-17)
+
+### Removed — PD 정신 회복 (다중 영역 행동 강제 톤 일괄 폐기)
+- **`synthesis_kick` 안전망 자체 폐기** (v0.26.7~v1.11.3 동안 살아있던 패턴).
+  도구 호출 후 intro 짧으면 `state.tool_definitions=[]` + 재호출로 final answer
+  강제하던 안전망. 환경 강제 변경 → LLM 자율 깎음. max_iter 부족 시
+  사용자가 환경값을 올릴 일이지 엔진이 강제 안전망 박을 일 아님.
+  라이브 적발 (5/17): "찾아가는 과정"이 답변에서 사라진 원인 중 하나.
+- **`s03_prompt` `<active_resources>` 영역** — `"you MUST call the matching
+  tool BEFORE answering"` / `"do not assume"` / `"reach for the tool"` 등
+  MUST 강제 톤 폐기. description 빈 칸 컬렉션의 `"직접 검색해 확인하세요"`
+  행동 지시도 환경 상태 노출만으로 정정.
+- **`s07_act` skill auto-load** — `"무모하게 반복 호출하지 마세요. NEXT /
+  common-mistake 패턴을 따르세요"` 명령형 톤 폐기.
+- **`pipeline.py` fetched body inject** — `"필요한 정보는 이번에 답변에 인용
+  하세요"` 행동 지시 폐기. 본문은 환경 슬롯, 활용 여부는 LLM 자율.
+- **`builtin.SearchToolsTool`** — description / 결과 메시지의 `"Next: ToolSearch
+  ... or discover_tools ..."` next-action 권유, `"...search_tools with English
+  keyword (e.g. 'naver', 'news', 'search')..."` 예시 박기 모두 폐기.
+- **`builtin.DiscoverToolsTool`** — description 의 `"If not in eager →
+  search_tools first."` 사용 순서 강제 톤 폐기.
+- **`node-engine builtins.ts`** — 위와 동일 mirror.
+
+### Principle
+PD = LLM 이 사용자가 박은 환경 (active_resources / tools / capabilities /
+system_prompt / max_iter 등) 만 보고 100% 자율 결정. 엔진 코드가 "이렇게
+해라" / "이렇게 하지 마라" / "다음 단계는 X" 같은 행동·톤·출력 형식·사용
+순서를 강제하면 그 자율성 깎음. 환경 노출 = OK, 행동 강제 = X.
+
 ## v1.11.3 (2026-05-17)
 
 ### Removed (PD 정신 회복)

@@ -23,8 +23,7 @@ export function buildPdBuiltinDefinitions(): FrozenToolDefinition[] {
     {
       name: BUILTIN_SEARCH_TOOLS_NAME,
       description:
-        "Find tools by keyword (name/description full-text scoring). Useful when " +
-        "the catalog is large — call this first, then call the matched tool directly.",
+        "Search the tool catalog by keyword (full-text scoring on name/description).",
       input_schema: {
         type: "object",
         properties: {
@@ -119,10 +118,8 @@ export async function dispatchBuiltinSearchTools(
     const d = (td.description || "").slice(0, 120);
     lines.push(`- ${td.name} (score=${s}): ${d}`);
   }
-  lines.push(
-    "\nCall the matched tool directly with its input_schema, " +
-      "or discover_tools(tool_name=...) to inspect full schema first."
-  );
+  // v1.11.4 — PD 정신: 결과 자체가 환경 노출. "직접 호출하라 / 먼저 inspect 하라"
+  // 다음 행동 안내 폐기. 활용 방식은 LLM 자율.
   return { content: lines.join("\n"), is_error: false };
 }
 
