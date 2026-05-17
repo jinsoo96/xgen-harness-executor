@@ -312,15 +312,8 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": None,
                 "description": "활성 시 LLM 이 반드시 tool 하나를 호출하게 강제 (OpenAI tool_choice=required, Anthropic type=any). tool_result 누적 → L3 microcompact 발동 조건.",
             },
-            # v0.29.2 — RAG 도구 노출 모드 (코드는 이미 read 중).
-            {
-                "id": "rag_tool_mode",
-                "label": "RAG 도구 노출 모드",
-                "type": "select",
-                "options": ["both", "tool", "system_prompt"],
-                "default": None,
-                "description": "both: system prompt 주입 + rag_search 도구 둘 다 / tool: 도구로만 노출 (system prompt skip → tool_result 누적 → L3 microcompact 발동) / system_prompt: 즉시 주입만 (도구 노출 X). s06 의 rag_ingestion_mode 와 자동 정합.",
-            },
+            # v1.12.2 — rag_tool_mode 폐기. v1.9.0 Option C 라디칼 (단일 도구 경로) 이후
+            # 어디서도 read 안 됨. DEPRECATED_STAGE_PARAM_VALUES 도 같이 제거.
             # capabilities top-level: state.config.capabilities (전역 ConfigPanel) 만 사용.
             # v1.0 — 자연어 intent → capability 자동 발견 (구 s05_strategy 흡수)
             {
@@ -458,14 +451,8 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": [],
                 "description": "DB 연결 선택 — 스키마 요약이 system_prompt 에 주입.",
             },
-            {
-                "id": "enhance_prompt",
-                "label": "응답 향상 프롬프트",
-                "type": "textarea",
-                "placeholder": "예: '가장 최신 데이터를 우선하여 요약하라' — RAG 컨텍스트 뒤에 덧붙여집니다",
-                "default": None,
-                "description": "RAG 컨텍스트 주입 후 이어 붙는 사용자 지정 지시. 비우면 적용 안함",
-            },
+            # v1.12.2 — enhance_prompt 폐기. stage 코드 어디서도 read 안 됨 (builder.py 만
+            # programmatic 박지만 stage 가 무시). UI textarea 였다면 사용자 입력 무반응 함정.
             {
                 "id": "metadata_filter",
                 "label": "메타데이터 필터 (JSON)",
@@ -486,15 +473,7 @@ STAGE_CONFIGS: dict[str, dict] = {
                 "default": "progressive",
                 "description": "eager: 청크 본문 전체를 system_prompt 에 주입. progressive (기본): 인덱스 한 줄 + snippet 만 주입, 본문은 pd_stores 에 보관 — LLM 이 fetch_pd(kind='rag', id=...) 로 필요한 것만 pull (Claude Code 패턴)",
             },
-            {
-                "id": "rag_ingestion_mode",
-                "advanced": True,
-                "label": "RAG 주입 방식 (v0.11.18+)",
-                "type": "select",
-                "options": ["system_prompt", "tool_only", "both"],
-                "default": None,
-                "description": "system_prompt (기본): RAG 를 system prompt 에 즉시 주입 / tool_only: system prompt 주입 skip, LLM 은 rag_search 도구로만 접근 → tool_result 누적 → L3 microcompact 발동 조건 / both: 둘 다. rag_tool_mode=tool 이면 자동 tool_only 전환.",
-            },
+            # v1.12.2 — rag_ingestion_mode 폐기. v1.9.0 Option C 이후 stage 코드 read 0건.
             {
                 "id": "chars_per_token",
                 "advanced": True,
@@ -526,33 +505,36 @@ STAGE_CONFIGS: dict[str, dict] = {
             },
             {
                 "id": "cascade_l3_threshold",
+                "advanced": True,
                 "label": "Cascade L3 발동 임계 (%)",
                 "type": "slider",
                 "min": 50,
                 "max": 90,
                 "step": 5,
                 "default": None,
-                "description": "cascade 전략에서 이 비율 이상이면 L3 microcompact 먼저 시도 (tool_result 교체, 경량). v0.11.16 이후 기본 80 — Pilot #11 에서 조기 발동(70) 의 -19% 품질 악화 관측",
+                "description": "cascade 전략에서 이 비율 이상이면 L3 microcompact 먼저 시도 (tool_result 교체, 경량). 미설정 시 runtime_default 70% 적용. Pilot #11 에서 조기 발동(<70) 의 -19% 품질 악화 관측.",
             },
             {
                 "id": "cascade_l4_threshold",
+                "advanced": True,
                 "label": "Cascade L4 발동 임계 (%)",
                 "type": "slider",
                 "min": 60,
                 "max": 95,
                 "step": 5,
                 "default": None,
-                "description": "cascade 전략에서 이 비율 이상이면 L4 context_collapse_overlay 추가 발동 (비파괴 overlay, 중량). v0.11.16 기본 90",
+                "description": "cascade 전략에서 이 비율 이상이면 L4 context_collapse_overlay 추가 발동 (비파괴 overlay, 중량). 미설정 시 runtime_default 85%.",
             },
             {
                 "id": "cascade_l5_threshold",
+                "advanced": True,
                 "label": "Cascade L5 발동 임계 (%)",
                 "type": "slider",
                 "min": 70,
                 "max": 99,
                 "step": 1,
                 "default": None,
-                "description": "cascade 전략에서 이 비율 이상이면 최후 수단 L5 autocompact_llm 발동 (child LLM 요약). v0.11.16 기본 97",
+                "description": "cascade 전략에서 이 비율 이상이면 최후 수단 L5 autocompact_llm 발동 (child LLM 요약). 미설정 시 runtime_default 95%.",
             },
             {
                 "id": "context_collapse_threshold",
@@ -942,15 +924,17 @@ _HIDDEN_FIELDS_BY_STAGE: dict[str, set[str]] = {
                     "citation_auto_doc_tokens", "citation_auto_prod_tokens",
                     "thinking_mode", "planning_instruction_template",
                     "identity_template", "rules_template"},                     # CoT/ReAct·인용 — auto
-    "s04_tool":    {"builtin_tools", "force_tool_use", "rag_tool_mode",
+    "s04_tool":    {"builtin_tools", "force_tool_use",
                     "capability_discovery", "capability_top_k",
-                    "capability_min_score"},                                    # R3 — rag_tool_mode default 'tool'
+                    "capability_min_score"},                                    # v1.12.2 — rag_tool_mode 키 폐기
     "s06_context": {"strategy", "context_window", "compaction_threshold",
                     "score_threshold", "rerank_top_k", "reranker",
-                    "enhance_prompt", "metadata_filter",
-                    "rag_pd_mode", "rag_ingestion_mode", "chars_per_token",
+                    "metadata_filter",
+                    "rag_pd_mode", "chars_per_token",  # v1.12.2 — enhance_prompt / rag_ingestion_mode 폐기
                     "rag_pd_snippet_size",
-                    "cascade_l3_threshold", "cascade_l4_threshold", "cascade_l5_threshold",
+                    # v1.12.2 — cascade L3/L4/L5 임계는 advanced UI 노출. operator precedence
+                    # fix 와 동반 — 사용자가 토큰 압축 시점을 직접 조절 가능 (runtime_defaults
+                    # 70/85/95 floor 가 default).
                     "context_collapse_threshold", "context_collapse_keep_tail",
                     "microcompact_threshold", "microcompact_keep_recent",
                     "autocompact_threshold", "autocompact_keep_tail",
@@ -959,8 +943,10 @@ _HIDDEN_FIELDS_BY_STAGE: dict[str, set[str]] = {
 # ─── Strategy 카드 노출 stage 화이트리스트. default False (모든 stage 의 strategy UI 는 함정).
 # 사용자가 명시적으로 결정해야 의미 있는 두 stage 만 노출.
 _EXPOSE_STRATEGY_PICKER: set[str] = {
-    "s05_policy",   # Guard 조합 = 보안 정책 사용자 명시
     "s08_decide",   # 평가 모드 사용자 결정
+    # s05_policy 는 Strategy Variants 대신 Guard 조합으로 구성 — list_strategies() 가
+    # 빈 list 라 picker UI 가 빈 dropdown 으로 떨어진다. 외부 stage 가 자기 stage_config
+    # 에 `expose_strategy_picker=True` 박으면 여전히 합류.
 }
 
 

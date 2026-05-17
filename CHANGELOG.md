@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.12.2 (2026-05-18)
+
+### Fixed (CRITICAL — 사용자 영향 직접)
+- **s06_context 압축 임계 7 line operator precedence 버그 fix**.
+  `None or 0 / 100.0` 가 Python operator precedence (`/` > `or`) 때문에
+  항상 `None or 0.0` = `0.0` 으로 떨어지던 7 line — `stage.py:232/295/296/
+  297/331/387/448`. cascade strategy (default 가능성 큼) 와 token_budget
+  strategy 가 **첫 turn 부터 매 턴 압축 발동** → tool_result 깎임 → 첫
+  응답 품질 저하. v1.0.x ~ v1.12.1 전체 영향.
+  - `_pct_threshold` 헬퍼 호출로 통일. `runtime_defaults` 의 cascade(70/
+    85/95) · compaction(80) · microcompact(75) · collapse(85) · autocompact
+    (90) floor 7개가 진짜 적용됨. 그동안 dead 였음.
+  - `register_runtime_default("cascade_l3_threshold_pct", 80)` 외부 override
+    도 진짜 작동.
+
+### Removed (DEAD 청소 — v1.9.0 Option C 잔존)
+- **`s06_context.enhance_prompt`** UI 필드 제거. stage 코드 어디서도 read
+  0건. `PipelineBuilder.with_rag(... enhance_prompt=)` 인자도 폐기 (옛
+  호출자 BC 위해 `**_legacy_kwargs` 흡수).
+- **`s06_context.rag_ingestion_mode`** UI 필드 제거. v1.9.0 Option C 이후
+  stage read 0건.
+- **`s04_tool.rag_tool_mode`** UI 필드 + DEPRECATED 정규화 mapping 제거.
+  v1.9.0 Option C 이후 stage read 0건.
+
+### Changed (Mixin 단일 진실 소스)
+- **`ContextStage` 의 try_cascade / try_microcompact / try_context_collapse
+  / try_autocompact / _autocompact_summarize / _apply_intent_routing 6 메서드
+  본문 제거**. 동일 본문이 `CascadeCompactionMixin` (cascade.py) +
+  `IntentRoutingMixin` (intent.py) 에 박혀있어 MRO 로 자동 위임. stage.py
+  611 → 294 line. stage.py 의 옛 buggy 경로가 Mixin 정상 경로를 override
+  하던 dead 패턴 해소.
+- **`_EXPOSE_STRATEGY_PICKER` 화이트리스트에서 `s05_policy` 제거**. `list_
+  strategies()` 가 빈 list 반환이라 UI dropdown 함정이었음. 외부 stage 가
+  자기 `stage_config` 에 `expose_strategy_picker=True` 박으면 여전히 합류.
+- **`cascade_l3/l4/l5_threshold` advanced UI 노출**. `_HIDDEN_FIELDS_BY_
+  STAGE` 에서 3 키 제거 + `advanced: True` 박음. 사용자가 토큰 압축 시점
+  을 직접 조절 가능 (미설정 시 `runtime_defaults` floor 70/85/95% 적용).
+
+### Tests
+- `test_serialization.py::test_builder_roundtrip` — `enhance_prompt: ""`
+  assertion 제거 (`with_rag` 인자 폐기 정합).
+
 ## v1.12.1 (2026-05-17)
 
 ### Changed (PD 정신 엄격화 — default 동작 변경)

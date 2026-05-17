@@ -77,11 +77,8 @@ DEPRECATED_STRATEGIES_BY_STAGE: dict[str, dict[str, str]] = {
 # stage_params 측 deprecated value — UI 표면 단순화 정합. v1.4.0 default 로 강제 정규화.
 # 빈 dict 의 stage_id 는 정규화 없음.
 DEPRECATED_STAGE_PARAM_VALUES: dict[str, dict[str, dict[str, str]]] = {
-    "s04_tool": {
-        # rag_tool_mode 'both' / 'context' 모두 R3 의 'tool' (LLM 도구 위임) 로.
-        # 백워드 호환은 사용자가 의도적으로 stage_params 박은 경우만.
-        "rag_tool_mode": {"both": "tool", "context": "tool"},
-    },
+    # v1.12.2 — s04_tool.rag_tool_mode 폐기. 옛 'both'/'context' 박힌 데이터는 stage 가 안 읽어
+    # 무해. 정규화 mapping 도 제거.
     "s06_context": {
         # rag_pd_mode 'eager' (구 default) → 'progressive' (v1.1.1+ default).
         "rag_pd_mode": {"eager": "progressive"},

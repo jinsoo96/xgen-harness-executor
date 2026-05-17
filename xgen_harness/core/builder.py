@@ -99,12 +99,15 @@ class PipelineBuilder:
 
     # --- RAG ---
 
-    def with_rag(self, collection: str, top_k: int = 4, enhance_prompt: str = "") -> "PipelineBuilder":
-        """RAG 컬렉션 등록 (실행 시 자동 검색)"""
+    def with_rag(self, collection: str, top_k: int = 4, **_legacy_kwargs) -> "PipelineBuilder":
+        """RAG 컬렉션 등록 (실행 시 자동 검색).
+
+        v1.12.2 — enhance_prompt 인자 폐기. 옛 호출자 BC 위해 **_legacy_kwargs 로 흡수만.
+        값은 어디서도 read 되지 않음.
+        """
         self._rag_collections.append({
             "collection": collection,
             "top_k": top_k,
-            "enhance_prompt": enhance_prompt,
         })
         return self
 
