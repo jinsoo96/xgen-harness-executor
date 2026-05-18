@@ -20,13 +20,28 @@ from typing import Any
 
 
 def _provider_to_env(provider: str) -> str | None:
-    """provider 식별자 → API key env 이름. 미지원/None 인증 provider 는 None."""
+    """provider 식별자 → API key env 이름.
+
+    단일 진실원본 = `xgen_harness.providers.PROVIDER_API_KEY_MAP` (register_provider 로
+    외부 확장 가능). vllm/google/bedrock 처럼 표준 API key env 가 없는 provider 는
+    None 반환 — README env 안내에서 LLM 키 항목 자체 생략.
+
+    레지스트리 로드 자체가 실패하면 conservative 하게 None (안내 누락 < 잘못된 안내).
+    """
     p = (provider or "").strip().lower()
-    mapping = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-    }
-    return mapping.get(p)
+    if not p:
+        return None
+    try:
+        from ..providers import PROVIDER_API_KEY_MAP
+    except Exception:
+        return None
+    env = PROVIDER_API_KEY_MAP.get(p)
+    # vllm/google/bedrock 는 표준 LLM API key env 패턴이 없음 (자체 인증) — README
+    # 에 OPENAI 식 안내 박으면 사용자 혼란. providers 레지스트리에 박혔어도 이쪽은
+    # 명시적으로 skip.
+    if p in ("vllm", "google", "bedrock"):
+        return None
+    return env
 
 
 def derive_required_envs(
@@ -146,6 +161,29 @@ def derive_required_envs(
             _add_env(str(env_name), tool_name)
         for env_name in (cspec.get("secret_body_map") or {}).values():
             _add_env(str(env_name), tool_name)
+
+        # RAG 외부 자족 (v1.13+) — call_kind="rag" 의 embedder/qdrant env 이름 노출.
+        # 외부 환경에서 cluster shim 없이 Qdrant 직접 호출하려면 사용자가 이 env 들을
+        # 박아야 함. embedder 메타 미박힘 시 freeze 시점에 키 자체가 없어 skip.
+        if td.get("call_kind") == "rag":
+            for env_key in (cspec.get("qdrant_url_env"), cspec.get("qdrant_api_key_env")):
+                if isinstance(env_key, str) and env_key:
+                    _add_env(env_key, tool_name)
+            embedder = cspec.get("embedder") or {}
+            if isinstance(embedder, dict):
+                api_key_env = embedder.get("api_key_env")
+                if isinstance(api_key_env, str) and api_key_env:
+                    _add_env(api_key_env, tool_name)
+
+        # MCP 외부 자족 (v1.13+) — call_kind="mcp_session" 의 spawn.env_keys 노출.
+        # cluster mcp-station 의 SessionInfo 는 env_vars 값을 응답하지 않으므로 사용자가
+        # 직접 박아야 함 — 외부 환경에서 같은 이름으로 wire.
+        if td.get("call_kind") == "mcp_session":
+            spawn = cspec.get("spawn") or {}
+            if isinstance(spawn, dict):
+                for env_key in (spawn.get("env_keys") or []):
+                    if isinstance(env_key, str) and env_key:
+                        _add_env(env_key, tool_name)
 
     return out
 

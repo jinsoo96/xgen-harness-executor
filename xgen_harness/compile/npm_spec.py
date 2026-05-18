@@ -244,18 +244,48 @@ def freeze_mcp_session_tool(
     description: str,
     input_schema: dict[str, Any],
     annotations: Optional[dict[str, Any]] = None,
+    # v1.13 — 외부 자족 spawn. 모두 optional (BC).
+    # 박혔으면 runner 는 station_url 없을 때 자체 stdio spawn (cluster mcp-station
+    # 의존 0). 박히지 않으면 기존 station proxy 동작 유지.
+    #
+    # ``env_keys`` 는 호스트 환경에 wire 해야 할 env 이름 목록 — 값은 spec 에 박지
+    # 않음 (secret leak 방지). README 에 사용자 안내.
+    server_type: Optional[str] = None,
+    server_command: Optional[str] = None,
+    server_args: Optional[list[str]] = None,
+    env_keys: Optional[list[str]] = None,
+    working_dir: Optional[str] = None,
+    additional_commands: Optional[list[str]] = None,
 ) -> FrozenToolDefinition:
-    """mcp-station 의 stdio MCP 도구 — runner 가 station HTTP API 로 proxy 호출.
+    """mcp-station 의 stdio MCP 도구.
 
-    publish 환경과 외부 환경 둘 다 mcp-station 이 떠있다고 가정. mcp-station
-    URL 은 spec.metadata.station_url 에서 읽음.
+    외부 자족 (권장): caller 가 server_command / server_args 등 박으면 runner 가
+    `StdioClientTransport` (@modelcontextprotocol/sdk) 로 직접 spawn + 도구 호출.
+    cluster mcp-station 의존 0.
+
+    호환 fallback: spawn 메타 미박힘 시 runner 는 ``spec.metadata.station_url`` 의
+    mcp-station HTTP proxy 로 forward (v0.29 기존 동작 그대로).
     """
+    call_spec: dict[str, Any] = {"session_id": session_id}
+    spawn = {
+        k: v for k, v in {
+            "server_type": server_type,
+            "server_command": server_command,
+            "server_args": list(server_args) if server_args else None,
+            "env_keys": list(env_keys) if env_keys else None,
+            "working_dir": working_dir,
+            "additional_commands": list(additional_commands) if additional_commands else None,
+        }.items()
+        if v is not None
+    }
+    if spawn:
+        call_spec["spawn"] = spawn
     return FrozenToolDefinition(
         name=name,
         description=description,
         input_schema=input_schema,
         call_kind="mcp_session",
-        call_spec={"session_id": session_id},
+        call_spec=call_spec,
         annotations=annotations or {},
     )
 
@@ -267,8 +297,51 @@ def freeze_rag_tool(
     description: str = "Search the configured RAG collection.",
     top_k: int = 4,
     score_threshold: float = 0.0,
+    # v1.13 — 외부 자족 dispatch. 모두 optional (BC).
+    # runner 는 `QDRANT_URL` env + 아래 embedder 메타 모두 있으면 Qdrant + 임베더를
+    # 직접 호출, 아니면 spec.metadata.rag_endpoint (cluster shim) 폴백.
+    # generic helper — provider 식별자는 문자열 그대로, runner 가 분기. 새 provider
+    # 추가 시 엔진 재배포 필요 X (engine-node 가 케이스 확장).
+    embedder_provider: Optional[str] = None,
+    embedder_model: Optional[str] = None,
+    embedder_dimension: Optional[int] = None,
+    embedder_endpoint: Optional[str] = None,
+    embedder_api_key_env: Optional[str] = None,
+    qdrant_url_env: str = "QDRANT_URL",
+    qdrant_api_key_env: str = "QDRANT_API_KEY",
 ) -> FrozenToolDefinition:
-    """RAG 컬렉션 검색 도구 — runner 가 spec.metadata.rag_endpoint 로 호출."""
+    """RAG 컬렉션 검색 도구.
+
+    외부 자족 (권장): 호출자가 embedder_* 메타 + qdrant_*_env 박으면 runner 가
+    외부 환경의 Qdrant + embedder API 를 직접 호출. cluster 의존 0.
+
+    호환 fallback: embedder 메타 미박힘 시 runner 는 ``spec.metadata.rag_endpoint``
+    의 cluster shim 으로 폴백 (v0.29 기존 동작 그대로).
+
+    spec.json 에는 secret 값 직접 박지 않고 env 이름만 — 외부 환경의 env 가 채움.
+    """
+    call_spec: dict[str, Any] = {
+        "collection_name": collection_name,
+        "top_k": top_k,
+        "score_threshold": score_threshold,
+        # 외부 자족용 Qdrant URL/Key env 이름. 직접 분기 활성화 시 runner 가 사용.
+        "qdrant_url_env": qdrant_url_env,
+        "qdrant_api_key_env": qdrant_api_key_env,
+    }
+    # embedder 메타 — 외부 자족에 필수. 일부만 박혀도 그대로 freeze (provider 별로
+    # 어떤 필드가 필수인지는 runner 측 schema 가 결정). 모두 None 이면 키 자체 생략.
+    embedder_meta = {
+        k: v for k, v in {
+            "provider": embedder_provider,
+            "model": embedder_model,
+            "dimension": embedder_dimension,
+            "endpoint": embedder_endpoint,
+            "api_key_env": embedder_api_key_env,
+        }.items()
+        if v is not None
+    }
+    if embedder_meta:
+        call_spec["embedder"] = embedder_meta
     return FrozenToolDefinition(
         name=name,
         description=description,
@@ -280,9 +353,5 @@ def freeze_rag_tool(
             "required": ["query"],
         },
         call_kind="rag",
-        call_spec={
-            "collection_name": collection_name,
-            "top_k": top_k,
-            "score_threshold": score_threshold,
-        },
+        call_spec=call_spec,
     )

@@ -351,6 +351,46 @@ class HarnessConfig:
         import json
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
+    def to_workflow_data(
+        self,
+        *,
+        workflow_id: Optional[str] = None,
+        workflow_name: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """cluster ``workflow_meta.workflow_data`` 형태 dict 반환.
+
+        역방향 SDK 양방향용 (v1.13) — Python 으로 작성한 HarnessConfig 인스턴스를
+        cluster `POST /api/agentflow/harness/workflows` body 로 그대로 보낼 수 있다.
+
+        ``from_workflow()`` 라운드트립 호환을 위해 ``None`` 인 top-level 필드는
+        결과 dict 에서 제거 (from_workflow 가 일부 필드에 ``float(value)`` 강제
+        변환을 하는데 None 이 박혀있으면 TypeError). dataclass default 가 적용되
+        도록 키 자체를 빼는 게 안전.
+
+        반환 형태:
+            {
+                "workflow_type": "harness",
+                "workflow_id": ...,            # 옵션
+                "workflow_name": ...,          # 옵션
+                "nodes": [],                   # 하네스는 노드 그래프 없음
+                "edges": [],
+                "harness_config": {...},       # HarnessConfig.to_dict() 의 None 제거
+            }
+        """
+        hc = self.to_dict()
+        hc_clean = {k: v for k, v in hc.items() if v is not None}
+        wd: dict[str, Any] = {
+            "workflow_type": "harness",
+            "nodes": [],
+            "edges": [],
+            "harness_config": hc_clean,
+        }
+        if workflow_id:
+            wd["workflow_id"] = workflow_id
+        if workflow_name:
+            wd["workflow_name"] = workflow_name
+        return wd
+
     def save(self, path: str) -> None:
         """JSON 파일로 저장."""
         with open(path, "w", encoding="utf-8") as f:

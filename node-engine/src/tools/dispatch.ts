@@ -4,7 +4,9 @@
  * call_kind 매트릭스:
  *   - http        : fetch(url, ...) — Tavily/Brave/Naver 등 직접 외부 API
  *   - mcp_session : station_url + session_id 로 stdio MCP proxy 호출
- *   - rag         : rag_endpoint 로 검색 (spec.metadata.rag_endpoint)
+ *   - rag         : v0.31+ — call_spec.embedder + QDRANT_URL env 둘 다 있으면
+ *                   Qdrant + 임베더 API 직접 호출 (cluster 0 의존). 둘 중 하나라도
+ *                   없으면 spec.metadata.rag_endpoint (cluster shim) 폴백.
  *   - noop        : 미구현 — content="(noop)"
  *
  * publish 시 spec freeze — Python NodeClass / langchain Tool 의존성 0.
@@ -218,22 +220,55 @@ async function dispatchMcpSession(
   args: Record<string, unknown>,
   state: PipelineState,
 ): Promise<ToolDispatchResult> {
-  // station URL 은 spec.metadata.station_url (publish 시점 박힘) 또는 env 로만.
-  // 일반 엔진 코드에 xgen 도메인 default 박지 않음 — 외부 환경 (Claude Desktop 등)
-  // 에서도 동작 가능해야 함.
+  const cspec = (def.call_spec || {}) as Record<string, unknown>;
+  const sid = String(cspec.session_id || "");
+  if (!sid) return { content: "session_id 누락", is_error: true };
+
+  // ── 1) 외부 자족 분기 (v0.31+) — spec.call_spec.spawn 박혀있으면 직접 spawn ──
+  // station_url 이 함께 있어도 spawn 메타 우선 (외부 환경에서 cluster URL 도달
+  // 불가일 수 있음). 박힌 경우 한정 — 박혀있지 않으면 곧장 shim 분기로.
+  const spawnMeta = cspec.spawn as Record<string, unknown> | undefined;
+  if (spawnMeta && typeof spawnMeta === "object" && spawnMeta.server_command) {
+    try {
+      return await dispatchMcpViaSpawn(def, args, sid, spawnMeta);
+    } catch (e) {
+      const directErr = (e as Error).message;
+      // station_url 있으면 graceful fallback 시도
+      const stationUrl =
+        (state.metadata.station_url as string) || process.env.MCP_STATION_BASE_URL || "";
+      if (stationUrl) {
+        const fb = await dispatchMcpViaStation(def, args, sid, stationUrl);
+        if (!fb.is_error) return fb;
+        return {
+          content: `mcp spawn failed (${directErr}); station fallback failed (${fb.content})`,
+          is_error: true,
+        };
+      }
+      return { content: `mcp spawn failed: ${directErr}`, is_error: true };
+    }
+  }
+
+  // ── 2) Station proxy fallback (v0.29 기존 동작) ────────────────────
   const stationUrl =
     (state.metadata.station_url as string) || process.env.MCP_STATION_BASE_URL || "";
   if (!stationUrl) {
     return {
       content:
-        "MCP_STATION_BASE_URL 미설정 — spec.metadata.station_url 또는 env 필요. " +
-        `tool='${def.name}' session_id='${def.call_spec.session_id}'`,
+        "MCP_STATION_BASE_URL 미설정 — spec.metadata.station_url 또는 env 필요, " +
+        "또는 freeze 시점에 spec.call_spec.spawn (server_command/server_args) 박혀야 함. " +
+        `tool='${def.name}' session_id='${sid}'`,
       is_error: true,
     };
   }
-  const sid = (def.call_spec.session_id as string) || "";
-  if (!sid) return { content: "session_id 누락", is_error: true };
+  return dispatchMcpViaStation(def, args, sid, stationUrl);
+}
 
+async function dispatchMcpViaStation(
+  def: FrozenToolDefinition,
+  args: Record<string, unknown>,
+  sid: string,
+  stationUrl: string,
+): Promise<ToolDispatchResult> {
   const url = `${stationUrl}/api/mcp/mcp-request`;
   const payload = {
     session_id: sid,
@@ -274,20 +309,185 @@ async function dispatchMcpSession(
   }
 }
 
+// ─── 외부 자족 MCP — stdio spawn 세션 핸들 (process 내 캐시) ──────────
+//
+// 같은 spec 의 여러 도구가 같은 session_id 면 한 process 공유 — 매 도구 호출마다
+// spawn 비용 회피. process exit 시 자동 정리 (Node가 cleanup).
+
+interface SpawnedMcpClient {
+  client: any; // @modelcontextprotocol/sdk Client
+  transport: any; // StdioClientTransport
+  initializing: Promise<void> | null;
+}
+
+const _spawnedClients = new Map<string, SpawnedMcpClient>();
+
+async function getOrSpawnMcpClient(
+  sid: string,
+  spawnMeta: Record<string, unknown>,
+): Promise<any> {
+  let entry = _spawnedClients.get(sid);
+  if (entry) {
+    if (entry.initializing) await entry.initializing;
+    return entry.client;
+  }
+
+  // dynamic import — @modelcontextprotocol/sdk 의존성은 이미 npm 에 박혀있음
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StdioClientTransport } = await import(
+    "@modelcontextprotocol/sdk/client/stdio.js"
+  );
+
+  const command = String(spawnMeta.server_command || "");
+  if (!command) throw new Error("spawn.server_command 미박힘");
+  const argsList = Array.isArray(spawnMeta.server_args)
+    ? (spawnMeta.server_args as unknown[]).map(String)
+    : [];
+
+  // env_keys 가 박힘 → process.env 에서 해당 키만 추출해 child 에 전달.
+  // env 값은 spec 에 박지 않음 (secret leak 방지) — 외부 환경 변수에서만.
+  const env: Record<string, string> = {};
+  // PATH 류 기본 환경은 보존해야 spawn 성공 (npx/uvx 등 PATH 의존)
+  for (const k of Object.keys(process.env)) {
+    const v = process.env[k];
+    if (typeof v === "string") env[k] = v;
+  }
+  const envKeys = Array.isArray(spawnMeta.env_keys)
+    ? (spawnMeta.env_keys as unknown[]).map(String)
+    : [];
+  // env_keys 가 process.env 에 박혀있지 않으면 경고 — child 에 빈 값 전달 X
+  for (const k of envKeys) {
+    if (!(k in env) || env[k] === "") {
+      throw new Error(`mcp spawn: required env "${k}" 미설정`);
+    }
+  }
+
+  const cwd = spawnMeta.working_dir ? String(spawnMeta.working_dir) : undefined;
+
+  const transport = new StdioClientTransport({
+    command,
+    args: argsList,
+    env,
+    ...(cwd ? { cwd } : {}),
+  });
+
+  const client = new Client(
+    { name: "xgen-harness-engine-node", version: "0.31.0" },
+    { capabilities: {} },
+  );
+
+  // initializing 락 — 동시 호출 시 한 번만 connect
+  const initPromise = (async () => {
+    await client.connect(transport);
+  })();
+  entry = { client, transport, initializing: initPromise };
+  _spawnedClients.set(sid, entry);
+  try {
+    await initPromise;
+  } catch (e) {
+    _spawnedClients.delete(sid);
+    throw e;
+  }
+  entry.initializing = null;
+  return client;
+}
+
+async function dispatchMcpViaSpawn(
+  def: FrozenToolDefinition,
+  args: Record<string, unknown>,
+  sid: string,
+  spawnMeta: Record<string, unknown>,
+): Promise<ToolDispatchResult> {
+  const client = await getOrSpawnMcpClient(sid, spawnMeta);
+  // MCP tool name 은 spec freeze 시점 그대로 외부 서버의 도구 이름과 일치한다고 가정.
+  // (cluster MCPStationToolSource.list_tools 가 station 응답을 그대로 노출하므로 정합)
+  const result: any = await client.callTool({
+    name: def.name,
+    arguments: args,
+  });
+  const content = result?.content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (block && typeof block === "object" && (block as any).type === "text") {
+        parts.push((block as any).text || "");
+      } else if (typeof block === "string") {
+        parts.push(block);
+      }
+    }
+    return {
+      content: parts.join("\n") || JSON.stringify(result),
+      is_error: Boolean(result?.isError),
+    };
+  }
+  return {
+    content: JSON.stringify(result).slice(0, 50_000),
+    is_error: Boolean(result?.isError),
+  };
+}
+
 async function dispatchRag(
   def: FrozenToolDefinition,
   args: Record<string, unknown>,
+  state: PipelineState,
+): Promise<ToolDispatchResult> {
+  const spec = (def.call_spec || {}) as Record<string, unknown>;
+  const collectionName = String(spec.collection_name || "");
+  const query = String(args.query ?? "");
+  const topK = Number(spec.top_k ?? 4);
+  const scoreThreshold = Number(spec.score_threshold ?? 0.0);
+
+  // ── 1) 외부 자족 분기 (v0.31+) — Qdrant + embedder 직접 ──────────────
+  // 사용자 환경에 QDRANT_URL 박혀있고 freeze 시 embedder 메타가 박혔으면
+  // cluster 0 의존으로 직접 검색. 어느 한쪽이라도 빠지면 shim 폴백.
+  const qdrantUrlEnv = String(spec.qdrant_url_env || "QDRANT_URL");
+  const qdrantUrl = (process.env[qdrantUrlEnv] || "").trim();
+  const embedderMeta = spec.embedder as Record<string, unknown> | undefined;
+  if (qdrantUrl && embedderMeta && typeof embedderMeta === "object") {
+    try {
+      const vector = await embedQuery(query, embedderMeta);
+      const qdrantApiKeyEnv = String(spec.qdrant_api_key_env || "QDRANT_API_KEY");
+      const qdrantApiKey = (process.env[qdrantApiKeyEnv] || "").trim();
+      const result = await qdrantSearch(
+        qdrantUrl,
+        qdrantApiKey,
+        collectionName,
+        vector,
+        topK,
+        scoreThreshold,
+      );
+      return { content: JSON.stringify(result).slice(0, 50_000), is_error: false };
+    } catch (e) {
+      // 직접 호출 실패 시 cluster shim 으로 폴백 시도 — 외부 환경의 일시적
+      // 임베더 키 누락 / Qdrant 연결 오류 시 우아한 degradation.
+      // 명시 디버깅을 위해 에러 메시지에 직접 분기 실패 사실 박음.
+      const directErr = (e as Error).message;
+      const fallback = await dispatchRagViaShim(spec, query, state);
+      if (!fallback.is_error) return fallback;
+      return {
+        content: `rag direct failed (${directErr}); shim fallback failed (${fallback.content})`,
+        is_error: true,
+      };
+    }
+  }
+
+  // ── 2) Cluster shim 폴백 (v0.29 기존 동작) ───────────────────────────
+  return dispatchRagViaShim(spec, query, state);
+}
+
+async function dispatchRagViaShim(
+  spec: Record<string, unknown>,
+  query: string,
   state: PipelineState,
 ): Promise<ToolDispatchResult> {
   const endpoint =
     (state.metadata.rag_endpoint as string) ||
     process.env.HARNESS_RAG_ENDPOINT ||
     "";
-  if (!endpoint) return { content: "RAG endpoint 미설정", is_error: true };
-  const spec = def.call_spec || {};
+  if (!endpoint) return { content: "RAG endpoint 미설정 + 외부 자족 메타 미구비", is_error: true };
   const body = {
     collection_name: spec.collection_name,
-    query: args.query,
+    query,
     top_k: spec.top_k ?? 4,
     score_threshold: spec.score_threshold ?? 0.0,
   };
@@ -305,4 +505,170 @@ async function dispatchRag(
   } catch (e) {
     return { content: (e as Error).message, is_error: true };
   }
+}
+
+// ─── Embedder providers — generic helpers ────────────────────────────
+//
+// 새 provider 추가는 이 객체에 1 줄 — 엔진 외부에서 register 도 가능.
+// 시그니처: (text, meta) → number[]. meta = freeze 시점 박힌 embedder dict.
+
+type EmbedFn = (
+  text: string,
+  meta: Record<string, unknown>,
+) => Promise<number[]>;
+
+const _embedderProviders: Record<string, EmbedFn> = {
+  openai: embedOpenAI,
+  custom_http: embedCustomHttp,
+  voyage: embedVoyage,
+};
+
+/** 외부 entry 가 신규 provider 등록 가능 — 엔진 무재배포 확장. */
+export function registerEmbedderProvider(name: string, fn: EmbedFn): void {
+  _embedderProviders[name] = fn;
+}
+
+async function embedQuery(
+  text: string,
+  meta: Record<string, unknown>,
+): Promise<number[]> {
+  const provider = String(meta.provider || "").toLowerCase();
+  if (!provider) {
+    throw new Error("embedder.provider 미박힘 — freeze 시점 메타 누락");
+  }
+  const fn = _embedderProviders[provider];
+  if (!fn) {
+    throw new Error(`embedder.provider="${provider}" 미지원 (registered: ${Object.keys(_embedderProviders).join(",")})`);
+  }
+  const vec = await fn(text, meta);
+  const expected = Number(meta.dimension || 0);
+  if (expected && vec.length !== expected) {
+    throw new Error(`embedder dimension mismatch — expected ${expected}, got ${vec.length}`);
+  }
+  return vec;
+}
+
+async function embedOpenAI(
+  text: string,
+  meta: Record<string, unknown>,
+): Promise<number[]> {
+  const model = String(meta.model || "text-embedding-3-small");
+  const keyEnv = String(meta.api_key_env || "OPENAI_API_KEY");
+  const apiKey = (process.env[keyEnv] || "").trim();
+  if (!apiKey) throw new Error(`OpenAI embedder: ${keyEnv} 미설정`);
+  const endpoint = String(meta.endpoint || "https://api.openai.com/v1/embeddings");
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, input: text }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`openai embed ${resp.status}: ${t.slice(0, 300)}`);
+  }
+  const data = (await resp.json()) as { data?: Array<{ embedding?: number[] }> };
+  const vec = data?.data?.[0]?.embedding;
+  if (!Array.isArray(vec)) throw new Error("openai embed: 응답에 embedding 없음");
+  return vec;
+}
+
+async function embedCustomHttp(
+  text: string,
+  meta: Record<string, unknown>,
+): Promise<number[]> {
+  const endpoint = String(meta.endpoint || "");
+  if (!endpoint) throw new Error("custom_http embedder: endpoint 미박힘");
+  const model = String(meta.model || "");
+  const keyEnv = String(meta.api_key_env || "CUSTOM_EMBEDDING_API_KEY");
+  const apiKey = (process.env[keyEnv] || "").trim();
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model, input: text }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`custom_http embed ${resp.status}: ${t.slice(0, 300)}`);
+  }
+  // OpenAI 호환 응답 우선, 그 외 단일 list 형태도 수용.
+  const data = (await resp.json()) as
+    | { data?: Array<{ embedding?: number[] }> }
+    | { embedding?: number[] }
+    | number[];
+  if (Array.isArray(data)) return data as number[];
+  const openaiLike = (data as { data?: Array<{ embedding?: number[] }> })?.data?.[0]?.embedding;
+  if (Array.isArray(openaiLike)) return openaiLike;
+  const bare = (data as { embedding?: number[] })?.embedding;
+  if (Array.isArray(bare)) return bare;
+  throw new Error("custom_http embed: 알 수 없는 응답 형태");
+}
+
+async function embedVoyage(
+  text: string,
+  meta: Record<string, unknown>,
+): Promise<number[]> {
+  const model = String(meta.model || "voyage-3");
+  const keyEnv = String(meta.api_key_env || "VOYAGE_API_KEY");
+  const apiKey = (process.env[keyEnv] || "").trim();
+  if (!apiKey) throw new Error(`Voyage embedder: ${keyEnv} 미설정`);
+  const endpoint = String(meta.endpoint || "https://api.voyageai.com/v1/embeddings");
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, input: text, input_type: "query" }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`voyage embed ${resp.status}: ${t.slice(0, 300)}`);
+  }
+  const data = (await resp.json()) as { data?: Array<{ embedding?: number[] }> };
+  const vec = data?.data?.[0]?.embedding;
+  if (!Array.isArray(vec)) throw new Error("voyage embed: 응답에 embedding 없음");
+  return vec;
+}
+
+async function qdrantSearch(
+  qdrantUrl: string,
+  qdrantApiKey: string,
+  collectionName: string,
+  vector: number[],
+  topK: number,
+  scoreThreshold: number,
+): Promise<Array<Record<string, unknown>>> {
+  const url = `${qdrantUrl.replace(/\/$/, "")}/collections/${encodeURIComponent(
+    collectionName,
+  )}/points/search`;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (qdrantApiKey) headers["api-key"] = qdrantApiKey;
+  const body: Record<string, unknown> = {
+    vector,
+    limit: topK,
+    with_payload: true,
+  };
+  if (scoreThreshold > 0) body.score_threshold = scoreThreshold;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`qdrant search ${resp.status}: ${t.slice(0, 300)}`);
+  }
+  const data = (await resp.json()) as {
+    result?: Array<{ id?: unknown; score?: number; payload?: Record<string, unknown> }>;
+  };
+  return (data.result || []).map((r) => ({
+    id: r.id,
+    score: r.score,
+    payload: r.payload || {},
+  }));
 }

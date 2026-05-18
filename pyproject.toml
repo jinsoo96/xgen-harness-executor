@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.12.2"
-description = "XGEN Harness v1.12.2 — s06_context 압축 임계 7 line operator precedence 버그 fix (None or 0 / 100.0 → _pct_threshold 헬퍼 통일). runtime_defaults 의 cascade/microcompact/autocompact floor 7개가 진짜 적용. s05_policy strategy picker 화이트리스트 제거 (빈 dropdown 함정). DEAD 3개 (enhance_prompt / rag_ingestion_mode / rag_tool_mode) 청소. cascade L3/L4/L5 임계 advanced UI 노출. ContextStage 4 cascade 메서드 + _autocompact_summarize + _apply_intent_routing 중복 정의 제거 (MRO 로 Mixin 본체 위임)."
+version = "1.13.0"
+description = "XGEN Harness v1.13.0 — RAG 외부 자족 dispatch. freeze_rag_tool 시그니처 확장: embedder_provider/model/dimension/endpoint/api_key_env + qdrant_url_env/qdrant_api_key_env (모두 optional, BC). engine-node v0.31.0 의 dispatchRag 가 QDRANT_URL + embedder 메타 둘 다 있으면 Qdrant + 임베더 API (openai/custom_http/voyage) 직접 호출 → cluster 0 의존. 누락 시 spec.metadata.rag_endpoint 폴백 (v0.29 동작 보존). _env_hints 도 rag 도구의 qdrant/embedder env 자동 안내."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

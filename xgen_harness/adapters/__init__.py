@@ -14,6 +14,12 @@ v1.10.0 — 외부 사용자가 자기 인프라에 wire 하는 어댑터:
 
 from .resource_registry import ResourceRegistry, ResourceInfo
 from .qdrant import QdrantDocService
+from .embedders import (
+    EmbedderFn,
+    build_embedder,
+    register_embedder,
+    discover_external_embedders,
+)
 
 # Provider 는 providers/ 에 이미 정의됨 — adapters 표면에서도 편의 re-export
 from ..providers import create_provider, register_provider
@@ -22,6 +28,10 @@ __all__ = [
     "ResourceRegistry",
     "ResourceInfo",
     "QdrantDocService",
+    "EmbedderFn",
+    "build_embedder",
+    "register_embedder",
+    "discover_external_embedders",
     "create_provider",
     "register_provider",
 ]
