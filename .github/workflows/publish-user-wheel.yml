@@ -1,0 +1,65 @@
+name: Publish user workflow wheel to PyPI
+
+# xgen-workflow cluster 의 /harness/pypi/compile endpoint 에서 trigger.
+# 흐름:
+#   1) cluster — wheel build → GitHub Release (draft) 생성 + asset 업로드
+#   2) cluster — repository_dispatch (event_type=publish-user-wheel) trigger
+#   3) Actions — release asset 다운로드 → twine upload → release 삭제 (cleanup)
+#
+# Secrets 필요:
+#   - PYPI_WHEELS_TOKEN: PyPI 토큰 (plateer-xgen-wf-* 패키지 publish 권한)
+#   - GITHUB_TOKEN: 자동 (release 다운로드/삭제)
+#
+# cluster 가 보낸 client_payload 구조:
+#   { release_tag: "wheel-<uuid>", package_name: "plateer-xgen-wf-foo", version: "0.1.0" }
+
+on:
+  repository_dispatch:
+    types: [publish-user-wheel]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # release asset 다운로드 + 삭제
+    steps:
+      - name: Echo trigger info
+        run: |
+          echo "release_tag: ${{ github.event.client_payload.release_tag }}"
+          echo "package: ${{ github.event.client_payload.package_name }}"
+          echo "version: ${{ github.event.client_payload.version }}"
+
+      - name: Download wheel asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ github.event.client_payload.release_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.whl' \
+            --dir dist/
+          ls -la dist/
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install twine
+        run: pip install twine
+
+      - name: Upload to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_WHEELS_TOKEN }}
+        run: twine upload --skip-existing dist/*.whl
+
+      - name: Cleanup release (always)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ github.event.client_payload.release_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes \
+            --cleanup-tag || true
