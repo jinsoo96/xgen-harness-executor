@@ -165,6 +165,8 @@ def compile_and_pack(
     include_mcp: bool = True,
     harness_version_pin: Optional[str] = None,
     workflow_description: str = "",
+    tool_definitions: Optional[list[dict]] = None,
+    metadata: Optional[dict] = None,
     out_dir: str | Path,
     format: str = "wheel",
 ) -> Path:
@@ -190,6 +192,8 @@ def compile_and_pack(
         include_mcp=include_mcp,
         harness_version_pin=harness_version_pin,
         workflow_description=workflow_description,
+        tool_definitions=tool_definitions,
+        metadata=metadata,
     )
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)

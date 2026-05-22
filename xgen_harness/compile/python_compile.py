@@ -50,6 +50,8 @@ def transpile_to_python(
     include_mcp: bool = True,
     harness_version_pin: Optional[str] = None,
     workflow_description: str = "",
+    tool_definitions: Optional[list[dict]] = None,
+    metadata: Optional[dict] = None,
 ) -> dict[str, str]:
     """HarnessConfig 스냅샷 → 패키지 파일 트리.
 
@@ -61,6 +63,9 @@ def transpile_to_python(
         harness_version_pin: xgen-harness deps 핀 (예: "==1.10.0").
             None 이면 현재 설치된 xgen-harness 버전을 exact pin 으로 박음 (1:1 미러).
         workflow_description: README 에 박힐 워크플로우 설명.
+        tool_definitions: freeze 된 도구 정의 list (npm spec.tool_definitions 와 동일).
+            산출물 ``_frozen_tools.py`` 에 박혀 FrozenToolSource 로 등록 → standalone 도구 실행.
+        metadata: spec.metadata (rag_endpoint/station_url 등). BYO 시 비어있음.
 
     Returns:
         `{relative_path: file_content}` dict — write_package 으로 디스크 박음.
@@ -102,6 +107,10 @@ def transpile_to_python(
     files[f"{module_name}/flow.py"] = _render_flow(
         cluster_defaults=cluster_defaults,
         module_name=module_name,
+    )
+    files[f"{module_name}/_frozen_tools.py"] = _render_frozen_tools(
+        tool_definitions=tool_definitions,
+        metadata=metadata,
     )
     files[f"{module_name}/__main__.py"] = _render_main(module_name=module_name)
     files[f"{module_name}/config.toml.example"] = _render_config_example(cluster_defaults)
@@ -252,7 +261,7 @@ def _render_readme(
         "    pipeline = build_pipeline()\n"
         "    state = PipelineState(user_input=\"안녕\")\n"
         "    result = await pipeline.run(state)\n"
-        "    print(result.final_text)\n\n"
+        "    print(result.final_output)\n\n"
         "asyncio.run(main())\n"
         "```\n"
         f"{mcp_section}"
@@ -386,6 +395,19 @@ def _render_flow(*, cluster_defaults: dict, module_name: str) -> str:
         '        provider_kwargs["base_url"] = base_url\n'
         '    provider = create_provider(provider_name, **provider_kwargs)\n\n'
         '    doc_service = _build_doc_service()\n\n'
+        '    # === Compiled frozen 도구 등록 — standalone dispatch (cluster 0 의존) ===\n'
+        '    # http/rag/mcp_session 을 외부 env 만으로 직접 실행. node-engine dispatch.ts 패리티.\n'
+        '    try:\n'
+        '        from ._frozen_tools import FROZEN_TOOL_DEFINITIONS, FROZEN_METADATA\n'
+        '        if FROZEN_TOOL_DEFINITIONS:\n'
+        '            from xgen_harness.tools import register_tool_source\n'
+        '            from xgen_harness.tools.frozen_source import FrozenToolSource\n'
+        '            register_tool_source(\n'
+        '                FrozenToolSource(FROZEN_TOOL_DEFINITIONS, metadata=FROZEN_METADATA)\n'
+        '            )\n'
+        '    except Exception as _e:  # noqa: BLE001\n'
+        '        import logging as _logging\n'
+        '        _logging.getLogger(__name__).warning("frozen tools 등록 실패: %s", _e)\n\n'
         '    pipe = Pipeline.from_config(\n'
         '        config,\n'
         '        doc_service=doc_service,\n'
@@ -475,6 +497,25 @@ def _render_flow(*, cluster_defaults: dict, module_name: str) -> str:
     )
 
 
+def _render_frozen_tools(
+    *, tool_definitions: Optional[list[dict]], metadata: Optional[dict],
+) -> str:
+    """_frozen_tools.py — freeze 된 도구 정의 + spec metadata 를 python literal 로 박음.
+
+    flow.build_pipeline 이 FrozenToolSource 로 등록 → standalone 도구 실행.
+    """
+    defs_literal = _dict_to_python_literal(_coerce_json_safe(tool_definitions or []), indent=4)
+    meta_literal = _dict_to_python_literal(_coerce_json_safe(metadata or {}), indent=4)
+    return (
+        '"""_frozen_tools.py — 컴파일 시점 freeze 된 도구 정의 + spec metadata.\n\n'
+        'flow.build_pipeline 이 FrozenToolSource 로 등록 → http/rag/mcp_session 을\n'
+        '외부 env 만으로 직접 실행 (cluster 0 의존). 재컴파일로 갱신 — 직접 편집 비권장.\n'
+        '"""\n\n'
+        f'FROZEN_TOOL_DEFINITIONS = {defs_literal}\n\n'
+        f'FROZEN_METADATA = {meta_literal}\n'
+    )
+
+
 def _render_main(*, module_name: str) -> str:
     return (
         '"""__main__ — CLI entry point.\n\n'
@@ -528,11 +569,11 @@ def _render_mcp(*, package_name: str, module_name: str) -> str:
         f'    mcp = FastMCP("{package_name}")\n\n'
         '    @mcp.tool\n'
         '    async def run_workflow(user_input: str) -> str:\n'
-        '        """xgen 워크플로우 실행. user_input 받아 final_text 반환."""\n'
+        '        """xgen 워크플로우 실행. user_input 받아 final_output 반환."""\n'
         '        pipeline = build_pipeline()\n'
         '        state = PipelineState(user_input=user_input)\n'
         '        result = await pipeline.run(state)\n'
-        '        return getattr(result, "final_text", "") or ""\n\n'
+        '        return getattr(result, "final_output", "") or ""\n\n'
         '    return mcp\n\n\n'
         'def main() -> None:\n'
         '    server = _build_server()\n'

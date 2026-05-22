@@ -95,6 +95,7 @@ from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
 from .tools.gallery import ToolPackageSpec, GalleryTool, load_tool_package, discover_gallery_tools
 from .tools import ToolSource, register_tool_source, get_tool_sources
+from .tools.frozen_source import FrozenToolSource
 # v1.0.9 — term expansion (search_tools query 확장 메커니즘)
 from .tools.term_expansion import (
     TermExpander,
@@ -322,6 +323,7 @@ __all__ = [
     "ToolSource",
     "register_tool_source",
     "get_tool_sources",
+    "FrozenToolSource",
     "register_stage",
     # 호스트 독립성 — xgen 노드 resolver 외부 주입 (v0.11.24)
     "register_xgen_node_resolver",

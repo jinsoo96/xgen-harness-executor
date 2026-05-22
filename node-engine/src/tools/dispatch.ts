@@ -24,6 +24,19 @@ export interface ToolDispatchResult {
   is_error: boolean;
 }
 
+/**
+ * 도구 호출에 필요한 env 미설정 안내 — 외부 실행자가 무엇을 wire 해야 하는지 명시.
+ * python FrozenToolSource._env_missing_msg 와 동일 문구 (패리티).
+ */
+function envMissingMsg(toolName: string, missing: string[], how = ""): string {
+  const names = missing.join(", ");
+  let msg = `도구 '${toolName}' 실행에 필요한 환경변수가 설정되지 않았습니다: ${names}.`;
+  if (how) msg += ` ${how}`;
+  msg +=
+    " 외부 실행 환경(또는 MCP 클라이언트 설정의 env 항목)에 이 값을 지정한 뒤 다시 시도하세요.";
+  return msg;
+}
+
 export async function dispatchToolCall(
   def: FrozenToolDefinition,
   args: Record<string, unknown>,
@@ -75,15 +88,19 @@ async function dispatchHttp(
   //   1) secrets_keys: ENV 이름 = 헤더 이름 동일 (단순 패턴)
   //   2) secret_header_map: { header_name: env_key } 명시 매핑 (Naver/Tavily 등 외부 API 의
   //      고유 헤더 이름 — X-Naver-Client-Id 등)
+  // 미설정 시크릿 env 를 모아두었다가 호출 실패 시 안내 (어떤 env 를 wire 해야 하는지).
+  const missingEnv: string[] = [];
   const secrets = (spec.secrets_keys as string[]) || [];
   for (const key of secrets) {
     const val = process.env[key];
     if (val) headers[key] = val;
+    else missingEnv.push(key);
   }
   const secretHeaderMap = (spec.secret_header_map as Record<string, string>) || {};
   for (const [headerName, envKey] of Object.entries(secretHeaderMap)) {
     const val = process.env[envKey];
     if (val) headers[headerName] = val;
+    else missingEnv.push(envKey);
   }
 
   // secret_body_map — body 의 ``__secret_<name>`` placeholder 를 ENV 값으로 치환.
@@ -93,6 +110,7 @@ async function dispatchHttp(
   for (const [placeholder, envKey] of Object.entries(secretBodyMap)) {
     const val = process.env[envKey];
     if (val) secretArgs[placeholder] = val;
+    else missingEnv.push(envKey);
   }
 
   // query / body 템플릿 치환. secretArgs 를 args 에 합쳐서 placeholder 매칭 가능.
@@ -160,7 +178,8 @@ async function dispatchHttp(
     const resp = await fetch(finalUrl, init);
     const text = await resp.text();
     if (!resp.ok) {
-      return { content: `${resp.status} ${text.slice(0, 500)}`, is_error: true };
+      const hint = missingEnv.length ? " — " + envMissingMsg(def.name, missingEnv) : "";
+      return { content: `${resp.status} ${text.slice(0, 500)}${hint}`, is_error: true };
     }
     return { content: text.slice(0, 50_000), is_error: false };
   } catch (e) {
@@ -229,6 +248,21 @@ async function dispatchMcpSession(
   // 불가일 수 있음). 박힌 경우 한정 — 박혀있지 않으면 곧장 shim 분기로.
   const spawnMeta = cspec.spawn as Record<string, unknown> | undefined;
   if (spawnMeta && typeof spawnMeta === "object" && spawnMeta.server_command) {
+    // env_keys 선검사 — 미설정이면 어떤 env 를 wire 해야 하는지 즉시 안내 (spawn 시도 전).
+    const spawnEnvKeys = Array.isArray(spawnMeta.env_keys)
+      ? (spawnMeta.env_keys as unknown[]).map(String)
+      : [];
+    const missingSpawnEnv = spawnEnvKeys.filter((k) => !process.env[k]);
+    if (missingSpawnEnv.length > 0) {
+      return {
+        content: envMissingMsg(
+          def.name,
+          missingSpawnEnv,
+          `MCP 서버 '${String(spawnMeta.server_command)}' 구동에 필요한 값입니다.`,
+        ),
+        is_error: true,
+      };
+    }
     try {
       return await dispatchMcpViaSpawn(def, args, sid, spawnMeta);
     } catch (e) {
@@ -253,10 +287,12 @@ async function dispatchMcpSession(
     (state.metadata.station_url as string) || process.env.MCP_STATION_BASE_URL || "";
   if (!stationUrl) {
     return {
-      content:
-        "MCP_STATION_BASE_URL 미설정 — spec.metadata.station_url 또는 env 필요, " +
-        "또는 freeze 시점에 spec.call_spec.spawn (server_command/server_args) 박혀야 함. " +
-        `tool='${def.name}' session_id='${sid}'`,
+      content: envMissingMsg(
+        def.name,
+        ["MCP_STATION_BASE_URL"],
+        "MCP 도구는 (a) freeze 시 박힌 stdio spawn 메타(server_command) 또는 " +
+          "(b) MCP Station 프록시 주소 MCP_STATION_BASE_URL 가 필요합니다.",
+      ),
       is_error: true,
     };
   }
@@ -462,7 +498,7 @@ async function dispatchRag(
       // 임베더 키 누락 / Qdrant 연결 오류 시 우아한 degradation.
       // 명시 디버깅을 위해 에러 메시지에 직접 분기 실패 사실 박음.
       const directErr = (e as Error).message;
-      const fallback = await dispatchRagViaShim(spec, query, state);
+      const fallback = await dispatchRagViaShim(def.name, spec, query, state);
       if (!fallback.is_error) return fallback;
       return {
         content: `rag direct failed (${directErr}); shim fallback failed (${fallback.content})`,
@@ -472,10 +508,11 @@ async function dispatchRag(
   }
 
   // ── 2) Cluster shim 폴백 (v0.29 기존 동작) ───────────────────────────
-  return dispatchRagViaShim(spec, query, state);
+  return dispatchRagViaShim(def.name, spec, query, state);
 }
 
 async function dispatchRagViaShim(
+  toolName: string,
   spec: Record<string, unknown>,
   query: string,
   state: PipelineState,
@@ -484,7 +521,18 @@ async function dispatchRagViaShim(
     (state.metadata.rag_endpoint as string) ||
     process.env.HARNESS_RAG_ENDPOINT ||
     "";
-  if (!endpoint) return { content: "RAG endpoint 미설정 + 외부 자족 메타 미구비", is_error: true };
+  if (!endpoint) {
+    const qdrantUrlEnv = String(spec.qdrant_url_env || "QDRANT_URL");
+    return {
+      content: envMissingMsg(
+        toolName,
+        [qdrantUrlEnv, "HARNESS_RAG_ENDPOINT"],
+        `RAG 검색은 (a) 외부 Qdrant 직접 호출용 ${qdrantUrlEnv}(+임베더 키) 또는 ` +
+          "(b) RAG 검색 endpoint HARNESS_RAG_ENDPOINT 중 하나가 필요합니다.",
+      ),
+      is_error: true,
+    };
+  }
   const body = {
     collection_name: spec.collection_name,
     query,
