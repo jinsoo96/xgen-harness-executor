@@ -16,6 +16,9 @@ S04 Tool Index — Progressive 도구 디스커버리 (v0.25.0 재설계)
 - 단일 stage_param ``tool_source_filters: dict[str, dict]`` (source_id → list_tools filter).
   - 각 ToolSource 는 자기 ``filter_schema`` 를 선언하고, 프론트가 sub-UI 로 렌더한다.
   - 예: MCP 세션 소스는 ``session_ids`` 필터, xgen 노드 소스는 ``tags`` 필터.
+- 단일 stage_param ``tool_description_overrides: dict[str, str]`` (tool_name → 설명).
+  - 사용자가 UI 에서 도구 설명을 직접 고치면 LLM 이 그 텍스트로 도구를 고른다.
+  - 빈 값/미설정 = 소스 원본 description. eager/deferred/schema 캐시 일괄 적용.
 - MCP/Custom/xgenNode 특수 분기 전부 이식측 ToolSource 구현으로 이관 (엔진 무지식).
 
 ## Progressive Disclosure (3 레벨)
@@ -102,6 +105,15 @@ class ToolIndexStage(Stage):
         tool_source_filters: dict[str, dict] = (
             self.get_param("tool_source_filters", state, {}) or {}
         )
+        # 도구별 description 오버라이드 — 사용자가 s04 UI 에서 도구 설명을 직접 고침.
+        # { tool_name: "설명" }. LLM 이 도구를 고를 때 읽는 텍스트를 사람이 손본다.
+        # 빈 값/미설정이면 소스가 준 원본 description 을 그대로 쓴다. eager / deferred /
+        # schema 캐시 전부 아래 td 빌드 한 곳에서 파생되므로 여기 한 번만 먹이면 일괄 적용.
+        tool_description_overrides: dict[str, str] = (
+            self.get_param("tool_description_overrides", state, {}) or {}
+        )
+        if not isinstance(tool_description_overrides, dict):
+            tool_description_overrides = {}
         rag_collections: list[str] = self.get_param("rag_collections", state, []) or []
         rag_top_k: int = self.get_param("rag_top_k", state, None) or 0
 
@@ -164,9 +176,14 @@ class ToolIndexStage(Stage):
                 nm = t.get("name")
                 if not nm or nm in existing_names:
                     continue
+                _override_desc = tool_description_overrides.get(nm)
+                _has_override = isinstance(_override_desc, str) and _override_desc.strip() != ""
                 td = {
                     "name": nm,
-                    "description": t.get("description", "") or "",
+                    "description": (
+                        _override_desc.strip() if _has_override
+                        else (t.get("description", "") or "")
+                    ),
                     "input_schema": t.get("input_schema") or {"type": "object"},
                 }
                 # annotations 는 payload 분리 (v0.24.4 — Anthropic 400 방지)
