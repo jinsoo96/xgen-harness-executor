@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
 version = "1.16.1"
-description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 standalone 실행. v1.16.1: 컴파일 산출물의 selected_tools 를 frozen 도구 이름 flat 리스트로 baking — s04 strict 필터가 'frozen' 소스를 못 찾아 도구가 LLM 에 노출 안 되던 회귀 수정(워크플로우-as-도구 실행 검증). v1.16.0: workflow-as-tool 을 env-only nested subpipeline(call_kind=subpipeline)으로 freeze — 워크플로우를 도구로 마는 경우 그 sub-config 를 통째로 구워 in-process 재실행(cluster 0/http 0/stdio 0). state.extra_tool_sources 로 nested 도구 격리. v1.15.0: s04 tool_description_overrides — 사용자가 도구 설명을 UI 에서 직접 고치면 LLM 이 그 텍스트로 도구를 고름. v1.14: Python wheel 도 FrozenToolSource 로 http/rag/mcp 도구 직접 dispatch."
+description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. v1.16: workflow-as-tool 을 nested subpipeline(call_kind=subpipeline)으로 freeze + 산출물 selected_tools flat baking 으로 frozen 도구 eager 노출."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
