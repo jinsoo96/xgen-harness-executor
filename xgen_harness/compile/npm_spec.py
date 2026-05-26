@@ -50,7 +50,7 @@ class FrozenToolDefinition:
         name: LLM 에 노출할 도구 이름 (sanitized).
         description: 도구 설명.
         input_schema: JSON Schema (LLM tool definition).
-        call_kind: "http" | "mcp_session" | "rag" | "subpipeline" | "noop"
+        call_kind: "http" | "mcp_session" | "rag" | "subpipeline" | "canvas" | "noop"
         call_spec: kind 별 호출 스펙. 예) http={url, method, headers, body_template}
                    mcp_session={session_id} (mcp-station proxy)
                    rag={collection_name, top_k, score_threshold}
@@ -423,6 +423,46 @@ def freeze_subpipeline_tool(
         call_spec={
             "config": dict(config or {}),
             "tool_definitions": td_list,
+            "metadata": dict(metadata or {}),
+        },
+    )
+
+
+def freeze_canvas_tool(
+    *,
+    name: str,
+    description: str,
+    graph: dict[str, Any],
+    metadata: Optional[dict[str, Any]] = None,
+    input_schema: Optional[dict[str, Any]] = None,
+) -> FrozenToolDefinition:
+    """agentflow 캔버스를 그래프 도구로 freeze — env-only (call_kind="canvas").
+
+    "캔버스 워크플로우를 도구로 마는" 케이스 중 **복합 그래프**(orchestration/배선 포함)용.
+    graph = {"nodes":[{"id","kind","config",...}], "edges":[{source,target}]}. runner
+    (python FrozenToolSource / node-engine)가 다중포트 DAG 로 in-process 실행. 실행 노드는
+    "call"(FrozenToolDefinition dispatch — agent=subpipeline/rag/http 재사용) +
+    transform/foreach/router/passthrough. agent 중심 단순 캔버스는 freeze_subpipeline_tool
+    이 더 단순(둘 다 env-only).
+
+    Args:
+        graph: portable canvas spec (이식 canvas_to_canvas_spec 산출물).
+        metadata: spec.metadata (rag_endpoint/station_url 등 — BYO 시 비어있음).
+        input_schema: 미지정 시 {"input": string}.
+    """
+    return FrozenToolDefinition(
+        name=name,
+        description=description,
+        input_schema=input_schema or {
+            "type": "object",
+            "properties": {
+                "input": {"type": "string", "description": "사용자 입력 (이 캔버스 워크플로우에 전달)."},
+            },
+            "required": ["input"],
+        },
+        call_kind="canvas",
+        call_spec={
+            "graph": dict(graph or {}),
             "metadata": dict(metadata or {}),
         },
     )

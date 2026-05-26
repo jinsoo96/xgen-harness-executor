@@ -57,6 +57,8 @@ export async function dispatchToolCall(
       return dispatchRag(def, args, state);
     case "subpipeline":
       return dispatchSubpipeline(def, args);
+    case "canvas":
+      return dispatchCanvas(def, args, state);
     case "builtin:search_tools":
       return dispatchBuiltinSearchTools(args, state.tool_definitions || []);
     case "builtin:discover_tools":
@@ -117,6 +119,216 @@ async function dispatchSubpipeline(
     return { content: result.output || "", is_error: false };
   } catch (e) {
     return { content: `${def.name} subpipeline 실행 오류: ${(e as Error).message}`, is_error: true };
+  } finally {
+    _subpipelineDepth--;
+  }
+}
+
+/**
+ * 캔버스 그래프 인터프리터 — call_spec.graph(agentflow nodes/edges)를 다중포트 DAG 로
+ * in-process 실행 (env-only). Python FrozenToolSource._run_canvas_graph 패리티.
+ * 실행노드 kind: call(dispatchToolCall 재사용) / transform / foreach / router / passthrough.
+ */
+function cstringify(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v === null || v === undefined) return "";
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function canvasOutPorts(node: Record<string, unknown>): string[] {
+  const op = node.out_ports;
+  if (Array.isArray(op) && op.length) return op.map(String);
+  return ["result", "output", "*"];
+}
+
+function collectCanvasInput(
+  nid: string,
+  incoming: Record<string, Array<[string, string, string]>>,
+  outputs: Record<string, Record<string, unknown>>,
+  userInput: string,
+): unknown {
+  const inc = incoming[nid] || [];
+  if (!inc.length) return userInput;
+  const vals: Record<string, unknown> = {};
+  for (const [dstPort, srcNid, srcPort] of inc) {
+    const so = outputs[srcNid] || {};
+    const v = srcPort in so ? so[srcPort] : so["*"];
+    if (v !== undefined && v !== null) vals[dstPort] = v;
+  }
+  const keys = Object.keys(vals);
+  if (!keys.length) return userInput;
+  if (keys.length === 1) return vals[keys[0]];
+  return vals;
+}
+
+function canvasTransform(cfg: Record<string, unknown>, inval: unknown): unknown {
+  const op = String(cfg.op || "passthrough");
+  if (op === "template") {
+    const t = String(cfg.template || "");
+    if (!t) return inval;
+    const ctx: Record<string, unknown> =
+      inval && typeof inval === "object" && !Array.isArray(inval)
+        ? (inval as Record<string, unknown>)
+        : { input: cstringify(inval) };
+    let out = t;
+    for (const [k, v] of Object.entries(ctx)) out = out.split("{{" + k + "}}").join(cstringify(v));
+    return out;
+  }
+  // jmespath 등은 node 기본 의존성 없음 — passthrough (정직).
+  return inval;
+}
+
+async function canvasForeach(
+  cfg: Record<string, unknown>,
+  inval: unknown,
+  state: PipelineState,
+): Promise<unknown> {
+  const body = cfg.body as FrozenToolDefinition | undefined;
+  let items: unknown = inval;
+  if (inval && typeof inval === "object" && !Array.isArray(inval)) {
+    const obj = inval as Record<string, unknown>;
+    items = obj[String(cfg.items_port || "items")] ?? obj.items ?? [];
+  }
+  if (typeof items === "string") {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      items = [items];
+    }
+  }
+  if (!Array.isArray(items)) items = [items];
+  if (!body || !body.name) return items;
+  const results: string[] = [];
+  for (const it of items as unknown[]) {
+    const a =
+      it && typeof it === "object"
+        ? { ...(it as Record<string, unknown>), input: cstringify(it) }
+        : { input: cstringify(it), query: cstringify(it) };
+    const r = await dispatchToolCall(body, a, state);
+    results.push(r?.content ?? "");
+  }
+  return results;
+}
+
+async function runCanvasNode(
+  node: Record<string, unknown>,
+  inval: unknown,
+  state: PipelineState,
+): Promise<unknown> {
+  const kind = String(node.kind || "passthrough");
+  const cfg = (node.config as Record<string, unknown>) || {};
+  if (kind === "passthrough" || kind === "input" || kind === "output") return inval;
+  if (kind === "call") {
+    const tool = cfg.tool as FrozenToolDefinition | undefined;
+    if (!tool || !tool.name) return cstringify(inval);
+    let a: Record<string, unknown>;
+    if (inval && typeof inval === "object" && !Array.isArray(inval)) {
+      a = { ...(inval as Record<string, unknown>) };
+      if (!("input" in a)) a.input = cstringify(inval);
+    } else {
+      a = { input: cstringify(inval), query: cstringify(inval) };
+    }
+    const res = await dispatchToolCall(tool, a, state);
+    return res?.content ?? "";
+  }
+  if (kind === "transform") return canvasTransform(cfg, inval);
+  if (kind === "foreach") return canvasForeach(cfg, inval, state);
+  if (kind === "router") return inval; // v1: 입력 통과(ok 경로)
+  return inval; // unsupported passthrough
+}
+
+async function runCanvasGraph(
+  graph: Record<string, unknown>,
+  _metadata: Record<string, unknown>,
+  userInput: string,
+  state: PipelineState,
+): Promise<string> {
+  const nodes: Record<string, Record<string, unknown>> = {};
+  for (const n of (graph.nodes as Array<Record<string, unknown>>) || []) {
+    if (n.id) nodes[String(n.id)] = n;
+  }
+  const edges = (graph.edges as Array<Record<string, unknown>>) || [];
+  const incoming: Record<string, Array<[string, string, string]>> = {};
+  const upstream: Record<string, Set<string>> = {};
+  const hasOut = new Set<string>();
+  for (const e of edges) {
+    const s = (e.source as Record<string, unknown>) || {};
+    const t = (e.target as Record<string, unknown>) || {};
+    const sn = String(s.nodeId || ""), sp = String(s.portId || "");
+    const tn = String(t.nodeId || ""), tp = String(t.portId || "");
+    if (!sn || !tn || !(sn in nodes) || !(tn in nodes)) continue;
+    (incoming[tn] = incoming[tn] || []).push([tp, sn, sp]);
+    (upstream[tn] = upstream[tn] || new Set()).add(sn);
+    hasOut.add(sn);
+  }
+  const outputs: Record<string, Record<string, unknown>> = {};
+  const done = new Set<string>();
+  let lastValue: unknown = userInput;
+  const total = Object.keys(nodes).length;
+  let guard = 0;
+  const limit = total * 4 + 10;
+  while (done.size < total && guard < limit) {
+    guard++;
+    let progressed = false;
+    for (const [nid, node] of Object.entries(nodes)) {
+      if (done.has(nid)) continue;
+      const ups = upstream[nid] || new Set<string>();
+      let ready = true;
+      for (const u of ups) if (!done.has(u)) { ready = false; break; }
+      if (!ready) continue;
+      const inval = collectCanvasInput(nid, incoming, outputs, userInput);
+      let val: unknown;
+      try {
+        val = await runCanvasNode(node, inval, state);
+      } catch {
+        val = inval;
+      }
+      const pm: Record<string, unknown> = { "*": val };
+      for (const op of canvasOutPorts(node)) pm[op] = val;
+      outputs[nid] = pm;
+      lastValue = val;
+      done.add(nid);
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  let sinkVal: unknown = null;
+  for (const nid of Object.keys(nodes)) {
+    if (nid in outputs && !hasOut.has(nid)) sinkVal = outputs[nid]["*"];
+  }
+  const out = sinkVal !== null ? sinkVal : lastValue;
+  return typeof out === "string" ? out : cstringify(out);
+}
+
+async function dispatchCanvas(
+  def: FrozenToolDefinition,
+  args: Record<string, unknown>,
+  state: PipelineState,
+): Promise<ToolDispatchResult> {
+  const spec = (def.call_spec || {}) as Record<string, unknown>;
+  const graph = spec.graph as Record<string, unknown> | undefined;
+  if (!graph || typeof graph !== "object" || !Array.isArray(graph.nodes) || !graph.nodes.length) {
+    return { content: `canvas '${def.name}': call_spec.graph 누락/비어있음`, is_error: true };
+  }
+  const meta = (spec.metadata as Record<string, unknown>) || {};
+  const userInput = String((args && (args.input ?? args.query ?? args.user_input)) ?? "");
+
+  if (_subpipelineDepth >= MAX_SUBPIPELINE_DEPTH) {
+    return {
+      content: `canvas 최대 재귀 깊이(${MAX_SUBPIPELINE_DEPTH}) 초과 — '${def.name}' 중단`,
+      is_error: true,
+    };
+  }
+  _subpipelineDepth++;
+  try {
+    const out = await runCanvasGraph(graph, meta, userInput, state);
+    return { content: out, is_error: false };
+  } catch (e) {
+    return { content: `${def.name} canvas 실행 오류: ${(e as Error).message}`, is_error: true };
   } finally {
     _subpipelineDepth--;
   }

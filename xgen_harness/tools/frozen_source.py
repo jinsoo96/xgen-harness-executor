@@ -14,6 +14,10 @@ call_kind 매트릭스 (dispatch.ts 와 동일):
   - subpipeline : call_spec.config(중첩 harness_config) + tool_definitions(B 의 leaf
                   도구) 로 nested Pipeline 을 in-process 실행 (env-only, cluster 0).
                   워크플로우를 도구로 마는 경우 — 재귀 깊이 가드 적용.
+  - canvas      : call_spec.graph(agentflow 캔버스 nodes/edges) 를 다중포트 DAG 로
+                  in-process 실행 (env-only). 실행노드는 "call"(FrozenToolDefinition
+                  dispatch — agent=subpipeline/rag/http 재사용) + transform/foreach/
+                  router/passthrough. 워크플로우를 도구로 마는 경우의 그래프 실행기.
   - noop        : "(noop)".
 
 도구 호출 시점에 필요한 env 가 미설정이면 ``content`` 에 어떤 env 를 설정해야 하는지
@@ -141,6 +145,8 @@ class FrozenToolSource:
                 return await self._dispatch_mcp(td, args)
             if kind == "subpipeline":
                 return await self._dispatch_subpipeline(td, args)
+            if kind == "canvas":
+                return await self._dispatch_canvas(td, args)
             return {"content": "(noop)", "is_error": False}
         except Exception as e:  # 방어 — 어떤 dispatch 도 파이프라인을 죽이지 않음
             logger.warning("[frozen] tool=%s dispatch 예외: %s", name, e)
@@ -463,6 +469,223 @@ class FrozenToolSource:
             return {"content": f"{name} subpipeline 실행 오류: {e}", "is_error": True}
         finally:
             _SUBPIPELINE_DEPTH.reset(token)
+
+    # ── canvas (agentflow 그래프 인터프리터) ──────────────────────────
+    async def _dispatch_canvas(self, td: dict, args: dict) -> dict:
+        """agentflow 캔버스(nodes/edges)를 다중포트 DAG 로 in-process 실행 (env-only)."""
+        spec = td.get("call_spec") or {}
+        name = td.get("name", "")
+        graph = spec.get("graph")
+        if not isinstance(graph, dict) or not graph.get("nodes"):
+            return {"content": f"canvas '{name}': call_spec.graph 누락/비어있음", "is_error": True}
+        meta = spec.get("metadata") or self._metadata or {}
+        user_input = ""
+        if isinstance(args, dict):
+            user_input = args.get("input") or args.get("query") or args.get("user_input") or ""
+        if not isinstance(user_input, str):
+            user_input = str(user_input)
+
+        depth = _SUBPIPELINE_DEPTH.get()
+        if depth >= _MAX_SUBPIPELINE_DEPTH:
+            return {"content": f"canvas 최대 재귀 깊이({_MAX_SUBPIPELINE_DEPTH}) 초과 — '{name}' 중단", "is_error": True}
+        token = _SUBPIPELINE_DEPTH.set(depth + 1)
+        try:
+            out = await _run_canvas_graph(graph, meta, user_input)
+            return {"content": out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str), "is_error": False}
+        except Exception as e:
+            logger.warning("[frozen] canvas '%s' 실행 실패: %s", name, e)
+            return {"content": f"{name} canvas 실행 오류: {e}", "is_error": True}
+        finally:
+            _SUBPIPELINE_DEPTH.reset(token)
+
+
+# ─── canvas 그래프 인터프리터 (다중포트 DAG) ────────────────────────────
+# node = {id, kind, config, node_type?, out_ports?}. kind:
+#   call        : config.tool = FrozenToolDefinition → FrozenToolSource 로 dispatch
+#                 (agent=subpipeline / rag / http / mcp / 중첩 canvas 전부 재사용).
+#   transform   : config.op = jmespath|template|passthrough → 순수 데이터 변환.
+#   foreach     : config.items_port(리스트 입력) + config.body(FrozenToolDefinition) 반복.
+#   router      : config.criteria — 입력을 ok/fail 포트로 분기(v1: best-effort).
+#   passthrough : input/output/start/end — 입력 그대로 통과.
+#   unsupported : 미지원 노드 — 입력 통과 + 경고(그래프 흐름 유지, 정직).
+
+def _stringify(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    if v is None:
+        return ""
+    try:
+        return json.dumps(v, ensure_ascii=False, default=str)
+    except Exception:
+        return str(v)
+
+
+def _canvas_out_ports(node: dict) -> list:
+    op = node.get("out_ports")
+    if isinstance(op, list) and op:
+        return [str(x) for x in op]
+    return ["result", "output", "*"]
+
+
+def _collect_canvas_input(nid: str, incoming: dict, outputs: dict, user_input: str) -> Any:
+    """노드 입력 — 들어오는 edge 들의 source 출력값 수집. 없으면 entry=user_input."""
+    inc = incoming.get(nid) or []
+    if not inc:
+        return user_input
+    vals: dict = {}
+    for (dst_port, src_nid, src_port) in inc:
+        src_out = outputs.get(src_nid) or {}
+        v = src_out.get(src_port, src_out.get("*"))
+        if v is not None:
+            vals[dst_port] = v
+    if not vals:
+        return user_input
+    if len(vals) == 1:
+        return next(iter(vals.values()))
+    # 다중 입력 — 포트별 dict (transform 은 dict 로, call 은 합쳐서 사용)
+    return vals
+
+
+async def _run_canvas_node(node: dict, inval: Any, metadata: dict) -> Any:
+    kind = str(node.get("kind") or "passthrough")
+    cfg = node.get("config") or {}
+    if kind in ("passthrough", "input", "output"):
+        return inval
+    if kind == "call":
+        tool = cfg.get("tool")
+        if not isinstance(tool, dict) or not tool.get("name"):
+            return _stringify(inval)
+        # 입력을 도구 인자로 — dict 면 그대로 + input 키, 아니면 input 문자열.
+        if isinstance(inval, dict):
+            args = dict(inval)
+            args.setdefault("input", _stringify(inval))
+        else:
+            args = {"input": _stringify(inval), "query": _stringify(inval)}
+        src = FrozenToolSource([tool], metadata=metadata)
+        res = await src.call_tool(str(tool["name"]), args)
+        return (res or {}).get("content", "") if isinstance(res, dict) else _stringify(res)
+    if kind == "transform":
+        return _canvas_transform(cfg, inval)
+    if kind == "foreach":
+        return await _canvas_foreach(cfg, inval, metadata)
+    if kind == "router":
+        # v1: 조건 충실평가 대신 입력 통과(ok 경로). criteria 평가는 후속.
+        return inval
+    # unsupported — 흐름 유지 위해 통과(정직: 변환 안 함)
+    logger.info("[frozen/canvas] 미지원 노드 kind=%s type=%s — passthrough", kind, node.get("node_type"))
+    return inval
+
+
+def _canvas_transform(cfg: dict, inval: Any) -> Any:
+    op = str(cfg.get("op") or "passthrough")
+    if op == "jmespath":
+        expr = cfg.get("expr") or ""
+        try:
+            import jmespath  # optional
+            data = inval if not isinstance(inval, str) else (json.loads(inval) if inval.strip().startswith(("{", "[")) else inval)
+            return jmespath.search(expr, data)
+        except Exception as e:
+            logger.info("[frozen/canvas] jmespath 변환 skip (%s) — passthrough", e)
+            return inval
+    if op == "template":
+        tmpl = str(cfg.get("template") or "")
+        if not tmpl:
+            return inval
+        ctx = inval if isinstance(inval, dict) else {"input": _stringify(inval)}
+        out = tmpl
+        for k, v in ctx.items():
+            out = out.replace("{{" + str(k) + "}}", _stringify(v))
+        return out
+    return inval
+
+
+async def _canvas_foreach(cfg: dict, inval: Any, metadata: dict) -> Any:
+    """items 리스트를 순회하며 body(FrozenToolDefinition)를 각 항목에 실행 → 결과 리스트."""
+    body = cfg.get("body")
+    items = inval
+    if isinstance(inval, dict):
+        items = inval.get(cfg.get("items_port") or "items") or inval.get("items") or []
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:
+            items = [items]
+    if not isinstance(items, list):
+        items = [items]
+    if not isinstance(body, dict) or not body.get("name"):
+        return items  # body 없으면 항목 그대로
+    src = FrozenToolSource([body], metadata=metadata)
+    results = []
+    for it in items:
+        args = {"input": _stringify(it), "query": _stringify(it)}
+        if isinstance(it, dict):
+            args = {**it, "input": _stringify(it)}
+        res = await src.call_tool(str(body["name"]), args)
+        results.append((res or {}).get("content", "") if isinstance(res, dict) else _stringify(res))
+    return results
+
+
+async def _run_canvas_graph(graph: dict, metadata: dict, user_input: str) -> str:
+    """다중포트 DAG 위상 실행 → sink(출력없는 노드) 또는 마지막 실행값 반환."""
+    nodes: dict = {}
+    for n in (graph.get("nodes") or []):
+        nid = n.get("id")
+        if nid:
+            nodes[str(nid)] = n
+    if not nodes:
+        return ""
+    edges = graph.get("edges") or []
+    incoming: dict = {}     # tn -> [(dst_port, src_nid, src_port)]
+    upstream: dict = {}     # tn -> set(src_nid)
+    has_out: set = set()    # src_nid 가 outgoing edge 보유
+    for e in edges:
+        s = e.get("source") or {}
+        t = e.get("target") or {}
+        sn, sp = str(s.get("nodeId") or ""), str(s.get("portId") or "")
+        tn, tp = str(t.get("nodeId") or ""), str(t.get("portId") or "")
+        if not sn or not tn or sn not in nodes or tn not in nodes:
+            continue
+        incoming.setdefault(tn, []).append((tp, sn, sp))
+        upstream.setdefault(tn, set()).add(sn)
+        has_out.add(sn)
+
+    outputs: dict = {}
+    done: set = set()
+    last_value: Any = user_input
+    guard = 0
+    limit = len(nodes) * 4 + 10
+    while len(done) < len(nodes) and guard < limit:
+        guard += 1
+        progressed = False
+        for nid, node in nodes.items():
+            if nid in done:
+                continue
+            ups = upstream.get(nid, set())
+            if not all(u in done for u in ups):
+                continue
+            inval = _collect_canvas_input(nid, incoming, outputs, user_input)
+            try:
+                val = await _run_canvas_node(node, inval, metadata)
+            except Exception as e:
+                logger.warning("[frozen/canvas] 노드 %s 실행 오류: %s", nid, e)
+                val = inval
+            port_map = {"*": val}
+            for op in _canvas_out_ports(node):
+                port_map[op] = val
+            outputs[nid] = port_map
+            last_value = val
+            done.add(nid)
+            progressed = True
+        if not progressed:
+            break  # 사이클/교착 — 남은 노드 skip
+
+    # 최종 출력 — sink(outgoing 없는 노드) 중 마지막 실행값, 없으면 last_value
+    sink_val = None
+    for nid in nodes:
+        if nid in outputs and nid not in has_out:
+            sink_val = outputs[nid].get("*")
+    out = sink_val if sink_val is not None else last_value
+    return out if isinstance(out, str) else _stringify(out)
 
 
 async def _run_nested_pipeline(
