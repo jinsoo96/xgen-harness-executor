@@ -50,10 +50,11 @@ class FrozenToolDefinition:
         name: LLM 에 노출할 도구 이름 (sanitized).
         description: 도구 설명.
         input_schema: JSON Schema (LLM tool definition).
-        call_kind: "http" | "mcp_session" | "rag" | "noop"
+        call_kind: "http" | "mcp_session" | "rag" | "subpipeline" | "noop"
         call_spec: kind 별 호출 스펙. 예) http={url, method, headers, body_template}
                    mcp_session={session_id} (mcp-station proxy)
                    rag={collection_name, top_k, score_threshold}
+                   subpipeline={config, tool_definitions, metadata} (중첩 워크플로우)
         annotations: MCP annotations (read_only_hint 등).
         tags: 카테고리 태그.
     """
@@ -354,4 +355,55 @@ def freeze_rag_tool(
         },
         call_kind="rag",
         call_spec=call_spec,
+    )
+
+
+def freeze_subpipeline_tool(
+    *,
+    name: str,
+    description: str,
+    config: dict[str, Any],
+    tool_definitions: Optional[list] = None,
+    metadata: Optional[dict[str, Any]] = None,
+    input_schema: Optional[dict[str, Any]] = None,
+) -> FrozenToolDefinition:
+    """중첩 워크플로우(다른 하네스 워크플로우 B)를 도구로 freeze — env-only.
+
+    "워크플로우를 도구로 마는" 케이스의 generic 헬퍼. B 의 harness_config 와
+    B 의 leaf 도구(http/rag/mcp = 자족 가능)를 재귀 freeze 한 결과를 call_spec 에
+    통째로 박는다. runner(python FrozenToolSource / node-engine)는 호출 시 이 config
+    로 nested Pipeline 을 in-process 빌드·실행 — cluster 0, http 콜백 0, stdio 0.
+
+    Args:
+        config: B 의 harness_config dict (CLUSTER_DEFAULTS 와 동형).
+        tool_definitions: B 의 leaf 도구를 freeze 한 list (FrozenToolDefinition 또는 dict).
+                          B 가 또 다른 워크플로우를 도구로 쓰면 그 항목은 다시 subpipeline.
+        metadata: B 실행용 spec.metadata (rag_endpoint/station_url 등 — BYO 시 비어있음).
+        input_schema: 미지정 시 {"input": string} (harness-agents 규약).
+    """
+    td_list: list[dict[str, Any]] = []
+    for t in tool_definitions or []:
+        if isinstance(t, FrozenToolDefinition):
+            td_list.append(asdict(t))
+        elif isinstance(t, dict):
+            td_list.append(_normalize_tool_def(t))
+    return FrozenToolDefinition(
+        name=name,
+        description=description,
+        input_schema=input_schema or {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "description": "사용자 입력 (이 워크플로우에 전달할 질의/지시).",
+                },
+            },
+            "required": ["input"],
+        },
+        call_kind="subpipeline",
+        call_spec={
+            "config": dict(config or {}),
+            "tool_definitions": td_list,
+            "metadata": dict(metadata or {}),
+        },
     )

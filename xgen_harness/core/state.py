@@ -109,6 +109,13 @@ class PipelineState:
     messages: list[dict[str, Any]] = field(default_factory=list)
     system_prompt: str = ""
 
+    # --- 상태 범위 ToolSource (v1.16 — nested 격리) ---
+    # 전역 register_tool_source() 와 별개로 "이 실행에만" 보이는 ToolSource.
+    # s04(카탈로그)/s07(dispatch) 가 전역 + 이 리스트를 합쳐서 본다. nested
+    # subpipeline 이 자기 frozen 도구를 전역 오염 없이 주입하는 데 사용 —
+    # 부모/자식 파이프라인의 도구 카탈로그가 source_id 충돌 없이 격리된다.
+    extra_tool_sources: list[Any] = field(default_factory=list)
+
     # --- 도메인 그룹 (v0.11.22 도입) ---
     tool: ToolGroup = field(default_factory=ToolGroup)
     validation: ValidationGroup = field(default_factory=ValidationGroup)

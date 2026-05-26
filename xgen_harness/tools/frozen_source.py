@@ -11,6 +11,9 @@ call_kind 매트릭스 (dispatch.ts 와 동일):
                   직접 호출. 하나라도 없으면 metadata.rag_endpoint / HARNESS_RAG_ENDPOINT shim 폴백.
   - mcp_session : call_spec.spawn(server_command) 있으면 stdio 직접 spawn(mcp SDK).
                   없으면 station_url / MCP_STATION_BASE_URL 프록시 폴백.
+  - subpipeline : call_spec.config(중첩 harness_config) + tool_definitions(B 의 leaf
+                  도구) 로 nested Pipeline 을 in-process 실행 (env-only, cluster 0).
+                  워크플로우를 도구로 마는 경우 — 재귀 깊이 가드 적용.
   - noop        : "(noop)".
 
 도구 호출 시점에 필요한 env 가 미설정이면 ``content`` 에 어떤 env 를 설정해야 하는지
@@ -22,6 +25,7 @@ call_kind 매트릭스 (dispatch.ts 와 동일):
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -34,6 +38,13 @@ logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _MAX_CONTENT = 50_000
+
+# nested subpipeline 재귀 깊이 가드 — 워크플로우 A 가 도구로 B 를, B 가 다시 A 를
+# 부르는 순환/폭주를 막는다. ContextVar 라 async 호출 트리마다 정확히 누적·복원.
+_SUBPIPELINE_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_xgen_subpipeline_depth", default=0,
+)
+_MAX_SUBPIPELINE_DEPTH = 4
 
 
 def _env_missing_msg(tool_name: str, missing: list[str], how: str = "") -> str:
@@ -128,6 +139,8 @@ class FrozenToolSource:
                 return await self._dispatch_rag(td, args)
             if kind == "mcp_session":
                 return await self._dispatch_mcp(td, args)
+            if kind == "subpipeline":
+                return await self._dispatch_subpipeline(td, args)
             return {"content": "(noop)", "is_error": False}
         except Exception as e:  # 방어 — 어떤 dispatch 도 파이프라인을 죽이지 않음
             logger.warning("[frozen] tool=%s dispatch 예외: %s", name, e)
@@ -410,6 +423,111 @@ class FrozenToolSource:
         content = getattr(result, "content", None)
         is_error = bool(getattr(result, "isError", False))
         return {"content": _flatten_mcp_content({"content": content}), "is_error": is_error}
+
+    # ── subpipeline ──────────────────────────────────────────────────
+    async def _dispatch_subpipeline(self, td: dict, args: dict) -> dict:
+        """중첩 워크플로우를 도구로 실행 — cluster 0, http 0, stdio 0 (env-only).
+
+        다른 하네스 워크플로우(B)를 도구로 마는 경우, B 의 harness_config 와 B 의
+        leaf 도구들(http/rag/mcp = 자족 가능)이 call_spec 에 통째로 freeze 돼 있다.
+        호출 시 그 config 로 nested Pipeline 을 in-process 빌드해 실행 — B 의 도구는
+        state 범위로 격리 주입돼 부모 카탈로그를 오염시키지 않는다.
+        """
+        spec = td.get("call_spec") or {}
+        name = td.get("name", "")
+        sub_config = spec.get("config")
+        if not isinstance(sub_config, dict) or not sub_config:
+            return {"content": f"subpipeline '{name}': call_spec.config 누락", "is_error": True}
+        sub_tool_defs = spec.get("tool_definitions") or []
+        sub_meta = spec.get("metadata") or self._metadata or {}
+
+        # harness-agents 규약은 {"input": "..."} — query/user_input 도 관용 허용.
+        user_input = ""
+        if isinstance(args, dict):
+            user_input = args.get("input") or args.get("query") or args.get("user_input") or ""
+        if not isinstance(user_input, str):
+            user_input = str(user_input)
+
+        depth = _SUBPIPELINE_DEPTH.get()
+        if depth >= _MAX_SUBPIPELINE_DEPTH:
+            return {
+                "content": f"subpipeline 최대 재귀 깊이({_MAX_SUBPIPELINE_DEPTH}) 초과 — '{name}' 중단",
+                "is_error": True,
+            }
+        token = _SUBPIPELINE_DEPTH.set(depth + 1)
+        try:
+            out = await _run_nested_pipeline(sub_config, sub_tool_defs, sub_meta, user_input)
+            return {"content": out or "", "is_error": False}
+        except Exception as e:
+            logger.warning("[frozen] subpipeline '%s' 실행 실패: %s", name, e)
+            return {"content": f"{name} subpipeline 실행 오류: {e}", "is_error": True}
+        finally:
+            _SUBPIPELINE_DEPTH.reset(token)
+
+
+async def _run_nested_pipeline(
+    config_dict: dict, tool_definitions: list, metadata: dict, user_input: str,
+) -> str:
+    """frozen sub-config 로 nested Pipeline 빌드·실행 → final_output 반환.
+
+    생성 wheel 의 flow.build_pipeline 과 동일한 env→provider / doc_service wiring
+    (패리티). 차이는 sub 도구를 전역 register 대신 state.extra_tool_sources 로
+    격리 주입한다는 점 — 부모/자식 파이프라인 도구 카탈로그가 섞이지 않는다.
+    """
+    from .. import HarnessConfig, Pipeline, PipelineState
+    from ..config import DictConfigSource, EnvConfigSource
+    from ..adapters import create_provider
+
+    config = HarnessConfig.resolve(sources=[
+        EnvConfigSource(prefix="XGEN_HARNESS_"),
+        DictConfigSource(dict(config_dict)),
+    ])
+
+    # provider — env 우선, 없으면 sub-config 의 provider/model. API key 는 env 만.
+    provider_name = os.environ.get("XGEN_HARNESS_PROVIDER") or config.provider or "openai"
+    env_map = {
+        "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GEMINI_API_KEY", "vllm": "VLLM_API_KEY",
+    }
+    env_key = env_map.get(provider_name, f"{provider_name.upper()}_API_KEY")
+    api_key = os.environ.get(env_key, "")
+    if not api_key and provider_name in ("vllm", "google", "bedrock"):
+        api_key = "EMPTY"
+    base_url = (
+        os.environ.get("XGEN_HARNESS_BASE_URL")
+        or os.environ.get(f"{provider_name.upper()}_BASE_URL")
+    )
+    model_override = os.environ.get("XGEN_HARNESS_MODEL") or config.model or None
+    provider_kwargs: dict = {"api_key": api_key, "model": model_override}
+    if base_url:
+        provider_kwargs["base_url"] = base_url
+    provider = create_provider(provider_name, **provider_kwargs)
+
+    # doc_service — QDRANT_URL 있으면 Qdrant 직격 (RAG leaf 도구용).
+    doc_service = None
+    qdrant_url = os.environ.get("QDRANT_URL")
+    if qdrant_url:
+        from ..adapters import QdrantDocService
+        embedder = None
+        meta = config_dict.get("_rag_embedder")
+        if isinstance(meta, dict) and meta.get("provider"):
+            try:
+                from ..adapters import build_embedder, discover_external_embedders
+                discover_external_embedders()
+                embedder = build_embedder(meta)
+            except Exception as e:  # provider 미등록/키 누락 — embedder 없이 진행
+                logger.warning("[frozen] nested doc_service embedder build 실패: %s", e)
+        doc_service = QdrantDocService(
+            url=qdrant_url, api_key=os.environ.get("QDRANT_API_KEY"), embedder=embedder,
+        )
+
+    # sub 도구는 같은 source_id("frozen") 로 — 단 state 범위 주입이라 전역 충돌 없음.
+    nested_source = FrozenToolSource(tool_definitions or [], metadata=metadata or {})
+    pipe = Pipeline.from_config(config, provider=provider, doc_service=doc_service)
+    state = PipelineState(user_input=user_input)
+    state.extra_tool_sources = [nested_source]
+    result = await pipe.run(state)
+    return getattr(result, "final_output", "") or ""
 
 
 def _flatten_mcp_content(result: dict) -> str:

@@ -46,6 +46,7 @@ from .npm_spec import (
     freeze_xgen_node_tool,
     freeze_mcp_session_tool,
     freeze_rag_tool,
+    freeze_subpipeline_tool,
 )
 from .npm_pack import (
     NpmPackResult,
@@ -100,6 +101,7 @@ __all__ = [
     "freeze_xgen_node_tool",
     "freeze_mcp_session_tool",
     "freeze_rag_tool",
+    "freeze_subpipeline_tool",
     "NpmPackResult",
     "build_npm_package",
     "compile_workflow_to_npm",

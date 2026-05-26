@@ -476,7 +476,10 @@ class ExecuteStage(Stage):
         # tool_result.content 는 string 필수 + 엔진 내부 slicing([:N]) 에서 TypeError 방지.
         from ...tools import get_tool_sources
         import json as _json
-        for source in get_tool_sources():
+        # 전역 소스 + 상태 범위 소스 (nested subpipeline 격리). 상태 범위를 먼저
+        # 검사해 같은 이름이면 nested 가 우선 — 부모 카탈로그 오염 없이 위임.
+        all_sources = list(getattr(state, "extra_tool_sources", None) or []) + list(get_tool_sources())
+        for source in all_sources:
             if source.has_tool(tool_name):
                 result = await source.call_tool(tool_name, tool_input)
                 content = result.get("content", result) if isinstance(result, dict) else result

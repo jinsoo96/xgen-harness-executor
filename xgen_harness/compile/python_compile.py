@@ -626,7 +626,12 @@ def _render_config_example(cluster_defaults: dict) -> str:
 
 
 def _coerce_json_safe(obj: Any) -> Any:
-    """set / tuple / 기타 비-JSON 객체 → JSON-safe 변환."""
+    """set / tuple / dataclass / 기타 비-JSON 객체 → JSON-safe 변환."""
+    from dataclasses import asdict, is_dataclass
+    # FrozenToolDefinition 등 dataclass 인스턴스 → dict (npm build_spec 과 동일 정규화).
+    # 파이썬 채널 _render_frozen_tools 가 도구 객체를 그대로 json.dumps 하다 죽던 회귀 방지.
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return _coerce_json_safe(asdict(obj))
     if isinstance(obj, set):
         return sorted(obj) if all(isinstance(x, str) for x in obj) else list(obj)
     if isinstance(obj, tuple):

@@ -149,7 +149,8 @@ class ToolIndexStage(Stage):
         # 명시적 화이트리스트 존재 여부. 없으면 모든 도구 eager (백워드 컴팻).
         has_explicit_selection = bool(selected_tools_by_source) or (global_allow is not None)
 
-        sources = get_tool_sources()
+        # 전역 등록 소스 + 이 실행에만 주입된 상태 범위 소스 (nested subpipeline 격리).
+        sources = list(get_tool_sources()) + list(getattr(state, "extra_tool_sources", None) or [])
         await state.emit_verbose(StageSubstepEvent(
             stage_id=self.stage_id, substep="sources_discover_start",
             meta={"source_count": len(sources), "explicit_selection": has_explicit_selection},
