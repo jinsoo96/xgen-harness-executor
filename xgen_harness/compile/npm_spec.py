@@ -127,6 +127,25 @@ def build_spec(
         elif isinstance(t, dict):
             td_list.append(_normalize_tool_def(t))
 
+    # 컴파일 산출물(npm/wheel)은 FrozenToolSource(frozen) 하나만 갖는다. 원래 워크플로우의
+    # source_id 별 selected_tools 는 산출물에선 무의미하고, s04 가 frozen 도구를 노출 못
+    # 할 수 있다. freeze 된 도구 이름을 flat 글로벌 화이트리스트로 박아 전부 노출되게 한다.
+    # (python_compile.transpile_to_python 과 동일 — npm/wheel 양 채널 패리티.)
+    if td_list:
+        import copy as _copy
+        _names = [str(t.get("name")) for t in td_list if t.get("name")]
+        if _names:
+            config_dict = _copy.deepcopy(config_dict)
+            _sp = config_dict.setdefault("stage_params", {})
+            if not isinstance(_sp, dict):
+                _sp = {}
+                config_dict["stage_params"] = _sp
+            _s04 = _sp.setdefault("s04_tool", {})
+            if not isinstance(_s04, dict):
+                _s04 = {}
+                _sp["s04_tool"] = _s04
+            _s04["selected_tools"] = sorted(set(_names))
+
     metadata = dict(snapshot.metadata or {})
     if extra_metadata:
         metadata.update(extra_metadata)

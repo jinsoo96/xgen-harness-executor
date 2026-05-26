@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.16.1"
+version = "1.16.2"
 description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. v1.16: workflow-as-tool 을 nested subpipeline(call_kind=subpipeline)으로 freeze + 산출물 selected_tools flat baking 으로 frozen 도구 eager 노출."
 requires-python = ">=3.10"
 license = {text = "MIT"}

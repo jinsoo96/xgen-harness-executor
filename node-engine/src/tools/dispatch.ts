@@ -24,6 +24,12 @@ export interface ToolDispatchResult {
   is_error: boolean;
 }
 
+// 중첩 subpipeline 재귀 깊이 가드 — 워크플로우 A 가 B 를, B 가 다시 A 를 부르는
+// 순환/폭주 방지. 단일 process 의 도구 호출은 보통 순차라 모듈 카운터로 충분.
+// (Python FrozenToolSource._SUBPIPELINE_DEPTH ContextVar 와 동등 의도.)
+let _subpipelineDepth = 0;
+const MAX_SUBPIPELINE_DEPTH = 4;
+
 /**
  * 도구 호출에 필요한 env 미설정 안내 — 외부 실행자가 무엇을 wire 해야 하는지 명시.
  * python FrozenToolSource._env_missing_msg 와 동일 문구 (패리티).
@@ -49,6 +55,8 @@ export async function dispatchToolCall(
       return dispatchMcpSession(def, args, state);
     case "rag":
       return dispatchRag(def, args, state);
+    case "subpipeline":
+      return dispatchSubpipeline(def, args);
     case "builtin:search_tools":
       return dispatchBuiltinSearchTools(args, state.tool_definitions || []);
     case "builtin:discover_tools":
@@ -56,6 +64,61 @@ export async function dispatchToolCall(
     case "noop":
     default:
       return { content: "(noop)", is_error: false };
+  }
+}
+
+/**
+ * 중첩 워크플로우 실행 — call_spec.{config, tool_definitions, metadata} 로 nested
+ * Pipeline 을 in-process 실행 (cluster 0 / http 콜백 0 / stdio 0, env-only).
+ * "워크플로우를 도구로 마는" 경우. Python FrozenToolSource._dispatch_subpipeline 패리티.
+ */
+async function dispatchSubpipeline(
+  def: FrozenToolDefinition,
+  args: Record<string, unknown>,
+): Promise<ToolDispatchResult> {
+  const spec = (def.call_spec || {}) as Record<string, unknown>;
+  const config = spec.config as Record<string, unknown> | undefined;
+  if (!config || typeof config !== "object") {
+    return { content: `subpipeline '${def.name}': call_spec.config 누락`, is_error: true };
+  }
+  const toolDefs = Array.isArray(spec.tool_definitions) ? spec.tool_definitions : [];
+  const meta = (spec.metadata as Record<string, unknown>) || {};
+
+  // harness-agents 규약은 {"input": "..."} — query/user_input 도 관용 허용.
+  const userInput = String(
+    (args && (args.input ?? args.query ?? args.user_input)) ?? "",
+  );
+
+  if (_subpipelineDepth >= MAX_SUBPIPELINE_DEPTH) {
+    return {
+      content: `subpipeline 최대 재귀 깊이(${MAX_SUBPIPELINE_DEPTH}) 초과 — '${def.name}' 중단`,
+      is_error: true,
+    };
+  }
+
+  // 순환 import 회피 — pipeline 은 stages→s07→dispatch 를 거쳐 이 모듈을 import 한다.
+  const { runPipeline } = await import("../pipeline/pipeline");
+
+  const subSpec = {
+    spec_version: "1.0",
+    harness_version: "",
+    gallery_name: String(def.name || "subpipeline"),
+    gallery_version: "0.1.0",
+    compiled_at: "",
+    config,
+    tool_definitions: toolDefs,
+    external_inputs: {},
+    metadata: meta,
+  } as unknown as import("../spec/schema").HarnessSpec;
+
+  _subpipelineDepth++;
+  try {
+    const result = await runPipeline(subSpec, userInput, { collectEvents: false });
+    return { content: result.output || "", is_error: false };
+  } catch (e) {
+    return { content: `${def.name} subpipeline 실행 오류: ${(e as Error).message}`, is_error: true };
+  } finally {
+    _subpipelineDepth--;
   }
 }
 

@@ -19,6 +19,9 @@ export const FrozenToolCallKind = z.enum([
   "http",
   "mcp_session",
   "rag",
+  // 중첩 워크플로우(워크플로우-as-도구) — call_spec.{config,tool_definitions,metadata}
+  // 로 nested Pipeline 을 in-process 실행 (env-only). Python FrozenToolSource 패리티.
+  "subpipeline",
   "noop",
   // PD builtin — engine-node 자체에서 spec.tool_definitions 카탈로그 메타 탐색.
   "builtin:search_tools",
