@@ -83,6 +83,30 @@ def transpile_to_python(
     else:
         raise TypeError(f"snapshot must be WorkflowSnapshot or dict, got {type(snapshot).__name__}")
 
+    # 컴파일 산출물은 FrozenToolSource(source_id="frozen") 하나만 갖는다. 원래 워크플로우의
+    # source_id 별 selected_tools(예: {"harness-agents":["run_qa"]})는 산출물에선 무의미하고,
+    # s04 strict 필터가 "frozen" 소스를 못 찾아 frozen 도구를 deferred 로만 두어 LLM 에
+    # eager 노출되지 않던 회귀가 있었다(=도구가 "로드 안 됨"). freeze 된 도구 이름을 flat
+    # 글로벌 화이트리스트로 박아 산출물에서 전부 eager 노출되게 한다.
+    if tool_definitions:
+        import copy as _copy
+        _names: list[str] = []
+        for _t in tool_definitions:
+            _n = _t.get("name") if isinstance(_t, dict) else getattr(_t, "name", None)
+            if _n:
+                _names.append(str(_n))
+        if _names:
+            cluster_defaults = _copy.deepcopy(cluster_defaults)
+            _sp = cluster_defaults.setdefault("stage_params", {})
+            if not isinstance(_sp, dict):
+                _sp = {}
+                cluster_defaults["stage_params"] = _sp
+            _s04 = _sp.setdefault("s04_tool", {})
+            if not isinstance(_s04, dict):
+                _s04 = {}
+                _sp["s04_tool"] = _s04
+            _s04["selected_tools"] = sorted(set(_names))
+
     module_name = _sanitize_module_name(package_name)
     if harness_version_pin is None:
         harness_version_pin = _current_harness_pin()
