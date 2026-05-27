@@ -4,7 +4,7 @@
 
 LLM 에이전트 실행기입니다. 워크플로우를 코드로 짜지 않고 `HarnessConfig` 한 객체로 선언하면, 10개 Stage 가 정해진 순서로 실행합니다.
 
-**v1.9.0 (2026-05-12)** — Option C 라디칼 (모든 search 가 LLM 자율 도구 호출 단일 경로) · Claude Code 서브에이전트 패턴 `fetch_synthesize` · 도구 N 연속 실패 graceful fallback · judge_provider 별도 인스턴스. [CHANGELOG](./CHANGELOG.md).
+**v1.16.3** — workflow-as-tool 을 nested subpipeline(`call_kind=subpipeline`)으로 freeze + `selected_tools` flat baking (v1.16.0) · agentflow 캔버스 그래프 인터프리터(`call_kind=canvas`) — 캔버스 nodes/edges 를 다중포트 DAG 로 env-only 실행 (v1.16.3). 컴파일 산출물(npm tarball / Python wheel)은 동일 spec 으로 standalone 실행. [CHANGELOG](./CHANGELOG.md).
 
 [![PyPI](https://img.shields.io/pypi/v/xgen-harness?color=blue&label=PyPI)](https://pypi.org/project/xgen-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/xgen-harness)](https://pypi.org/project/xgen-harness/)
@@ -42,7 +42,7 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 | 여러 LLM 제공자 | provider 레지스트리 + entry_points. anthropic / openai / google / bedrock / vllm 빌트인 |
 | 여러 종류 도구 | `ToolSource` 인터페이스 한 갈래로 통합 — MCP 세션 / 캔버스 노드 / 로컬 함수 / 합성 도구 |
 | 여러 실행 패턴 | Orchestrator 레지스트리 — linear / iterative / react / plan_execute / dag |
-| 워크플로우 배포 | `compile_workflow()` 가 `pip install` 가능한 wheel 로 만들어 MCP stdio 서버로 기동 |
+| 워크플로우 배포 | `compile_workflow_to_npm()` 가 npm tarball 로 컴파일 → `npx … serve-mcp` 로 MCP stdio 서버 기동 (Python wheel 채널도 병행) |
 | 도구 호출 정책·예산 | Policy Gate — 선언형 Guard 체인 × 4 훅 포인트 |
 
 ---
@@ -69,10 +69,10 @@ pip install 'xgen-harness[api]'   # FastAPI 라우터 (이식측에서만 필요
 
 ### 알아두면 좋은 4 가지
 
-1. **Stage 는 "단계"가 아니라 "담당 영역"입니다.** 각 Stage 가 자기 도구·자원·정책을 LLM 에게 점진적으로 보여주고, Auto 모드에서는 Planner LLM 이 그 안에서 골라 씁니다.
+1. **Stage 는 "단계"가 아니라 "담당 영역"입니다.** 각 Stage 가 자기 도구·자원·정책을 LLM 에게 점진적으로 노출하고, 본문 LLM 이 그 안에서 도구를 자율 호출합니다. (v1.1.0 부터 별도 Planner LLM 없이 직선 흐름 고정)
 2. **도구는 한 통로로 들어옵니다.** MCP 세션·캔버스 노드·파이썬 함수·합성 도구가 전부 `ToolSource` 인터페이스를 거쳐 s04 에서 LLM 카탈로그로 합쳐집니다.
 3. **본문 LLM 호출의 책임은 s00 하나에 있습니다.** provider·model·max_tokens·전송 방식(streaming/batch) 결정이 `s00_harness` 한 곳에 모이고, s07_act 같은 다른 Stage 는 s00 의 dispatcher 를 거쳐 호출합니다.
-4. **워크플로우 자체를 도구로 발행할 수 있습니다.** `compile_workflow()` 호출 한 번에 `pip install` 가능한 wheel · MCP stdio 서버 · 격리 검증 페이로드(NOMGraph) 가 함께 만들어집니다.
+4. **워크플로우 자체를 도구로 발행할 수 있습니다.** `compile_workflow_to_npm()` 호출 한 번에 npm tarball · MCP stdio 서버(`npx … serve-mcp`) · 격리 검증 페이로드(NOMGraph) 가 함께 만들어집니다.
 
 ### 한 사이클의 데이터 흐름
 
@@ -83,7 +83,7 @@ HarnessConfig + user_input
 PipelineState  ◀──────────  EventEmitter (SSE 스트림)
     │
     │   ── ingress ──
-    ├─ s00  LLM 핸들 owner / transport(streaming|batch) 선정 + Planner (Auto 모드)
+    ├─ s00  LLM 핸들 owner / transport(streaming|batch) 선정 + 본문 LLM 호출 dispatcher
     ├─ s01  사용자 입력 정규화 · multimodal 추출
     ├─ s02  같은 interaction 의 이전 turn 로드 (선택: embedding_search)
     ├─ s03  system_prompt 주입 + citation + thinking_mode (CoT/ReAct/none, 구 s05_strategy 흡수)
@@ -101,19 +101,16 @@ PipelineState  ◀──────────  EventEmitter (SSE 스트림)
     └─ s09_finalize 최종 응답 + MetricsEvent + (선택) persist strategy 로 DB 기록
 ```
 
-`HarnessConfig.harness_mode` 가 이 사이클의 자율도를 결정합니다 (`off` / `autonomous` — v1.1.0 부터 selected 폐기, 자세한 내용은 다음 섹션).
+v1.1.0 부터 `harness_mode` 분기와 Planner LLM 은 제거되고 **직선 흐름**으로 고정됐습니다. 10 Stage 가 항상 순서대로 실행되고, 도구 선택·strategy 는 `HarnessConfig` 에 선언한 값(또는 `active_strategies`)을 그대로 따릅니다.
 
 ---
 
-## 2 모드 — 자유도 vs 안정성
+## 실행 — 직선 흐름 + strategy 핀
 
-| 모드 | 동작 | 언제 쓰나 |
-|---|---|---|
-| **autonomous** (기본) | 10 Stage 정해진 순서로 모두 실행. Planner LLM 이 stage 안에서 도구 / strategy 자율 선택 | 일반 요청 |
-| **off** | s04 stage 의 `strategy="none"` → 도구 발견 / capability binding skip. 메타 도구 + 빌트인 도구 등록 안 됨 | 단순 LLM 호출만 (도구 무관) |
+v1.1.0 부터 Planner LLM 과 `harness_mode` 분기가 제거됐습니다. 10 Stage 가 항상 순서대로 실행되고, `HarnessConfig` 만 만들면 바로 돕니다. 특정 Stage 의 구현(strategy)만 골라 끼울 수 있습니다.
 
 ```python
-# 표준 — autonomous (기본). HarnessConfig 만들기만 하면 됨.
+# 표준 — HarnessConfig 만들기만 하면 됨 (직선 흐름).
 config = HarnessConfig(max_iterations=5)
 
 # 특정 stage 의 strategy 핀
@@ -123,13 +120,18 @@ config = HarnessConfig(
         "s08_decide":  "judge_then_loop",    # 응답 품질 평가 활성
     },
 )
+
+# 도구 없이 단순 LLM 호출만 — s04_tool strategy 를 none 으로
+config = HarnessConfig(
+    active_strategies={"s04_tool": "none"},
+)
 ```
 
 ---
 
 ## 10 Stage 표
 
-각 Stage 는 자기 담당 영역(capability / 도구 / 리소스)만 LLM 에게 점진적으로 보여주고, Auto 모드에서는 Planner LLM 이 그 중에서 골라 씁니다.
+각 Stage 는 자기 담당 영역(capability / 도구 / 리소스)만 LLM 에게 점진적으로 노출합니다. 본문 LLM 이 그 안에서 도구를 자율 호출합니다.
 
 ### 초기화 그룹 (ingress · 1 회)
 
@@ -343,14 +345,13 @@ config = HarnessConfig(
 
 ### B. 하네스 워크플로우를 MCP stdio 서버로 내보내기
 
-워크플로우 하나를 `pip install` 가능한 wheel 로 컴파일하면, 그 wheel 자체가 MCP stdio 서버로 동작합니다. Claude Desktop, Cursor, 다른 하네스 어디서든 도구로 호출할 수 있습니다.
+워크플로우 하나를 npm tarball 로 컴파일하면, 그 패키지가 `npx … serve-mcp` 로 MCP stdio 서버가 됩니다. Claude Desktop, Cursor, 다른 하네스 어디서든 도구로 호출할 수 있습니다.
 
 ```python
-from xgen_harness import HarnessConfig, compile_workflow
+from xgen_harness import HarnessConfig, compile_workflow_to_npm
 
-result = compile_workflow(
+result = compile_workflow_to_npm(
     harness_config=HarnessConfig(
-        harness_mode="autonomous",
         system_prompt="너는 KRRA 규정 검색 전문가야.",
         capabilities=["retrieval.rag_query"],
         stage_params={"s06_context": {"rag_collections": ["krra_2024"]}},
@@ -361,18 +362,17 @@ result = compile_workflow(
     out_dir="./dist",
 )
 
-print(result.wheel_path)     # ./dist/xgen_gallery_krra_search-0.1.0-py3-none-any.whl
-print(result.dist_name)      # xgen-gallery-krra_search
-print(result.package_name)   # xgen_gallery_krra_search
+print(result.tarball_path)   # ./dist/xgen-harness-krra_search-0.1.0.tgz
+print(result.package_name)   # xgen-harness-krra_search
+print(result.version)        # 0.1.0
 ```
 
-설치 후 CLI 3 종이 자동 주입됩니다:
+빌드된 tarball 은 `npx` 로 즉시 실행합니다 (별도 설치 불필요):
 
 ```bash
-pip install ./dist/xgen_gallery_krra_search-0.1.0-py3-none-any.whl
-xgen-gallery-krra_search run --input "마사회 운영 규정 알려줘"     # 일회성 호출
-xgen-gallery-krra_search info                                        # 갤러리 메타
-xgen-gallery-krra_search serve-mcp                                   # MCP stdio 서버로 기동
+npx -y ./dist/xgen-harness-krra_search-0.1.0.tgz serve-mcp   # MCP stdio 서버로 기동
+# 발행 후에는 패키지명으로 직접
+npx -y xgen-harness-krra_search serve-mcp
 ```
 
 **Claude Desktop 에 등록** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -381,8 +381,8 @@ xgen-gallery-krra_search serve-mcp                                   # MCP stdio
 {
   "mcpServers": {
     "krra-search": {
-      "command": "xgen-gallery-krra_search",
-      "args": ["serve-mcp"]
+      "command": "npx",
+      "args": ["-y", "xgen-harness-krra_search", "serve-mcp"]
     }
   }
 }
@@ -418,9 +418,9 @@ print(result.tool_count, result.payload_hash[:12], result.handshake_ms)
 
 ---
 
-## Compile — wheel 한 장에 들어가는 내용
+## Compile — npm tarball 한 장에 들어가는 내용
 
-`compile_workflow()` 는 여러 단계를 거쳐 산출물을 만듭니다. 각 단계는 독립적으로도 호출할 수 있습니다.
+`compile_workflow_to_npm()` 은 여러 단계를 거쳐 산출물을 만듭니다. 각 단계는 독립적으로도 호출할 수 있습니다. (Python wheel 채널 `compile_and_pack()` 도 v1.10.0+ 병행)
 
 ```
 HarnessConfig + workflow_data
@@ -432,13 +432,13 @@ HarnessConfig + workflow_data
  ② scan_placeholders(snapshot)          — ${VAR} 발견 → ExternalInputSpec 자동 등록
         │
         ▼
- ③ resolve_dependencies(snapshot)       — DependencyRule 레지스트리 → pip 의존성 산출
+ ③ build_spec(snapshot)                 — HarnessSpec(spec.json) + freeze 된 도구 정의(freeze_*_tool)
         │
         ▼
- ④ build_wheel(snapshot)                — _write_source_tree → python -m build
+ ④ build_npm_package(spec)              — skeleton(spec.json + bin/cli.js + package.json) → npm pack
         │
         ▼
- WheelBuildResult { wheel_path, sdist_path, source_dir, dist_name, package_name, snapshot }
+ NpmPackResult { tarball_path, package_name, version, spec_path, cli_path, size_bytes }
 ```
 
 ### 외부 입력 (`external_inputs`) — wheel 이 런타임에 요구하는 값
@@ -458,23 +458,6 @@ config.external_inputs = {
 ```
 
 UI 는 이 선언을 보고 배포 전에 입력 폼을 자동으로 렌더링합니다. `${QDRANT_URL}` 같은 placeholder 가 `system_prompt` / `capability_params` / `stage_params` 안에 들어 있으면 컴파일러가 `ExternalInputSpec` 후보를 자동 등록합니다.
-
-### 의존성 해석 — `DependencyRule` 레지스트리
-
-```python
-from xgen_harness import register_dependency_rule, DependencyRule
-
-register_dependency_rule(DependencyRule(
-    name="my-tool-deps",
-    matcher=lambda snap: any(
-        sid == "my-tools" for sid in snap.harness_config.stage_params
-            .get("s04_tool", {}).get("selected_tools", {}).keys()
-    ),
-    requirements=["my-tool-package>=1.2"],
-))
-```
-
-Snapshot 내용에 따라 wheel 의 `install_requires` 가 자동 산출됩니다. 외부 도구 / capability / provider 가 자기 의존성을 선언할 때 이 등록 한 번으로 충분합니다.
 
 ### 갤러리 자동 발견 — `discover_galleries()`
 
@@ -506,16 +489,6 @@ graph = NOMGraph(nodes=[
 graph.to_mcp_schema()                      # → MCP tools/list 응답 그대로
 graph.to_sandbox_payload("x.tools.search", {"q": "hello"})   # → 격리 실행 payload
 compile_nom_graph(graph, gallery_name="my_tools", gallery_version="0.1.0")  # → wheel
-```
-
-런타임에 LLM 이 합성한 도구도 같은 흐름으로 wheel 화할 수 있습니다:
-
-```python
-from xgen_harness.tools.synthesis import synthesize_and_register, synthesized_tools_as_nom_graph
-
-# synthesize_and_register(...) 로 검증·등록한 뒤
-graph = synthesized_tools_as_nom_graph([slugify, camelcase, redact_pii])
-result = compile_nom_graph(graph, gallery_name="my_synth_tools", gallery_version="0.1.0")
 ```
 
 엔진의 현재 상태도 그대로 NOM 으로 덤프할 수 있습니다. 디버깅 / 갤러리 업로드 / 샌드박스 복원에 재사용됩니다:
@@ -553,12 +526,12 @@ config = HarnessConfig(
 
 ## Orchestrator — Auto 모드 5 패턴 + 외부 추가
 
-Auto 모드에서는 Planner 가 입력을 보고 `Plan.orchestrator_hint` 를 결정하고, 그 값에 따라 루프가 분기합니다.
+`orchestrator_hint` (또는 `active_strategies`) 에 지정한 값에 따라 루프 반복 패턴이 분기합니다. v1.1.0 Planner 제거 후 자동 선택은 비활성 — `dag` / 멀티에이전트 등은 명시 지정으로 동작합니다.
 
 | hint | 동작 | 사용 케이스 |
 |---|---|---|
 | `linear` | 1 회 실행 후 종료 | 단발 Q&A |
-| `iterative` (default) | 매 iter Plan replan + 13 Stage 1바퀴 | 멀티턴 도구 |
+| `iterative` (default) | 매 iter 10 Stage 1바퀴 | 멀티턴 도구 |
 | `plan_execute` | 첫 Plan 고수, replan 생략, 반복 | 정형 절차 |
 | `react` | 엔진 no-op, 이식측 dispatcher 위임 | 외부 ReAct 통합 |
 | `dag` | 엔진 no-op, 이식측 DAG runner 위임 | 멀티 에이전트 병렬 |
@@ -694,7 +667,7 @@ config = HarnessConfig(
 
 | 엔드포인트 | 역할 |
 |---|---|
-| `GET  /api/harness/stages` | 13 Stage 정의 + 설정 스키마 (icon, fields, behavior) |
+| `GET  /api/harness/stages` | 10 Stage 정의 + 설정 스키마 (icon, fields, behavior) |
 | `GET  /api/harness/tool-sources` | 등록된 ToolSource 메타 + `list_tools()` 결과 |
 | `GET  /api/harness/options/{source}` | 동적 옵션 (mcp-sessions / rag-collections / providers …) |
 | `POST /api/harness/execute/stream` | SSE 실행 (하네스 전용 — 레거시 워크플로우와 분리) |
@@ -764,13 +737,13 @@ from xgen_harness import (
     CapabilityMatcher, MatchStrategy,
     materialize_capabilities, merge_into_state, MaterializationReport,
     ParameterResolver, ResolveResult,
-    # Compile
-    compile, compile_workflow, build_wheel, WheelBuildResult,
+    # Compile (npm 채널 — v0.29+ 단일)
+    compile_workflow_to_npm, build_npm_package, NpmPackResult,
+    freeze_http_tool, freeze_xgen_node_tool, freeze_mcp_session_tool, freeze_rag_tool,
+    compile_nom_graph,
     WorkflowSnapshot, SNAPSHOT_VERSION, load_snapshot,
     ExternalInputSpec, InputType, scan_placeholders, merge_scanned,
     collect_runtime_values, MissingExternalInputError,
-    DependencyResolver, resolve_dependencies, register_dependency_rule, DependencyRule,
-    serve_mcp, run_mcp_blocking, MCPNotInstalledError,
     InstalledGallery, discover_galleries, get_gallery,
     # Sandbox
     Sandbox, SandboxLimits, SandboxResult, run_sandboxed,
@@ -783,7 +756,7 @@ from xgen_harness import (
     # Host integration
     register_xgen_node_resolver, get_xgen_node_resolver, XgenNodeResolver,
     # Catalog & planning
-    get_catalog, HarnessPlanner, HarnessPlan, ensure_provider,
+    get_catalog, HarnessPlan, ensure_provider,
     # Presets (legacy compat)
     PRESETS, Preset, get_preset, apply_preset, list_presets,
 )
@@ -880,9 +853,11 @@ Phase 4  라이브 검증 패치    ─ production 결함 일괄 fix            
 
 ## 작동 기능 일람 (production 검증)
 
+> ⚠️ 아래는 **2026-04-28 v0.26.18 시점의 검증 스냅샷**입니다. Stage 번호·모드 등 구조 표기는 당시 기준이며, **현행 v1.16 구조는 위 「10 Stage 표」 / 「실행 — 직선 흐름」 섹션**을 참조하세요. (실측 토큰·비용·도구 수 등 검증 수치 보존용)
+
 `xgen.x2bee.com/harness` 라이브 + 로컬 docker `saleskit` 인증으로 단계별 실 호출 검증된 기능 (2026-04-28 기준 v0.26.18 + 이식측 commit `7726c8b`).
 
-### 1. 13 Stage 파이프라인 — 모두 실행
+### 1. 13 Stage 파이프라인 (당시 구조) — 모두 실행
 
 | Stage | 역할 | strategies | 검증 |
 |---|---|---|---|
@@ -1031,15 +1006,9 @@ harness_published_wheels.status = 'running' / 'error'
 | `xgen_harness.node_plugins` | 노드 플러그인 (v0.26.11+) |
 | `xgen_harness.model_pricing` | 사내 vLLM / 자체 호스팅 모델 가격 (v0.26.11+) |
 
-### 12. 3 모드 — 자유도 vs 안정성
+### 12. 실행 — 직선 흐름 (v1.1.0+)
 
-| `harness_mode` | 의미 | LLM 자유도 |
-|---|---|---|
-| `off` | 코드가 직접 도구·orchestrator·strategy 다 박음. LLM 은 본문만 | 0 |
-| `selected` | 일부만 핀 (`active_strategies={...}`), 나머지는 LLM | 부분 |
-| `autonomous` | 거의 다 LLM 결정 — Stage 별 capability 점진 노출 | 최대 |
-
-`HarnessConfig.is_autonomous() / is_selected() / is_off()` 헬퍼로 비교 (v0.25.3+).
+v1.1.0 부터 `harness_mode` 분기와 Planner LLM 이 제거되어 10 Stage 가 항상 순서대로 실행됩니다. 도구·strategy 는 `HarnessConfig`(또는 `active_strategies`)에 선언한 값을 그대로 따릅니다.
 
 ---
 

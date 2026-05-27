@@ -1,21 +1,18 @@
 """
-S00 Harness — 메타 스테이지 (Planner 진입점)
+S00 Harness — 메타 스테이지 (본문 LLM 호출 진입점)
 
-REAL_HARNESS.md §4.3 동작 명세 구현체.
+v1.1.0 — Planner OFF 고정 직선 흐름. 과거 LLM 계획자(HarnessPlanner)로
+Stage/파라미터/Strategy 를 런타임 조립하던 경로는 제거됨.
 
-책임:
-  1. 카탈로그 수집 (`core.catalog.get_catalog`) — 하드코딩 0
-  2. HarnessPlanner 로 Plan 산출 — LLM 이 Stage/파라미터/Strategy 결정
-  3. Plan 을 `state.metadata["harness_plan"]` 에 저장
-  4. Plan.params / Plan.strategies 를 `state.config` 에 병합 (런타임 조립)
-  5. PlanningEvent 방출 → 프론트 카드 렌더
+현재 책임:
+  - execute() 는 사실상 noop — 호환용으로 빈 `HarnessPlan.off_mode()` 만 박음.
+    (Pipeline 이 이 Stage 를 ingress 최상단 prepend 하지 않으므로 실제 호출 X)
+  - main_call() 만 살아있어 Phase B main_actor 직전 본문 LLM 호출 담당.
+    Transport Strategy (streaming/batch/…) 를 StrategyResolver 로 해석해 위임.
 
 비담당 (명시):
-  - 실제 Stage 실행은 Pipeline 이 함 (Plan.chosen 을 보고 bypass 판단)
+  - 실제 Stage 실행은 Pipeline 이 함
   - provider 초기화는 `core.provider_bootstrap` 에 위임 (s07 과 공용)
-
-v1.1.0 — Planner OFF 고정 직선 흐름. execute() 는 noop (HarnessPlan.off_mode 만
-박음). main_call 메서드만 살아있어 Phase B main_actor 직전 본문 LLM 호출 담당.
 """
 
 from __future__ import annotations

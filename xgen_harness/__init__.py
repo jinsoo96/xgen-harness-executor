@@ -68,7 +68,7 @@ from .events.types import (
     ApprovalDecidedEvent,
 )
 from .core.catalog import get_catalog
-from .core.planner import HarnessPlanner, HarnessPlan
+from .core.planner import HarnessPlan
 from .core.provider_bootstrap import ensure_provider
 from .core.llm_call import aux_call
 from .errors import (
@@ -282,7 +282,6 @@ __all__ = [
     "ApprovalRequiredEvent",
     "ApprovalDecidedEvent",
     "get_catalog",
-    "HarnessPlanner",
     "HarnessPlan",
     "ensure_provider",
     "aux_call",

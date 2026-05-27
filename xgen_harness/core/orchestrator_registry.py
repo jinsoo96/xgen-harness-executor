@@ -69,7 +69,7 @@ def unregister_orchestrator(name: str) -> None:
 
 
 def list_orchestrators() -> list[str]:
-    """등록된 orchestrator 이름 리스트 (정렬). `build_plan_tool()` 이 enum 으로 사용."""
+    """등록된 orchestrator 이름 리스트 (정렬). orchestrator_hint 해석에 사용."""
     _ensure_defaults_registered()
     return sorted(_REGISTRY.keys())
 
