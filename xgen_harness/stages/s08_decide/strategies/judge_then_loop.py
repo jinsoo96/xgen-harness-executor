@@ -40,6 +40,69 @@ def register_evaluation_criterion(name: str, description: str, weight: float = 0
     ALL_CRITERIA[name] = {"description": description, "weight": float(weight)}
 
 
+def _resolve_selected_criteria(criteria: Any, criteria_defs: Any = None) -> dict[str, dict]:
+    """평가축 이름/정의를 {name: {"description", "weight"}} 로 해소.
+
+    Args:
+        criteria: 선택된 평가축 — 이름 리스트 / 콤마 문자열 / inline dict 리스트.
+        criteria_defs: **컴파일 산출물 self-contained 용** 정의 리스트
+            ([{name, description, weight, hard}]). ALL_CRITERIA 레지스트리에 없는 축
+            (예: criterion_1)의 정의를 여기서 읽는다.
+
+    배경(v1.17.0): 평가축 정의는 본래 프로세스 전역 ALL_CRITERIA 에만 있고
+    register_evaluation_criterion 으로 채워졌다. 클러스터는 같은 프로세스에서 등록하므로
+    동작하지만, **컴파일된 npm/pypi 산출물은 별도 프로세스라 레지스트리가 비어** 사용자
+    평가축(criterion_N)이 매칭 0 → generic 4축으로 폴백되며 사용자 QA 기준이 유실됐다.
+    정의를 config(stage_params.s08_decide.criteria_defs)에 self-contained 로 실으면
+    직렬화로 산출물에 박혀 외부 런타임에서도 레지스트리 없이 평가축이 유지된다.
+
+    우선순위: criteria_defs(인라인) > ALL_CRITERIA(레지스트리). 둘 다 해소 못하면 폴백.
+    """
+    inline: dict[str, dict] = {}
+    if isinstance(criteria_defs, (list, tuple)):
+        for d in criteria_defs:
+            if not isinstance(d, dict):
+                continue
+            nm = str(d.get("name") or "").strip()
+            if not nm:
+                continue
+            try:
+                w = float(d.get("weight", 0.1))
+            except (TypeError, ValueError):
+                w = 0.1
+            inline[nm] = {"description": str(d.get("description") or ""), "weight": w}
+
+    if isinstance(criteria, str):
+        criteria = [c.strip() for c in criteria.split(",") if c.strip()]
+    if not isinstance(criteria, (list, tuple)):
+        criteria = []
+
+    selected: dict[str, dict] = {}
+    for item in criteria:
+        if isinstance(item, dict):
+            nm = str(item.get("name") or "").strip()
+            if not nm:
+                continue
+            try:
+                w = float(item.get("weight", 0.1))
+            except (TypeError, ValueError):
+                w = 0.1
+            selected[nm] = {"description": str(item.get("description") or ""), "weight": w}
+        else:
+            nm = str(item).strip()
+            if not nm:
+                continue
+            if nm in inline:
+                selected[nm] = inline[nm]
+            elif nm in ALL_CRITERIA:
+                selected[nm] = ALL_CRITERIA[nm]
+            # 미등록 + inline 정의 없음 → skip (아래 폴백이 처리)
+
+    if not selected:
+        selected = dict(inline) if inline else dict(ALL_CRITERIA)
+    return selected
+
+
 # ─── 평가 프롬프트 템플릿 (박제 0) ───────────────────────────────
 EVALUATION_PROMPT_TEMPLATES: dict[str, str] = {
     "default": (
@@ -220,15 +283,12 @@ def _build_evaluation_prompt(state, get_param) -> tuple[str, list[str]]:
     user_cap = int(get_param("user_input_cap", state, JUDGE_DEFAULTS["user_input_cap"]))
     resp_cap = int(get_param("response_cap", state, JUDGE_DEFAULTS["response_cap"]))
 
+    # v1.17.0 — criteria_defs(config self-contained 정의)로 외부 산출물에서도 평가축 유지.
     criteria = get_param("criteria", state, list(ALL_CRITERIA.keys()))
-    if isinstance(criteria, str):
-        criteria = [c.strip() for c in criteria.split(",")]
+    criteria_defs = get_param("criteria_defs", state, None)
+    selected = _resolve_selected_criteria(criteria, criteria_defs)
 
-    selected = {k: v for k, v in ALL_CRITERIA.items() if k in criteria}
-    if not selected:
-        selected = ALL_CRITERIA
-
-    total_weight = sum(c["weight"] for c in selected.values())
+    total_weight = sum(c["weight"] for c in selected.values()) or 1.0
     criteria_block = "\n".join(
         f"{i+1}. **{name.capitalize()}** (0-1, weight {info['weight']/total_weight:.2f}): {info['description']}"
         for i, (name, info) in enumerate(selected.items())
@@ -265,10 +325,12 @@ def _parse_evaluation(eval_text: str, selected_criteria: list[str],
         feedback = data.get("feedback", "")
 
         if overall == 0.0:
-            selected = {k: v for k, v in ALL_CRITERIA.items() if k in selected_criteria}
-            if not selected:
-                selected = ALL_CRITERIA
-            total_weight = sum(c["weight"] for c in selected.values())
+            # v1.17.0 — 가중 평균 재계산도 criteria_defs(self-contained 정의)로 해소.
+            selected = _resolve_selected_criteria(
+                get_param("criteria", state, selected_criteria),
+                get_param("criteria_defs", state, None),
+            )
+            total_weight = sum(c["weight"] for c in selected.values()) or 1.0
             overall = sum(
                 float(data.get(name, 0.5)) * (info["weight"] / total_weight)
                 for name, info in selected.items()

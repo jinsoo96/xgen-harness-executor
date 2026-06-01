@@ -1,7 +1,7 @@
 [project]
 name = "xgen-harness"
-version = "1.16.5"
-description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. v1.16: workflow-as-tool 을 nested subpipeline(call_kind=subpipeline) freeze + selected_tools flat baking. v1.16.3: agentflow 캔버스 그래프 인터프리터(call_kind=canvas). v1.16.5: resolve_strategy 모듈 함수 복구 — s08 judge 의 외부 EvaluationStrategy hook 활성화(그동안 ImportError 로 항상 내장 fallback 만 동작)."
+version = "1.17.0"
+description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. v1.16: workflow-as-tool 을 nested subpipeline(call_kind=subpipeline) freeze + selected_tools flat baking. v1.16.3: agentflow 캔버스 그래프 인터프리터(call_kind=canvas). v1.16.5: resolve_strategy 모듈 함수 복구 — s08 judge 의 외부 EvaluationStrategy hook 활성화(그동안 ImportError 로 항상 내장 fallback 만 동작). v1.17.0: judge 평가축 self-contained — stage_params.s08_decide.criteria_defs 로 평가축 정의(description/weight)를 config 에 직렬화. 컴파일된 npm/pypi 산출물이 별도 프로세스(빈 레지스트리)에서도 사용자 평가축을 유지(이전엔 generic 4축으로 폴백돼 유실)."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [

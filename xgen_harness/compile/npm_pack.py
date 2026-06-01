@@ -57,7 +57,7 @@ BIN_NAME_PREFIX = "xgen-harness-"
 # npmjs registry 에서 자동 다운로드. **이게 라운드트립의 키** — wrapper 는 minio
 # presigned tarball, engine-node 는 npmjs 에서.
 # alpha tag 단계: ^0.28.0 은 prerelease 안 받으니 정확 매칭. stable 시 ^ 로.
-DEFAULT_ENGINE_DEP = "^0.31.3"
+DEFAULT_ENGINE_DEP = "^0.31.6"
 ENGINE_PACKAGE = "@plateer-xgen/harness-engine-node"
 
 

@@ -84,17 +84,20 @@ export class S08Judge extends BaseStage {
   private async executeLlmJudge(state: PipelineState): Promise<Record<string, unknown>> {
     const userInput = state.user_input.slice(0, 500);
     const assistantResp = state.last_assistant_text.slice(0, 2000);
-    const criteria = this.getParam<string[]>(
-      "criteria",
-      state,
-      ["relevance", "completeness", "accuracy", "clarity"],
-    );
-    const activeCriteria = criteria.filter((c) => ALL_CRITERIA[c]);
+    // v1.17.0 — criteria_defs(config self-contained 정의)로 외부 산출물에서도 평가축 유지.
+    // 컴파일된 npm 산출물은 register 호출이 없어 ALL_CRITERIA 에 사용자 축(criterion_N)이
+    // 없으므로, config 에 실린 정의를 직접 읽어 effective 맵을 만든다.
+    const { names: activeCriteria, defs: effectiveCriteria } = this.resolveCriteria(state);
     if (activeCriteria.length === 0) {
       return { strategy: "llm_judge", error: "no valid criteria" };
     }
 
-    const prompt = this.buildEvaluationPrompt(userInput, assistantResp, activeCriteria);
+    const prompt = this.buildEvaluationPrompt(
+      userInput,
+      assistantResp,
+      activeCriteria,
+      effectiveCriteria,
+    );
 
     let provider;
     try {
@@ -134,7 +137,7 @@ export class S08Judge extends BaseStage {
       };
     }
 
-    const parsed = this.parseEvaluation(raw, activeCriteria);
+    const parsed = this.parseEvaluation(raw, activeCriteria, effectiveCriteria);
     state.validation_score = parsed.score;
     state.validation_feedback = parsed.feedback;
     return {
@@ -147,10 +150,76 @@ export class S08Judge extends BaseStage {
     };
   }
 
+  /**
+   * v1.17.0 — config 의 criteria(이름) + criteria_defs(self-contained 정의)를 해소해
+   * effective 평가축 맵을 만든다. 우선순위 inline 정의 > ALL_CRITERIA 레지스트리.
+   * 컴파일된 산출물은 레지스트리가 비어있어도 criteria_defs 로 사용자 축이 유지된다.
+   */
+  private resolveCriteria(state: PipelineState): {
+    names: string[];
+    defs: Record<string, { description: string; weight: number }>;
+  } {
+    const criteria = this.getParam<unknown[]>(
+      "criteria",
+      state,
+      ["relevance", "completeness", "accuracy", "clarity"],
+    );
+    const criteriaDefs = this.getParam<unknown[]>("criteria_defs", state, []);
+
+    const inline: Record<string, { description: string; weight: number }> = {};
+    if (Array.isArray(criteriaDefs)) {
+      for (const d of criteriaDefs) {
+        if (!d || typeof d !== "object") continue;
+        const o = d as Record<string, unknown>;
+        const nm = String(o.name ?? "").trim();
+        if (!nm) continue;
+        const w = Number(o.weight);
+        inline[nm] = {
+          description: String(o.description ?? ""),
+          weight: isFinite(w) ? w : 0.1,
+        };
+      }
+    }
+
+    const defs: Record<string, { description: string; weight: number }> = {};
+    const names: string[] = [];
+    const items = Array.isArray(criteria) ? criteria : [];
+    for (const item of items) {
+      if (item && typeof item === "object") {
+        const o = item as Record<string, unknown>;
+        const nm = String(o.name ?? "").trim();
+        if (!nm) continue;
+        const w = Number(o.weight);
+        defs[nm] = { description: String(o.description ?? ""), weight: isFinite(w) ? w : 0.1 };
+        names.push(nm);
+      } else {
+        const nm = String(item).trim();
+        if (!nm) continue;
+        if (inline[nm]) {
+          defs[nm] = inline[nm];
+          names.push(nm);
+        } else if (ALL_CRITERIA[nm]) {
+          defs[nm] = ALL_CRITERIA[nm];
+          names.push(nm);
+        }
+      }
+    }
+    if (names.length === 0) {
+      // 아무것도 해소 못함 — inline 전체 또는 ALL_CRITERIA 폴백.
+      const src = Object.keys(inline).length > 0 ? inline : ALL_CRITERIA;
+      for (const [nm, m] of Object.entries(src)) {
+        defs[nm] = m;
+        names.push(nm);
+      }
+    }
+    return { names, defs };
+  }
+
   private buildEvaluationPrompt(
     userInput: string,
     assistantResp: string,
     criteria: string[],
+    defs: Record<string, { description: string; weight: number }>,
   ): string {
     const lines = [
       "Evaluate the assistant's response on the following criteria. Return JSON only.",
@@ -164,7 +233,7 @@ export class S08Judge extends BaseStage {
       "Criteria:",
     ];
     for (const c of criteria) {
-      const m = ALL_CRITERIA[c];
+      const m = defs[c] ?? ALL_CRITERIA[c] ?? { description: "", weight: 0.1 };
       lines.push(`- ${c} (weight ${m.weight}): ${m.description}`);
     }
     lines.push("");
@@ -180,6 +249,7 @@ export class S08Judge extends BaseStage {
   private parseEvaluation(
     raw: string,
     criteria: string[],
+    defs: Record<string, { description: string; weight: number }>,
   ): {
     score: number;
     verdict: "pass" | "fail";
@@ -209,7 +279,7 @@ export class S08Judge extends BaseStage {
     let weighted = 0;
     let totalWeight = 0;
     for (const c of criteria) {
-      const m = ALL_CRITERIA[c];
+      const m = defs[c] ?? ALL_CRITERIA[c] ?? { description: "", weight: 0.1 };
       const v = Number(parsed.scores?.[c] ?? 0.7);
       const clamped = Math.max(0, Math.min(1, isFinite(v) ? v : 0.7));
       scores[c] = clamped;
