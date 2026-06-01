@@ -100,6 +100,21 @@ class StrategyResolver:
         return cls()
 
 
+# 모듈 레벨 편의 함수 — Stage 밖(예: s08_decide judge_then_loop)에서 slot 전략을
+# 이름으로 즉시 해석할 때 사용. StrategyResolver.default().resolve(...) 와 동일하나
+# 호출처 import 를 단순화한다. judge_then_loop.evaluate_response 가 이 심볼을 import
+# 하는데 그동안 모듈에 없어 ImportError → EvaluationStrategy hook 이 통째로 죽고 항상
+# fallback 으로 빠졌다(외부 등록 평가전략 사용 불가). 누락 API 를 채워 hook 을 복구한다.
+def resolve_strategy(
+    stage_id: str,
+    slot_name: str,
+    impl_name: str,
+    config: Optional[dict[str, Any]] = None,
+) -> Optional[Strategy]:
+    """(stage_id, slot_name, impl_name) → Strategy 인스턴스. 기본 전략 등록 보장."""
+    return StrategyResolver.default().resolve(stage_id, slot_name, impl_name, config)
+
+
 def _register_defaults() -> None:
     """모든 기본 Strategy를 레지스트리에 등록."""
     if _REGISTRY:
