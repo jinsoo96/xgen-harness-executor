@@ -572,6 +572,13 @@ class HarnessConfig:
                 )
             ),
             validation_threshold=float(harness_config.get("validation_threshold", 0.7)),
+            # cost_budget_usd — 명시값만 전달(미설정이면 None 유지). max_retries/validation_threshold
+            # 와 대칭. 누락 시 pypi 컴파일(from_workflow 경유)에서 예산이 떨어져 강제 안 됐다.
+            cost_budget_usd=(
+                float(harness_config["cost_budget_usd"])
+                if harness_config.get("cost_budget_usd") is not None
+                else None
+            ),
             disabled_stages=disabled,
             artifacts=_alias_map(harness_config.get("artifacts", {})),
             stage_params=_alias_map(harness_config.get("stage_params", {})),

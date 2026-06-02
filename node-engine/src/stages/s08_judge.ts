@@ -92,11 +92,19 @@ export class S08Judge extends BaseStage {
       return { strategy: "llm_judge", error: "no valid criteria" };
     }
 
+    // 규제 system prompt(absolute_rules/HARD 강제)와 통과 임계를 stage/config 에서 읽는다.
+    // Python 엔진과 파리티 — 미적용 시 judge 가 관대해지고 임계가 무시됐다.
+    const evalSystem = String(
+      this.getParam<string>("evaluation_system_prompt", state, "") ?? "",
+    );
+    const threshold = Number(state.config.validation_threshold ?? 0.7);
+
     const prompt = this.buildEvaluationPrompt(
       userInput,
       assistantResp,
       activeCriteria,
       effectiveCriteria,
+      evalSystem,
     );
 
     let provider;
@@ -137,7 +145,7 @@ export class S08Judge extends BaseStage {
       };
     }
 
-    const parsed = this.parseEvaluation(raw, activeCriteria, effectiveCriteria);
+    const parsed = this.parseEvaluation(raw, activeCriteria, effectiveCriteria, threshold);
     state.validation_score = parsed.score;
     state.validation_feedback = parsed.feedback;
     return {
@@ -220,8 +228,19 @@ export class S08Judge extends BaseStage {
     assistantResp: string,
     criteria: string[],
     defs: Record<string, { description: string; weight: number }>,
+    evalSystem = "",
   ): string {
-    const lines = [
+    const lines: string[] = [];
+    // 규제 system prompt(absolute_rules 등) 우선 — 없으면 기본 엄격 지시.
+    if (evalSystem && evalSystem.trim()) {
+      lines.push(evalSystem.trim(), "");
+    } else {
+      lines.push(
+        "You are a STRICT, CONSISTENT evaluator. Be literal and unforgiving about each criterion.",
+        "",
+      );
+    }
+    lines.push(
       "Evaluate the assistant's response on the following criteria. Return JSON only.",
       "",
       "User question:",
@@ -231,14 +250,20 @@ export class S08Judge extends BaseStage {
       assistantResp,
       "",
       "Criteria:",
-    ];
+    );
     for (const c of criteria) {
       const m = defs[c] ?? ALL_CRITERIA[c] ?? { description: "", weight: 0.1 };
       lines.push(`- ${c} (weight ${m.weight}): ${m.description}`);
     }
-    lines.push("");
-    lines.push("Output JSON in this exact shape:");
     lines.push(
+      "",
+      "Scoring rules:",
+      "- Score each criterion in [0,1] by how fully the response satisfies THAT criterion's description.",
+      "- If a criterion is NOT satisfied, score it near 0. Do NOT default to a passing score.",
+      "- Any criterion whose description marks HARD MUST be scored exactly 0 if violated in any way.",
+      "- Identical responses MUST always receive identical scores.",
+      "",
+      "Output JSON in this exact shape:",
       '{"scores": {"' +
         criteria.join('": <0..1>, "') +
         '": <0..1>}, "feedback": "<one-sentence summary>"}',
@@ -250,6 +275,7 @@ export class S08Judge extends BaseStage {
     raw: string,
     criteria: string[],
     defs: Record<string, { description: string; weight: number }>,
+    threshold = 0.7,
   ): {
     score: number;
     verdict: "pass" | "fail";
@@ -270,7 +296,7 @@ export class S08Judge extends BaseStage {
     if (!parsed || typeof parsed !== "object") {
       return {
         score: 0.7,
-        verdict: "pass",
+        verdict: 0.7 >= threshold ? "pass" : "fail",
         feedback: "Evaluation parsing failed, assuming acceptable",
         scores: {},
       };
@@ -278,18 +304,21 @@ export class S08Judge extends BaseStage {
     const scores: Record<string, number> = {};
     let weighted = 0;
     let totalWeight = 0;
+    let hardViolated = false;
     for (const c of criteria) {
       const m = defs[c] ?? ALL_CRITERIA[c] ?? { description: "", weight: 0.1 };
       const v = Number(parsed.scores?.[c] ?? 0.7);
       const clamped = Math.max(0, Math.min(1, isFinite(v) ? v : 0.7));
       scores[c] = clamped;
+      // HARD 기준이 0점이면 전체 즉시 미달(가중평균에 묻히지 않도록).
+      if (clamped <= 0 && /\bHARD\b/i.test(m.description)) hardViolated = true;
       weighted += clamped * m.weight;
       totalWeight += m.weight;
     }
-    const score = totalWeight > 0 ? weighted / totalWeight : 0.7;
+    const score = hardViolated ? 0 : totalWeight > 0 ? weighted / totalWeight : 0.7;
     return {
       score,
-      verdict: score >= 0.7 ? "pass" : "fail",
+      verdict: score >= threshold ? "pass" : "fail",
       feedback: String(parsed.feedback || "").slice(0, 500),
       scores,
     };
