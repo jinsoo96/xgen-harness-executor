@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.18.0 (2026-06-05)
+
+### Removed (garbage / 도메인 잔재 청소)
+- **`xgen_harness/integrations/` (cluster_sync) 제거** — `register_to_cluster` / `fetch_from_cluster` / `ClusterSyncError`. xgen cluster(xgen-workflow) DB 왕복 통로로 **도메인 종속 코드**였고 엔진 agnostic 원칙 위반. pyproject 주석상 v0.22.0 에 제거 예정이었으나 잔존하던 것. 패키지 내부·이식측(harness_bridge) 모두 미사용 확인 후 제거 + `__init__` import·`__all__` 정리. 도메인 cluster 로직은 이식측 소유.
+- **`web/` 데모앱 제거** — backend/frontend/docker-compose. frontend 의 committed `node_modules`/build 3700+ 파일이 레포에 박혀 있던 비대(데모, 패키지 외). 레포 슬림화.
+
+### Changed
+- README 전면 재작성(간결) — 엔진 본질(10-stage · ToolSource · compile · entry_points · 이식 분리) 중심.
+
 ## v1.12.2 (2026-05-18)
 
 ### Fixed (CRITICAL — 사용자 영향 직접)

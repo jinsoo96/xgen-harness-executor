@@ -217,13 +217,6 @@ from .core.nom import (
 )
 from .compile import compile_nom_graph
 
-# v1.13.0 — cluster 양방향 sync (Python SDK ↔ workflow row)
-from .integrations import (
-    register_to_cluster,
-    fetch_from_cluster,
-    ClusterSyncError,
-)
-
 # v0.24.1 — pyproject.toml 과의 버전 drift 방지를 위해 런타임 조회로 전환.
 # 이전 방식(하드코딩 "0.22.1") 은 pyproject bump 시마다 수동 갱신 필요해 0.24.0 시점에
 # drift 발각(pip metadata=0.24.0 vs runtime=0.22.1). importlib.metadata 는 설치된
@@ -447,8 +440,4 @@ __all__ = [
     "register_skill_body",
     "list_skill_names",
     "get_skill_body",
-    # v1.13.0 — cluster 양방향 sync
-    "register_to_cluster",
-    "fetch_from_cluster",
-    "ClusterSyncError",
 ]

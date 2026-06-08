@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.17.1"
+version = "1.18.0"
 description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. 버전 히스토리는 CHANGELOG.md 참조."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -117,7 +117,8 @@ build-backend = "setuptools.build_meta"
 include = ["xgen_harness*"]
 
 # v0.10.0+ 컴파일러 템플릿은 순수 Python 문자열이라 package-data 불필요.
-# v0.22.0+ integrations/ 삭제 — xgen 특화 정책 JSON 은 이식 측(harness_bridge) 소유.
+# v1.18.0 — integrations/(cluster_sync) 제거 완료. xgen cluster 왕복 등 도메인 로직은
+# 이식 측(harness_bridge) 소유 (엔진은 도메인 agnostic 유지).
 
 # ─── v0.11.21 — 타입체커 gate (점진 도입) ───
 # code review 등급 C+ (타입 안전성) → B+ 로 끌어올리는 baseline.
