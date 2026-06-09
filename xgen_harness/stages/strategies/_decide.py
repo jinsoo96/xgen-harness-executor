@@ -103,6 +103,32 @@ class ThresholdDecide(DecideStrategy):
                     "reason": f"재시도 한도 도달 ({retry_count}/{max_retries}, 점수 {validation_score:.2f})",
                 }
 
+        # ── terminal tool 호출 완료 — submit_result 같은 '종착' 도구가 마지막으로 호출됐으면
+        #   합성을 더 요구하지 말고 즉시 complete. submit 후 짧은 확인문구를 아래 '인트로(<200자)'
+        #   로 오인해 무한 continue(→ 90루프 + assistant-prefill ValidationException)하던 것을
+        #   근본 차단. 하드코딩 X — 이식측이 stage_params.s08_decide.terminal_tools 로 지정.
+        terminal_tools = params.get("terminal_tools")
+        if not terminal_tools:
+            try:
+                _cfg = getattr(state, "config", None)
+                terminal_tools = (
+                    (_cfg.stage_params.get("s08_decide") or {}).get("terminal_tools")
+                ) if _cfg else None
+            except Exception:
+                terminal_tools = None
+        terminal_tools = set(terminal_tools or [])
+        if terminal_tools:
+            _last_tool = ""
+            for _h in reversed(getattr(state, "tool_call_history", None) or []):
+                if isinstance(_h, dict):
+                    _last_tool = str(_h.get("tool_name") or "")
+                    break
+            if _last_tool in terminal_tools:
+                return {
+                    "decision": LOOP_COMPLETE,
+                    "reason": f"terminal tool 호출 완료 ({_last_tool})",
+                }
+
         # v1.0.6 — 도구 호출 직후 합성 답변 미완 케이스 우선 식별.
         # 도구가 실행됐고 (tools_executed_count > 0) + 최종 답변이 비어있고 +
         # last_assistant_text 가 짧은 인트로(< 200자)이면 그 텍스트는 도구 호출

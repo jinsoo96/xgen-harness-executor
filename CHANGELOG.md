@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.18.2 (2026-06-09) — ThresholdDecide: terminal tool 완료(submit 후 무한 continue 차단)
+
+`ThresholdDecide` 가 도구 실행 직후 짧은 텍스트(<200자)를 "인트로 — 합성 미완"으로 보고
+CONTINUE 하던 휴리스틱이, `submit_result` 같은 **종착(terminal) 도구** 호출 후의 짧은
+확인문구까지 인트로로 오인 → 무한 continue(루프 소진 + provider 의 assistant-message
+prefill 거부)를 유발했다.
+
+- **추가**: `stage_params.s08_decide.terminal_tools`(list). 마지막 호출 도구가 이 목록에
+  있으면 `LOOP_COMPLETE`(인트로-continue 휴리스틱보다 우선). 미지정 시 동작 불변(backward-safe).
+- 판정 소스 = `state.tool_call_history`(s07_act 가 `{tool_name,...}` append) — 메시지 포맷 무관.
+- 이식측은 submit 류 도구를 `terminal_tools` 로 지정해 활성화(예: `["submit_result"]`).
+- additive·공개 API 보존·기존 미지정 워크플로우 무영향.
+
 ## v1.18.1 (2026-06-09) — 엔진 하드닝: 테스트 토대 + 안정 에러코드 + 장기실행 메모리 + provider base_url
 
 geny-executor 등 외부 하네스 대비 진단에서 드러난 엔지니어링 위생/철학 격차를 메움.
