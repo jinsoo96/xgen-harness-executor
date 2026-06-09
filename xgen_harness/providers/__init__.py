@@ -78,6 +78,47 @@ PROVIDER_MODELS: dict[str, list[str]] = {
 }
 
 
+# 프로바이더별 기본 base_url — OpenAI 호환 엔드포인트.
+#
+# ⚠️ google/bedrock/vllm 은 기본적으로 OpenAIProvider(httpx) 가 OpenAI 호환
+# 엔드포인트로 호출하는 **shim** 이다 (네이티브 SDK 아님). 이 매핑이 없으면
+# create_provider("google") 가 base_url=None → api.openai.com 으로 떨어져
+# Gemini 모델명을 OpenAI 에 보내는 조용한 오작동이 난다 (연동성 결함).
+#
+# 네이티브 통합(예: Gemini thinking blocks, Bedrock SigV4)이 필요하면
+# `register_provider("google", NativeGeminiProvider)` 또는 entry_points
+# `xgen_harness.providers` 로 **코어 수정 없이** 교체한다 — 그때 이 매핑은
+# 무시된다. 즉 기본은 compat-shim, 고급은 plugin override (PHILOSOPHY ②연동성).
+PROVIDER_DEFAULT_BASE_URL: dict[str, str] = {
+    # Gemini OpenAI 호환 엔드포인트 (Google AI Studio).
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    # vLLM 은 배포 위치가 환경마다 달라 기본값을 박지 않음 — VLLM_API_BASE_URL
+    # 또는 register_provider(base_url=) 로 주입. (로컬 기본은 의도적으로 비움)
+    "vllm": "",
+    # Bedrock 은 직접 호출이 SigV4 라 OpenAI 호환 프록시 URL 이 필요 —
+    # BEDROCK_API_BASE_URL 로 주입. 기본값 없음.
+    "bedrock": "",
+}
+
+
+def get_provider_base_url(provider: str) -> Optional[str]:
+    """프로바이더의 base_url 해석 (create_provider 가 base_url 미지정 시 사용).
+
+    우선순위:
+      1) ``{PROVIDER_UPPER}_API_BASE_URL`` env (예: ``GOOGLE_API_BASE_URL``)
+      2) ``PROVIDER_DEFAULT_BASE_URL`` 레지스트리 (register_provider 로 외부 등록)
+      3) None → 호출 provider 클래스의 자체 기본값 (OpenAIProvider=api.openai.com)
+
+    엔진은 이 헬퍼만 사용 — 하드코딩 URL 직접 접근 금지 (PHILOSOPHY ③무하드코딩).
+    """
+    key = (provider or "").lower()
+    env_val = os.environ.get(f"{key.upper()}_API_BASE_URL", "").strip()
+    if env_val:
+        return env_val
+    registry_val = PROVIDER_DEFAULT_BASE_URL.get(key, "").strip()
+    return registry_val or None
+
+
 def get_provider_models(provider: str) -> list[str]:
     """프로바이더별 모델 목록 (기본 모델 포함, 중복 제거).
 
@@ -102,12 +143,13 @@ def register_provider(
     models: Optional[list[str]] = None,
     api_key_env: Optional[str] = None,
     context_limit: Optional[int] = None,
+    base_url: Optional[str] = None,
 ) -> None:
     """프로바이더 등록. 기존 이름이면 덮어씀.
 
     외부 패키지(예: xgen-bedrock-provider) 는 단 한번의 호출로 UI 드롭다운 /
-    API key 탐색 / 컨텍스트 한도까지 선언할 수 있다. 레지스트리만 건드리므로
-    엔진 소스 수정 0.
+    API key 탐색 / 컨텍스트 한도 / 기본 base_url 까지 선언할 수 있다. 레지스트리만
+    건드리므로 엔진 소스 수정 0.
 
     Args:
         name: 프로바이더 식별자 (소문자 권장).
@@ -116,6 +158,8 @@ def register_provider(
         models: UI 드롭다운에 표시할 추가 모델 목록.
         api_key_env: API 키 환경변수명 (예: ``MY_PROVIDER_API_KEY``).
         context_limit: 문자 수 기준 컨텍스트 한도 (s07 중간축약 기준).
+        base_url: 기본 base_url (OpenAI 호환 shim 의 엔드포인트). 네이티브
+            provider 클래스면 보통 불필요 — 클래스가 자체 URL 을 안다.
     """
     key = name.lower()
     _REGISTRY[key] = cls
@@ -127,6 +171,8 @@ def register_provider(
         PROVIDER_API_KEY_MAP[key] = api_key_env
     if context_limit is not None:
         PROVIDER_CONTEXT_LIMITS[key] = int(context_limit)
+    if base_url is not None:
+        PROVIDER_DEFAULT_BASE_URL[key] = base_url
     logger.debug("Provider registered: %s → %s", name, cls.__name__)
 
 
@@ -169,7 +215,10 @@ def create_provider(
             raise ValueError(f"Provider '{name}' not registered and no OpenAI fallback")
 
     if base_url is None:
-        base_url = os.environ.get(f"{name.upper()}_API_BASE_URL")
+        # env > PROVIDER_DEFAULT_BASE_URL 레지스트리 > None(클래스 자체 기본).
+        # google/vllm/bedrock 같은 OpenAI 호환 shim 이 엔드포인트를 못 찾아
+        # api.openai.com 으로 떨어지던 조용한 오작동을 막는다.
+        base_url = get_provider_base_url(name)
 
     return cls(api_key, model, base_url)
 
@@ -258,13 +307,20 @@ def get_default_provider() -> str:
 def _register_defaults() -> None:
     """빌트인 프로바이더 등록.
 
-    - anthropic: Anthropic Messages API (httpx SSE)
-    - openai: OpenAI Chat Completions API (httpx SSE)
-    - google: Gemini → OpenAI 호환 엔드포인트
-    - bedrock: AWS Bedrock → OpenAI 호환 (프록시 또는 직접)
-    - vllm: vLLM → OpenAI 호환 엔드포인트
+    - anthropic: Anthropic Messages API (httpx SSE) — **네이티브**
+    - openai:    OpenAI Chat Completions API (httpx SSE) — **네이티브**
+    - google:    Gemini → OpenAI 호환 엔드포인트 — **compat shim** (OpenAIProvider)
+    - bedrock:   AWS Bedrock → OpenAI 호환 (프록시) — **compat shim**
+    - vllm:      vLLM → OpenAI 호환 엔드포인트 — **compat shim**
 
-    새 프로바이더 추가: register_provider("name", ProviderClass)
+    ⚠️ google/bedrock/vllm 은 OpenAIProvider 를 base_url 만 바꿔 재사용하는 shim 이다.
+    Gemini thinking blocks·Bedrock SigV4 같은 네이티브 기능이 필요하면 별도 패키지가
+    `register_provider("google", NativeGeminiProvider)` 또는 entry_points
+    `xgen_harness.providers` 로 **코어 수정 없이** 교체한다 (PHILOSOPHY ②연동성:
+    엔진은 provider-agnostic, 네이티브는 plugin). 기본 base_url 은
+    PROVIDER_DEFAULT_BASE_URL / get_provider_base_url() 가 해석.
+
+    새 프로바이더 추가: register_provider("name", ProviderClass, base_url=...)
     v0.15.1 — entry_points 그룹 `xgen_harness.providers` 자동 발견 추가.
     """
     if _REGISTRY:
@@ -380,7 +436,9 @@ __all__ = [
     "get_default_provider",
     "get_provider_models",
     "get_context_limit",
+    "get_provider_base_url",
     "resolve_api_key_from_file",
     "PROVIDER_API_KEY_MAP", "PROVIDER_DEFAULT_MODEL", "PROVIDER_MODELS",
     "PROVIDER_CONTEXT_LIMITS", "DEFAULT_CONTEXT_LIMIT_CHARS",
+    "PROVIDER_DEFAULT_BASE_URL",
 ]

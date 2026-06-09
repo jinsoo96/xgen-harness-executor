@@ -11,6 +11,9 @@ from .hierarchy import (
     MCPConnectionError,
     ValidationError,
     PipelineAbortError,
+    ALL_ERROR_CODES,
+    error_code,
+    provider_code_for_category,
 )
 
 __all__ = [
@@ -26,4 +29,7 @@ __all__ = [
     "MCPConnectionError",
     "ValidationError",
     "PipelineAbortError",
+    "ALL_ERROR_CODES",
+    "error_code",
+    "provider_code_for_category",
 ]

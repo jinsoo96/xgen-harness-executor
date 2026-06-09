@@ -90,6 +90,22 @@ from .errors import (
 from .core.builder import PipelineBuilder
 from .core.strategy_resolver import StrategyResolver
 from .core.session import HarnessSession, SessionManager
+# 장기실행(multi-session) 메모리 — progress artifact + 영속 SessionStore (entry_point 확장).
+from .memory import (
+    ProgressStatus,
+    ProgressItem,
+    ProgressLog,
+    SessionStore,
+    InMemorySessionStore,
+    FileSessionStore,
+    register_session_store,
+    get_session_store,
+    available_session_stores,
+    save_session,
+    load_session,
+    attach_progress,
+    read_progress,
+)
 from .orchestrator.dag import DAGOrchestrator, AgentNode, DAGEdge, DAGResult, DAGCycleError
 from .orchestrator.multi_agent import MultiAgentExecutor
 from .core.services import ServiceProvider, NullServiceProvider
@@ -238,6 +254,20 @@ __all__ = [
     "HarnessConfig",
     "ALL_STAGES",
     "REQUIRED_STAGES",
+    # 장기실행 메모리 (multi-session)
+    "ProgressStatus",
+    "ProgressItem",
+    "ProgressLog",
+    "SessionStore",
+    "InMemorySessionStore",
+    "FileSessionStore",
+    "register_session_store",
+    "get_session_store",
+    "available_session_stores",
+    "save_session",
+    "load_session",
+    "attach_progress",
+    "read_progress",
     "PRESETS",
     "Preset",
     "get_preset",

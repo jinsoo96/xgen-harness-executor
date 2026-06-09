@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.18.1 (2026-06-09) — 엔진 하드닝: 테스트 토대 + 안정 에러코드 + 장기실행 메모리 + provider base_url
+
+geny-executor 등 외부 하네스 대비 진단에서 드러난 엔지니어링 위생/철학 격차를 메움.
+전부 **additive·공개 API 보존·이식측(xgen-workflow >=1.16,<2.0) 무영향**.
+
+> v1.18.0(아래, 2026-06-05 garbage 청소)과 **병렬로** 작성된 기능 릴리즈. PyPI 1.18.0 은
+> 본 기능들을 담았으나 cleanup 이전 트리라 `integrations/` 가 남아있던 transient — cleanup +
+> 기능 통합본을 **1.18.1** 로 재배포해 PyPI/GitHub 최신을 일치시킴.
+
+### Fixed (CRITICAL — 자기모순/연동성 결함)
+- **`.gitignore` 가 `test_*.py` / `tests/` 를 추적 거부하던 자기모순 해소**. pyproject
+  는 `testpaths=["."]` + `python_files=["test_*.py"]` 로 루트 테스트를 수집하는데
+  git 이 무시해 **"테스트 0건"이 구조적으로 강제**되고 있었다. 누가 테스트를 써도
+  커밋이 안 됐음. 이제 추적; 일회성 스크래치는 `_*.py` prefix 로 분리.
+- **OpenAI 호환 provider(google/bedrock/vllm)가 엔드포인트를 못 찾아 `api.openai.com`
+  으로 떨어지던 결함 fix**. `create_provider("google")` 가 base_url=None → OpenAI
+  로 Gemini 모델명을 보내는 조용한 오작동. `PROVIDER_DEFAULT_BASE_URL` 레지스트리 +
+  `get_provider_base_url()` (env > 레지스트리 > 클래스기본) 로 해결. google 은 Gemini
+  OpenAI 호환 엔드포인트로 자동 라우팅.
+
+### Added — 테스트 토대 (0 → 151 tests)
+- **엔진 첫 회귀 테스트 스위트** (`test_*.py`, 모두 deterministic·무네트워크, 0.5s):
+  에러 계층/분류, provider 레지스트리(이식측 공개 API 계약 잠금), Policy Gate Guard
+  순수로직, 공개 표면(top-level 16 + 이식측 deep import 경로), 장기실행 메모리.
+
+### Added — 안정 에러코드 계약 (geny 의 error-code stability contract 대응)
+- 모든 `HarnessError` 에 `code` = `exec.<component>.<reason>` (메시지와 독립한 머신
+  식별자). `ProviderError` 는 category 기반 property, 나머지는 클래스 속성.
+  `ALL_ERROR_CODES` / `error_code(exc)` / `provider_code_for_category()` 공개.
+  `test_error_codes_stability.py` 가 클래스→코드·카테고리→코드·HTTP status→코드
+  전체 매핑을 **하드 고정** — 무심결의 breaking change 가 코드리뷰에 드러남.
+
+### Added — 장기실행(multi-session) 메모리 (`xgen_harness.memory`)
+- **`ProgressLog` / `ProgressItem`** — 세션 밖에 사는 progress artifact(feature-list
+  대응). Anthropic "long-running agents" 의 세션 간 상태 인계를 구현 (s06_context 의
+  세션 *내* 압축과 보완). JSON 직렬화, `pending()`/`next_pending()`/`is_complete()`.
+- **`SessionStore` Protocol + InMemory/File 빌트인** — provider-agnostic, 무거운
+  의존성 0. 플랫폼은 entry_points `xgen_harness.session_stores` 로 자기 DB 백엔드를
+  코어 수정 없이 주입. `save_session`/`load_session`/`attach_progress`/`read_progress`
+  로 세션↔store 인계 (session.py 무수정).
+
+### Changed — provider 정직성 (②연동성)
+- google/bedrock/vllm 이 OpenAIProvider 를 base_url 만 바꿔 쓰는 **compat shim** 임을
+  docstring 에 명시 + 네이티브 SDK 통합은 `register_provider`/entry_points 로 코어
+  수정 없이 override 하는 seam 을 문서화. `register_provider(..., base_url=)` 추가.
+
 ## v1.18.0 (2026-06-05)
 
 ### Removed (garbage / 도메인 잔재 청소)

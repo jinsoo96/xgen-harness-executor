@@ -17,5 +17,8 @@ docs/
 bench_*.json
 smoke_report.json
 .pytest_cache/
-tests/
-test_*.py
+# ⚠️ test_*.py / tests/ 는 더 이상 ignore 하지 않는다 (v1.18.0).
+# pyproject 가 testpaths=["."] + python_files=["test_*.py"] 로 루트 test_*.py 를
+# 수집하는데 git 이 추적을 거부해 "테스트 0건"이 강제되던 자기모순을 해소.
+# 일회성 스크래치는 underscore prefix(_*.py) 컨벤션으로 분리한다.
+_*.py
