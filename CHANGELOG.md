@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.18.5 (2026-06-10) — 🚨 패키징 핫픽스: memory/__init__.py 가 wheel 에서 누락 (1.18.1~1.18.4 전부 깨짐)
+
+**증상**: PyPI 1.18.1~1.18.4 wheel 설치 시 `import xgen_harness` 자체가
+`ImportError: cannot import name 'ProgressStatus' from 'xgen_harness.memory' (unknown location)` 로 실패.
+하네스 실행·컴파일·publish 전부 다운 (dev-xgen 2026-06-10 재배포에서 실증).
+
+**근본 원인 (2단 결합)**:
+1. v1.18.0 의 `.gitignore` 스크래치 컨벤션 `_*.py` 가 **`__init__.py` 까지 매칭** →
+   v1.18.1 에서 신설된 `xgen_harness/memory/__init__.py` 가 git 에 한 번도 커밋되지 못함.
+2. pyproject `[tool.setuptools.packages.find]` 는 namespace 패키지를 허용하므로
+   fresh clone 빌드(CI/타세션)에서 `memory/` 가 `__init__.py` 없는 **namespace 패키지**로 wheel 에 포장됨
+   (progress.py·store.py 는 들어가고 re-export 만 증발 → "(unknown location)").
+   로컬 빌드는 디스크에 untracked 파일이 있어 멀쩡 — 그래서 늦게 발견.
+
+**수정**:
+- `.gitignore`: `_*.py` 아래 `!__init__.py` 재포함 + 경고 주석.
+- `xgen_harness/memory/__init__.py` 커밋 (re-export 정본).
+- 검증: `git archive HEAD` 로 fresh-clone 시뮬레이션 빌드 → wheel 에 `memory/__init__.py` 포함 확인.
+
+## (동봉) compile: wheel MCP 도구 인자명 `user_input` → `input` 통일
+
+npm(node-engine `serve-mcp`)·하네스 게이트웨이 MCP 는 인자명이 `input` 인데
+wheel(FastMCP `run_workflow`)만 `user_input` 이라 클라이언트가 산출물 종류마다 스키마를 다시 봐야 했음.
+`python_compile.py` MCP 템플릿의 도구 시그니처를 `input` 으로 통일 (도구명 `run_workflow` 은 유지).
+기발행 wheel 영향 없음 — 신규 컴파일부터 적용.
+
 ## v1.18.4 (2026-06-09) — Finalize: 빈 최종출력 fallback (마지막 유효 응답/제출 보존)
 
 retry 소진(max_retries)이나 마지막 턴 실패(provider 에러)로 `final_output`/`last_assistant_text`

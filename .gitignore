@@ -21,4 +21,8 @@ smoke_report.json
 # pyproject 가 testpaths=["."] + python_files=["test_*.py"] 로 루트 test_*.py 를
 # 수집하는데 git 이 추적을 거부해 "테스트 0건"이 강제되던 자기모순을 해소.
 # 일회성 스크래치는 underscore prefix(_*.py) 컨벤션으로 분리한다.
+# ⚠️ _*.py 는 __init__.py 도 삼킨다 — 패키지 마커는 반드시 재포함할 것.
+#    (v1.18.1~1.18.4 PyPI wheel 에서 xgen_harness/memory/__init__.py 가 빠져
+#     `import xgen_harness` 자체가 ImportError 나는 사고의 원인이었다.)
 _*.py
+!__init__.py
