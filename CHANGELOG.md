@@ -1,16 +1,20 @@
 # Changelog
 
-## v1.18.3 (2026-06-09) — 멀티에이전트 코드검수 fix: 보안(SSRF/시크릿) + judge 정합 + coalescing 버그
+## v1.18.4 (2026-06-09) — Finalize: 빈 최종출력 fallback (마지막 유효 응답/제출 보존)
 
-geny-executor 대비 코드검수(서브시스템별 병렬 audit)에서 나온 검증된 HIGH/MED findings 일괄
-수정. 전부 회귀 테스트 동반(+33, 총 190 green). 이식측 무영향(additive·공개 API 보존).
-
-### Finalize — 빈 최종출력 fallback (마지막 유효 응답/제출 보존)
 retry 소진(max_retries)이나 마지막 턴 실패(provider 에러)로 `final_output`/`last_assistant_text`
 가 모두 비면 s09 가 빈 문자열을 확정해 다운스트림이 빈값을 받았다("N회 retry 후 빈값",
 부분 결과 유실). `FinalizeStage._fallback_output` 추가: ① messages 역순 마지막 비어있지 않은
 assistant 텍스트 ② tool_call_history 마지막 도구 제출 payload(submit 류 우선,
 `[finalize-fallback]` prefix) 순으로 폴백. 유효 출력 시 동작 불변. WARNING 으로 발동 노출.
+
+> PyPI 1.18.3 은 아래 코드검수 fix 만 포함된 빌드로 먼저 발행됨(타 세션 twine). 본 fallback
+> 은 1.18.4 부터.
+
+## v1.18.3 (2026-06-09) — 멀티에이전트 코드검수 fix: 보안(SSRF/시크릿) + judge 정합 + coalescing 버그
+
+geny-executor 대비 코드검수(서브시스템별 병렬 audit)에서 나온 검증된 HIGH/MED findings 일괄
+수정. 전부 회귀 테스트 동반(+33, 총 190 green). 이식측 무영향(additive·공개 API 보존).
 
 ### Security
 - **frozen_source SSRF 가드** — `_dispatch_http` 가 최종 URL host 를 검증. LLM args 가 URL
