@@ -115,7 +115,16 @@ class ToolIndexStage(Stage):
         if not isinstance(tool_description_overrides, dict):
             tool_description_overrides = {}
         rag_collections: list[str] = self.get_param("rag_collections", state, []) or []
-        rag_top_k: int = self.get_param("rag_top_k", state, None) or 0
+        # v1.18.6 — 미설정/0 이면 0 으로 두지 말 것. limit=0 검색은 Qdrant 가 빈 결과를
+        # 돌려줘 RAG 가 조용히 사문된다(standalone 컴파일 wheel 은 연결노드 top_k 가 없어
+        # 항상 여기로 떨어졌다). runtime floor("rag_top_k"=4) 로 폴백.
+        from ...core.runtime_defaults import resolve_with_default
+        _rtk_raw = self.get_param("rag_top_k", state, None)
+        try:
+            _rtk = int(_rtk_raw) if _rtk_raw is not None else 0
+        except (TypeError, ValueError):
+            _rtk = 0
+        rag_top_k: int = _rtk if _rtk > 0 else int(resolve_with_default(None, "rag_top_k", 4))
 
         # ─── 0.5 Capability 바인딩 ────────────────────────────────────
         # (a) config.capabilities 명시 선언 → materialize

@@ -33,6 +33,7 @@ _RUNTIME_DEFAULTS: dict[str, Any] = {
     "max_retries": 3,                       # judge retry 무한 방지
     "max_tool_rounds": 8,                   # tool_use multi-turn 상한
     "validation_threshold": 0.0,            # judge 항상 통과 (sentinel-as-safe)
+    "rag_top_k": 4,                         # RAG 검색당 문서 수 — 미설정 시 floor (0/limit=0 검색 방지)
 
     # Pipeline safeguard 임계
     "synthesis_intro_threshold_chars": 200, # tool_use 후 짧은 인트로 → synthesis 재호출 컷

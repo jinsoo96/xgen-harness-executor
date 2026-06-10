@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.18.6 (2026-06-10) — 🩹 standalone 컴파일 산출물 RAG 복구 (doc_service → services 브리지)
+
+**증상**: 컴파일된 wheel/npm 산출물을 외부 환경(cluster 밖)에서 `QDRANT_URL`+키 wire 후
+실행하면 RAG 검색이 항상 `DocumentService is not available. RAG search is unavailable —
+호스트가 ResourceRegistry 에 documents 서비스를 주입해야 합니다` 로 실패. (도구 없는 단순
+답변·judge 는 정상 — RAG 만 사문)
+
+**근본 원인**: 컴파일 `flow.py.build_pipeline()` 은 `Pipeline.from_config(doc_service=
+QdrantDocService(...))` 로 주입하고, `Pipeline.run()` 은 이를 `state.doc_service` 에 박는다.
+그러나 **`state.doc_service` 를 읽는 stage 가 하나도 없다** — s04_tool / s07_act 의
+RAGSearchTool 은 `state.metadata["services"].documents`(ServiceProvider) 를 본다.
+cluster(XgenAdapter) 는 `metadata["services"]` 를 직접 박아 동작했으나, standalone 주입
+경로는 그 다리가 없어 doc_service 가 고아가 됐다. (즉 컴파일 산출물 RAG 는 한 번도 동작한 적 없음)
+
+**수정**: `Pipeline.run()` 에서 주입된 doc_service 가 있고 `metadata["services"]` 가 비어
+있으면 `ServiceProvider(documents=doc_service)` 로 채운다 — 모든 stage 가 이미 읽는 정식
+컨트랙트 경로. cluster 가 이미 services 를 박은 경우엔 손대지 않음(BC).
+
+**추가 수정 — `rag_top_k=0` → limit=0 사문**: s04_tool 이 `rag_top_k = get_param(...) or 0`
+라 미설정 시 0 → RAGSearchTool limit=0 → Qdrant 200 OK 인데 빈 결과 → LLM "데이터 없음".
+연결노드 top_k 가 top-level 로 전파되는 cluster 와 달리 standalone 컴파일 wheel 은 항상
+이 경로로 떨어졌다(이식측이 rag_top_k 노드 파라미터를 제거한 뒤 더 심해짐). runtime
+floor 에 `"rag_top_k": 4` 추가 + s04 가 미설정/0 이면 floor 로 폴백하도록 수정.
+**추가 수정 — tool_result preview 0자 truncation 사문**: s07_act 가
+`tool_result_preview_threshold/size = get_param(...) or 0` 라 미설정 시 둘 다 0 →
+threshold=0(모든 결과 초과) + preview_size=0(`[:0]`=빈 문자열) → **모든 도구 결과가
+"preview 0자" 로 잘려 LLM 에 본문이 전혀 전달 안 됨**. rag_search 가 5천자를 찾고도
+LLM 은 0자만 받아 "데이터 없음" 으로 답하던 사문. → 둘 다 명시(>0)일 때만 preview 압축,
+미설정이면 전체 본문 전달하도록 수정. (rag_top_k 와 동일한 `or 0` sentinel 안티패턴)
+
+검증: 로컬 Qdrant(text-embedding-3-small, 패션 상품리뷰 컬렉션)에 컴파일 wheel 을
+MCP(stdio)로 붙여 `run_workflow` → rag_search 실히트(top_k=4) + review_content·size_satisfaction
+실제 값 인용 답변 확인.
+
 ## v1.18.5 (2026-06-10) — 🚨 패키징 핫픽스: memory/__init__.py 가 wheel 에서 누락 (1.18.1~1.18.4 전부 깨짐)
 
 **증상**: PyPI 1.18.1~1.18.4 wheel 설치 시 `import xgen_harness` 자체가

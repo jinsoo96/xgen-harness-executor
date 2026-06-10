@@ -202,7 +202,13 @@ class ExecuteStage(Stage):
             # LLM 은 `fetch_pd(kind="tool_result", id=<tool_use_id>)` 로 원본 재접근.
             preview_threshold = int(self.get_param("tool_result_preview_threshold", state, None) or 0)
             preview_size = int(self.get_param("tool_result_preview_size", state, None) or 0)
-            if original_chars > preview_threshold:
+            # v1.18.6 — 미설정 시 schema default 가 None → `or 0` 로 둘 다 0 이 되는데,
+            # 그러면 threshold=0(모든 결과가 초과) + preview_size=0([:0]=빈 문자열) 이라
+            # 모든 도구 결과가 "preview 0자" 로 잘려 LLM 에 본문이 전혀 안 간다.
+            # (cluster 는 이 stage_param 을 박아서 안 걸렸고, standalone 컴파일 wheel 의
+            #  RAG 가 5천자를 찾고도 0자로 전달돼 "데이터 없음" 답하던 사문 버그.)
+            # → 둘 다 명시(>0)된 경우에만 preview 압축. 미설정이면 전체 본문 그대로 전달.
+            if preview_threshold > 0 and preview_size > 0 and original_chars > preview_threshold:
                 preview_body = result_text[:preview_size]
                 hint = (
                     f"\n\n... [PD: 원본 {original_chars:,}자 — preview {preview_size:,}자만 표시. "

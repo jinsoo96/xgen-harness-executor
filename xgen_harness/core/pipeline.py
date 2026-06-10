@@ -121,6 +121,16 @@ class Pipeline:
         if self._injected_provider is not None and getattr(state, "provider", None) is None:
             state.provider = self._injected_provider
 
+        # v1.18.6 — 주입된 doc_service 를 stage 들이 실제로 읽는 경로
+        # (state.metadata["services"].documents) 까지 연결한다. from_config(doc_service=) 는
+        # 그동안 state.doc_service 에만 박혔는데 어떤 stage 도 그걸 읽지 않아(s04/s07 RAG 는
+        # metadata["services"].documents 를 본다) standalone 컴파일 wheel 의 RAG 가 항상
+        # "DocumentService is not available" 로 죽었다. cluster(XgenAdapter) 는
+        # metadata["services"] 를 직접 박으므로, 이미 있으면 건드리지 않는다 (BC).
+        if self._injected_doc_service is not None and state.metadata.get("services") is None:
+            from .services import ServiceProvider
+            state.metadata["services"] = ServiceProvider(documents=self._injected_doc_service)
+
         try:
             # ━━━━ v0.14.0 — LLM provider 1 회 선초기화 ━━━━
             # "한 번 설정하고 그 핸들을 쭉 재사용" — state.provider 를 Pipeline 진입부에서
