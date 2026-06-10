@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.18.3 (2026-06-09) — 멀티에이전트 코드검수 fix: 보안(SSRF/시크릿) + judge 정합 + coalescing 버그
+
+geny-executor 대비 코드검수(서브시스템별 병렬 audit)에서 나온 검증된 HIGH/MED findings 일괄
+수정. 전부 회귀 테스트 동반(+33, 총 190 green). 이식측 무영향(additive·공개 API 보존).
+
+### Security
+- **frozen_source SSRF 가드** — `_dispatch_http` 가 최종 URL host 를 검증. LLM args 가 URL
+  placeholder 를 채워 loopback/link-local(`169.254.169.254` 클라우드 메타데이터)로 유도하던
+  벡터 차단. `call_spec.allow_internal=true` 우회, `block_private_hosts=true` 로 RFC1918 도.
+- **MCP spawn 환경변수 누출 fix** — `_mcp_via_spawn` 이 spawn 서브프로세스에 `os.environ`
+  **전체**(모든 시크릿)를 넘기던 것 → 선언된 `env_keys` + 최소 시스템 변수만 화이트리스트.
+  (주석은 "env_keys 만"이라는데 코드가 전부 넘기던 것)
+- **에러 응답 시크릿 마스킹** — 업스트림 4xx 본문·예외 문자열을 LLM 에 그대로 반환하던 것에서
+  주입 시크릿 값 `***` 마스킹.
+- **compile: SECRET default 비-baking** — `${KEY:sk-LIVE}` 인라인 default 가 배포 산출물
+  (spec.json/wheel)에 평문으로 박히던 것 차단. SECRET 은 직렬화·런타임 폴백 모두에서 default
+  무시 + 항상 required(env/override 강제). `to_dict`/`from_dict`/`scan`/`collect_runtime` 3중.
+
+### Fixed (judge — 규제 정합)
+- **hard 제약 실구현** — `criteria_defs[i].hard=true` 축 점수가 threshold 미만이면 가중평균과
+  무관하게 overall 즉시 0 → 무조건 retry. v1.17.0 가 약속만 하고 미구현이던 것(`hard` 가
+  docstring 에만 있었음). 규제=격리 judge 철학의 핵심.
+- **정당한 `overall:0.0` 존중** — judge 가 진짜 0 점을 줘도 '누락'으로 보고 가중평균(~0.5)으로
+  부풀리던 것 → `"overall" in data` 로 부재만 감지.
+- **fail-open 제거** — judge 파싱 실패 시 가짜 pass(0.7)로 gate 를 무력화하던 것 → **bypass**
+  (validation_score 미설정 → 정상 종료). fake-pass 도 무한 retry 도 안 함.
+
+### Fixed (correctness)
+- **`max_retries` 명시 0 무시 버그** — `... or default` 가 명시 0(retry 끔)을 삼켜 default(3)
+  로 강제하던 것(s08_decide stage + _decide 양쪽).
+- **`max_history` 명시 0 = 전체 주입 버그** — `[-0:]` 가 전체를 반환. None(미설정)=전체,
+  명시 0=없음, N>0=마지막 N 으로 정정(기본 동작 보존).
+- **terminal_tools 현재-iteration 가드** — 과거 iteration 의 잔존 terminal 호출이 텍스트-only
+  턴을 조기종료시키던 엣지 차단(v1.18.2 보강, backward-safe).
+- **compile python-literal 문자열 손상 fix** — `_dict_to_python_literal` 의 json 문자열 치환이
+  string **값 내부**의 `null`/`true`/`false` 단어까지 바꾸던 것(system_prompt "judge true or
+  false" → "...True...") → `pprint.pformat` 으로 교체(무손상·valid Python).
+- **google base_url 정상화** — v1.18.1 이 `.../v1beta/openai/` 만 줘서 normalize 가
+  `/v1/chat/completions` 를 덧붙여 `.../openai/v1/chat/completions`(404) 를 만들던 것 →
+  전체 엔드포인트로 고정.
+
+### Tests
+- +33 회귀 테스트: judge(hard/0.0/bypass) · decide(iteration 가드/max_retries) · history ·
+  external_inputs(secret) · compile literal · SSRF. 총 **190 green**.
+
 ## v1.18.2 (2026-06-09) — ThresholdDecide: terminal tool 완료(submit 후 무한 continue 차단)
 
 `ThresholdDecide` 가 도구 실행 직후 짧은 텍스트(<200자)를 "인트로 — 합성 미완"으로 보고

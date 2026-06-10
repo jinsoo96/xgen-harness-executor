@@ -30,11 +30,13 @@ call_kind 매트릭스 (dispatch.ts 와 동일):
 from __future__ import annotations
 
 import contextvars
+import ipaddress
 import json
 import logging
 import os
+import socket
 from typing import Any, Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 
@@ -42,6 +44,42 @@ logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _MAX_CONTENT = 50_000
+
+# SSRF 가드 — 항상 차단하는 호스트명(스킴 무관).
+_SSRF_BLOCK_NAMES = {"localhost", "metadata", "metadata.google.internal"}
+
+
+def _host_is_blocked(host: str, *, block_private: bool = False) -> bool:
+    """SSRF 방어 — 호스트가 loopback/link-local(클라우드 메타데이터)/예약 IP 면 True.
+
+    기본은 loopback + link-local(169.254/16, 메타데이터 자격증명 탈취 벡터) + localhost/
+    metadata 이름만 차단(외부 SaaS 호출은 안 막음). block_private=True 면 RFC1918 사설망도.
+    이름 해석 실패는 차단 안 함(false-positive 회피 — httpx 가 알아서 실패).
+    """
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return True
+    if h in _SSRF_BLOCK_NAMES or h.endswith(".localhost"):
+        return True
+    ips: list[str] = []
+    try:
+        ipaddress.ip_address(h)
+        ips = [h]
+    except ValueError:
+        try:
+            ips = [ai[4][0] for ai in socket.getaddrinfo(h, None)]
+        except Exception:
+            return False
+    for ip_s in ips:
+        try:
+            ip = ipaddress.ip_address(ip_s)
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            return True
+        if block_private and ip.is_private:
+            return True
+    return False
 
 # nested subpipeline 재귀 깊이 가드 — 워크플로우 A 가 도구로 B 를, B 가 다시 A 를
 # 부르는 순환/폭주를 막는다. ContextVar 라 async 호출 트리마다 정확히 누적·복원.
@@ -163,17 +201,21 @@ class FrozenToolSource:
         headers: dict[str, str] = dict(spec.get("headers") or {})
 
         # 시크릿 env → 헤더/바디 inject. 미설정 env 를 모아 두었다가 호출 실패 시 안내.
+        # 주입한 시크릿 값은 따로 모아 두었다가 에러 응답에서 마스킹한다(누출 방지).
         missing: list[str] = []
+        secret_values: list[str] = []
         for key in (spec.get("secrets_keys") or []):
             val = os.environ.get(str(key))
             if val:
                 headers[str(key)] = val
+                secret_values.append(val)
             else:
                 missing.append(str(key))
         for header_name, env_key in (spec.get("secret_header_map") or {}).items():
             val = os.environ.get(str(env_key))
             if val:
                 headers[str(header_name)] = val
+                secret_values.append(val)
             else:
                 missing.append(str(env_key))
         secret_args: dict[str, Any] = {}
@@ -181,8 +223,15 @@ class FrozenToolSource:
             val = os.environ.get(str(env_key))
             if val:
                 secret_args[str(placeholder)] = val
+                secret_values.append(val)
             else:
                 missing.append(str(env_key))
+
+        def _redact(s: str) -> str:
+            for sv in secret_values:
+                if sv:
+                    s = s.replace(sv, "***")
+            return s
 
         render_args = {**args, **secret_args}
         query_params = _render_template(dict(spec.get("query_template") or {}), render_args)
@@ -220,6 +269,21 @@ class FrozenToolSource:
             if qs:
                 final_url = resolved_url + ("&" if "?" in resolved_url else "?") + qs
 
+        # SSRF 가드 — 최종 URL host 가 내부/링크로컬(메타데이터)면 차단. LLM args 가
+        # URL placeholder 를 채우므로 내부망/169.254.169.254 로 유도될 수 있다.
+        # spec.allow_internal=True 면 우회(운영자 내부 API 의도), block_private_hosts=True 면 RFC1918 도.
+        _parsed = urlparse(final_url)
+        if _parsed.scheme not in ("http", "https"):
+            return {"content": f"차단된 scheme: {_parsed.scheme or '(none)'}", "is_error": True}
+        if not bool(spec.get("allow_internal")) and _host_is_blocked(
+            _parsed.hostname or "", block_private=bool(spec.get("block_private_hosts"))
+        ):
+            return {
+                "content": f"SSRF 차단: 내부/링크로컬 호스트 '{_parsed.hostname}' "
+                           f"(허용하려면 call_spec.allow_internal=true)",
+                "is_error": True,
+            }
+
         req_headers = {"content-type": "application/json", **headers}
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -234,10 +298,12 @@ class FrozenToolSource:
                 hint = ""
                 if missing:
                     hint = " — " + _env_missing_msg(name, missing)
-                return {"content": f"{resp.status_code} {text[:500]}{hint}", "is_error": True}
+                # 업스트림 4xx 본문이 인증헤더/서명파라미터를 echo 할 수 있어 시크릿 마스킹.
+                return {"content": _redact(f"{resp.status_code} {text[:500]}{hint}"), "is_error": True}
             return {"content": text[:_MAX_CONTENT], "is_error": False}
         except Exception as e:
-            return {"content": str(e), "is_error": True}
+            # 예외 문자열에 URL(쿼리스트링 시크릿)이 섞일 수 있어 마스킹.
+            return {"content": _redact(str(e)), "is_error": True}
 
     # ── rag ──────────────────────────────────────────────────────────
     async def _dispatch_rag(self, td: dict, args: dict) -> dict:
@@ -416,8 +482,22 @@ class FrozenToolSource:
 
         command = str(spawn.get("server_command") or "")
         server_args = [str(a) for a in (spawn.get("server_args") or [])]
-        # env_keys 만 child 에 전달 + PATH 류 기본 환경 보존
-        child_env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
+        # 보안: 전 os.environ 을 child 에 넘기면 호스트의 **모든 시크릿**(타 provider 키 등)이
+        # spawn 된 MCP 서버에 노출된다. 선언된 env_keys 만 전달 + 프로세스 구동에 필요한
+        # 최소 시스템 변수만 화이트리스트(주석이 말하던 'env_keys 만'을 실제로 구현).
+        _BASE_ENV_KEYS = (
+            "PATH", "PATHEXT", "SYSTEMROOT", "SystemRoot", "WINDIR", "COMSPEC",
+            "TEMP", "TMP", "HOME", "LANG", "LC_ALL", "TZ", "NODE_PATH",
+        )
+        child_env: dict[str, str] = {}
+        for _k in _BASE_ENV_KEYS:
+            _v = os.environ.get(_k)
+            if isinstance(_v, str):
+                child_env[_k] = _v
+        for _k in (spawn.get("env_keys") or []):
+            _v = os.environ.get(str(_k))
+            if isinstance(_v, str):
+                child_env[str(_k)] = _v
         params = StdioServerParameters(
             command=command, args=server_args, env=child_env,
             cwd=str(spawn["working_dir"]) if spawn.get("working_dir") else None,

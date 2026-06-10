@@ -101,8 +101,10 @@ class DecideStage(Stage):
         # (s05_policy) 가 LOOP_BOUNDARY 훅에서 Guard 체인을 직접 실행한 결과를
         # state.policy_block_reason / loop_decision 으로 전달받아 그 결정을 존중.
         # max_retries 만 retry 카운트 비교용으로 의미.
+        # None(미설정) 을 그대로 전달 — _decide 가 미설정→default, 명시 0→retry 끔 구분.
+        # (이전: `or 0` 이 명시 0 을 삼켜 _decide 의 `0 or default` 로 default(3) 가 강제됐다.)
         params = {
-            "max_retries": self.get_param("max_retries", state, None) or 0,
+            "max_retries": self.get_param("max_retries", state, None),
         }
 
         try:

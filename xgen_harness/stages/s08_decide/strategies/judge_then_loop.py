@@ -70,7 +70,11 @@ def _resolve_selected_criteria(criteria: Any, criteria_defs: Any = None) -> dict
                 w = float(d.get("weight", 0.1))
             except (TypeError, ValueError):
                 w = 0.1
-            inline[nm] = {"description": str(d.get("description") or ""), "weight": w}
+            inline[nm] = {
+                "description": str(d.get("description") or ""),
+                "weight": w,
+                "hard": bool(d.get("hard", False)),
+            }
 
     if isinstance(criteria, str):
         criteria = [c.strip() for c in criteria.split(",") if c.strip()]
@@ -87,7 +91,11 @@ def _resolve_selected_criteria(criteria: Any, criteria_defs: Any = None) -> dict
                 w = float(item.get("weight", 0.1))
             except (TypeError, ValueError):
                 w = 0.1
-            selected[nm] = {"description": str(item.get("description") or ""), "weight": w}
+            selected[nm] = {
+                "description": str(item.get("description") or ""),
+                "weight": w,
+                "hard": bool(item.get("hard", False)),
+            }
         else:
             nm = str(item).strip()
             if not nm:
@@ -274,6 +282,10 @@ async def _llm_judge_fallback(state, get_param) -> dict:
         return {"bypassed": True, "reason": f"evaluation failed: {e}"}
 
     score, feedback, verdict = _parse_evaluation(eval_text, selected_criteria, get_param, state)
+    if score is None:
+        # judge 파싱 실패 → gate bypass. validation_score 를 세팅하지 않아 ThresholdDecide 가
+        # judge 점수 없이 정상 종료(fake-pass·무한retry 둘 다 회피).
+        return {"bypassed": True, "reason": feedback, "verdict": verdict}
     state.validation_score = score
     state.validation_feedback = feedback
     return {"score": score, "feedback": feedback, "verdict": verdict}
@@ -290,7 +302,8 @@ def _build_evaluation_prompt(state, get_param) -> tuple[str, list[str]]:
 
     total_weight = sum(c["weight"] for c in selected.values()) or 1.0
     criteria_block = "\n".join(
-        f"{i+1}. **{name.capitalize()}** (0-1, weight {info['weight']/total_weight:.2f}): {info['description']}"
+        f"{i+1}. **{name.capitalize()}** (0-1, weight {info['weight']/total_weight:.2f}"
+        f"{', MUST-PASS' if info.get('hard') else ''}): {info['description']}"
         for i, (name, info) in enumerate(selected.items())
     )
     criteria_json_fields = ", ".join(f'"{name}": 0.0' for name in selected)
@@ -308,12 +321,25 @@ def _build_evaluation_prompt(state, get_param) -> tuple[str, list[str]]:
 
 
 def _parse_evaluation(eval_text: str, selected_criteria: list[str],
-                      get_param, state) -> tuple[float, str, str]:
+                      get_param, state) -> tuple[Optional[float], str, str]:
+    """judge 응답 파싱 → (overall, feedback, verdict).
+
+    overall is None → **bypass**(파싱 실패): fake-pass 도 무한retry 도 하지 않고 gate 를
+    건너뛴다. 호출자가 validation_score 를 세팅하지 않아 ThresholdDecide 가 정상 종료.
+
+    hard 제약(v1.18.3 실구현): hard=true 축의 점수가 threshold 미만이면 가중평균과 무관하게
+    overall 즉시 0 → 무조건 retry. 절대규칙용. (v1.17.0 가 약속만 하고 미구현이던 것)
+    """
     threshold = float(get_param(
         "judge_threshold", state,
         get_param("threshold", state,
                   state.config.validation_threshold if state.config else JUDGE_DEFAULTS["threshold"])
     ))
+    # 평가축(hard 플래그 포함)을 한 번만 해소 — 가중평균·hard 검사 양쪽에서 쓴다.
+    selected = _resolve_selected_criteria(
+        get_param("criteria", state, selected_criteria),
+        get_param("criteria_defs", state, None),
+    )
     try:
         text = eval_text.strip()
         if "```" in text:
@@ -321,23 +347,31 @@ def _parse_evaluation(eval_text: str, selected_criteria: list[str],
             end = text.rfind("}") + 1
             text = text[start:end]
         data = json.loads(text)
-        overall = float(data.get("overall", 0.0))
         feedback = data.get("feedback", "")
 
-        if overall == 0.0:
-            # v1.17.0 — 가중 평균 재계산도 criteria_defs(self-contained 정의)로 해소.
-            selected = _resolve_selected_criteria(
-                get_param("criteria", state, selected_criteria),
-                get_param("criteria_defs", state, None),
-            )
+        # overall: 명시값이 있으면 존중(0.0 도 정당한 값) — 키 부재일 때만 가중평균 재계산.
+        # (이전 버그: `overall == 0.0` 을 '누락'으로 보고 0 점을 ~0.5 로 부풀렸다.)
+        if "overall" in data and data.get("overall") is not None:
+            overall = float(data["overall"])
+        else:
             total_weight = sum(c["weight"] for c in selected.values()) or 1.0
             overall = sum(
                 float(data.get(name, 0.5)) * (info["weight"] / total_weight)
                 for name, info in selected.items()
             )
 
+        # hard 제약 — hard 축이 threshold 미만이면 overall 강제 0 (절대규칙).
+        hard_failed = [
+            name for name, info in selected.items()
+            if info.get("hard") and float(data.get(name, 0.0)) < threshold
+        ]
+        if hard_failed:
+            overall = 0.0
+            feedback = (str(feedback) + f" [hard 제약 실패: {', '.join(hard_failed)}]").strip()
+
         verdict = "pass" if overall >= threshold else "retry"
         return overall, feedback, verdict
     except (json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.warning("[judge] parse 실패: %s", e)
-        return JUDGE_DEFAULTS["threshold"], "Evaluation parsing failed, assuming acceptable", "pass"
+        # fail-open 금지 — 가짜 pass 로 gate 를 무력화하지 않는다. bypass(루프도 회피).
+        logger.warning("[judge] parse 실패 — gate bypass(fake-pass/loop 회피): %s", e)
+        return None, f"judge parse 실패: {e}", "bypass"

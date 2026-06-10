@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pprint
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -668,21 +669,15 @@ def _coerce_json_safe(obj: Any) -> Any:
 
 
 def _dict_to_python_literal(obj: Any, *, indent: int = 4) -> str:
-    """JSON-safe dict → Python literal string (json.dumps 후 Python 화).
+    """JSON-safe 객체 → Python literal string.
 
-    JSON: null/true/false/double quote
-    Python: None/True/False/double quote (json.dumps 호환)
-    → 단순 치환으로 충분.
+    ⚠️ 옛 구현은 json.dumps 출력에 ``: null``→``: None`` 류 문자열 치환을 가했는데,
+    이게 **문자열 값 내부**의 `null`/`true`/`false` 단어까지 바꿔(예: system_prompt
+    "judge true or false" → "judge True or false") 산출물을 조용히 손상시켰다.
+    pprint.pformat 은 JSON-safe 객체(_coerce_json_safe 가 보장)를 valid Python literal
+    로 직접 emit — None/True/False·따옴표·유니코드 모두 정확, 문자열 값 무손상.
     """
-    text = json.dumps(obj, ensure_ascii=False, indent=indent, sort_keys=False)
-    text = text.replace(": null", ": None")
-    text = text.replace(": true", ": True")
-    text = text.replace(": false", ": False")
-    # 배열 안의 null/true/false (예: [null, true]) 도 변환
-    text = re.sub(r"(?<=[\[,\s])null(?=[\],\s])", "None", text)
-    text = re.sub(r"(?<=[\[,\s])true(?=[\],\s])", "True", text)
-    text = re.sub(r"(?<=[\[,\s])false(?=[\],\s])", "False", text)
-    return text
+    return pprint.pformat(obj, indent=1, width=100, sort_dicts=False)
 
 
 def _toml_repr(value: Any) -> str:

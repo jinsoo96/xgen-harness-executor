@@ -91,7 +91,10 @@ PROVIDER_MODELS: dict[str, list[str]] = {
 # 무시된다. 즉 기본은 compat-shim, 고급은 plugin override (PHILOSOPHY ②연동성).
 PROVIDER_DEFAULT_BASE_URL: dict[str, str] = {
     # Gemini OpenAI 호환 엔드포인트 (Google AI Studio).
-    "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    # ⚠️ 반드시 .../chat/completions 까지 전체 경로 — normalize_base_url 이 짧은 base 에
+    #    `/v1/chat/completions` 를 붙이는데 Gemini 경로는 `/v1beta/openai/chat/completions`
+    #    라 `/v1/` 가 잘못 끼어 404 가 난다 (v1.18.1 에서 `.../openai/` 만 줘서 깨졌던 것).
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     # vLLM 은 배포 위치가 환경마다 달라 기본값을 박지 않음 — VLLM_API_BASE_URL
     # 또는 register_provider(base_url=) 로 주입. (로컬 기본은 의도적으로 비움)
     "vllm": "",

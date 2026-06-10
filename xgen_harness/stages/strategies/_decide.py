@@ -92,7 +92,9 @@ class ThresholdDecide(DecideStrategy):
             if validation_score < threshold:
                 retry_count = int(getattr(state, "retry_count", 0) or 0)
                 default_max = _DECIDE_DEFAULTS["max_retries"]
-                max_retries = int(params.get("max_retries", default_max) or default_max)
+                # None(미설정)→default, 명시 0→retry 끔. `or default` 는 명시 0 을 삼켜서 X.
+                _mr = params.get("max_retries", None)
+                max_retries = default_max if _mr is None else int(_mr)
                 if retry_count < max_retries:
                     return {
                         "decision": LOOP_RETRY,
@@ -118,16 +120,23 @@ class ThresholdDecide(DecideStrategy):
                 terminal_tools = None
         terminal_tools = set(terminal_tools or [])
         if terminal_tools:
-            _last_tool = ""
+            _cur_iter = getattr(state, "loop_iteration", None)
             for _h in reversed(getattr(state, "tool_call_history", None) or []):
-                if isinstance(_h, dict):
-                    _last_tool = str(_h.get("tool_name") or "")
-                    break
-            if _last_tool in terminal_tools:
-                return {
-                    "decision": LOOP_COMPLETE,
-                    "reason": f"terminal tool 호출 완료 ({_last_tool})",
-                }
+                if not isinstance(_h, dict):
+                    continue
+                _last_tool = str(_h.get("tool_name") or "")
+                _it = _h.get("iteration")
+                # 최신 도구 호출 1건만 본다. terminal 이고 '이번 iteration' 에 호출됐을 때만 완료.
+                # 과거 iteration 의 잔존 terminal 호출이 텍스트-only 턴을 조기종료하던 것 방지.
+                # backward-safe: iteration 정보가 없으면(_it None / 외부 history) 옛 동작 유지.
+                if _last_tool in terminal_tools and (
+                    _cur_iter is None or _it is None or _it == _cur_iter
+                ):
+                    return {
+                        "decision": LOOP_COMPLETE,
+                        "reason": f"terminal tool 호출 완료 ({_last_tool})",
+                    }
+                break  # 최신 1건만 판정
 
         # v1.0.6 — 도구 호출 직후 합성 답변 미완 케이스 우선 식별.
         # 도구가 실행됐고 (tools_executed_count > 0) + 최종 답변이 비어있고 +

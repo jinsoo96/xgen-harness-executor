@@ -54,11 +54,20 @@ class MemoryStage(Stage):
     async def _execute_default(self, state: PipelineState) -> dict:
         """기본 전략: 대화 이력 + previous_results"""
         injected = 0
-        max_history = int(self.get_param("max_history", state, None) or 0)
+        # None(미설정)=제한 없음(전체 주입), 명시 0=주입 안 함, N>0=마지막 N.
+        # (이전 버그: `or 0` → 미설정·명시0 둘 다 0 → `[-0:]` = 전체. 명시 0(없음 의도)이
+        #  전체를 주입하던 것을 바로잡고, 미설정 기본=전체 동작은 그대로 유지.)
+        _mh = self.get_param("max_history", state, None)
+        max_history = None if _mh is None else int(_mh)
 
         # 1. 대화 이력이 있으면 messages에 추가 (max_history로 제한)
         if state.conversation_history:
-            history = state.conversation_history[-max_history:]
+            if max_history is None:
+                history = list(state.conversation_history)
+            elif max_history > 0:
+                history = state.conversation_history[-max_history:]
+            else:
+                history = []
             for msg in history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
@@ -70,7 +79,7 @@ class MemoryStage(Stage):
         # (s03_prompt에서 처리 — 여기서는 state에 이미 있으므로 패스)
         prev_count = len(state.previous_results)
 
-        logger.info("[Memory] injected=%d messages (max_history=%d), previous_results=%d", injected, max_history, prev_count)
+        logger.info("[Memory] injected=%d messages (max_history=%s), previous_results=%d", injected, max_history, prev_count)
         return {
             "injected": injected,
             "previous_results": prev_count,

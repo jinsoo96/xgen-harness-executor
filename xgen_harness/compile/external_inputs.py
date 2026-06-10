@@ -49,17 +49,24 @@ class ExternalInputSpec:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        # 보안: SECRET 타입은 default(평문 시크릿)를 **절대 직렬화하지 않는다**.
+        # 배포 산출물(spec.json/wheel)에 박히면 그대로 유출되고, 런타임이 env 대신
+        # baked default 로 조용히 폴백한다. SECRET 은 항상 env/override 로만 주입.
+        if str(self.type) == InputType.SECRET.value:
+            data["default"] = None
+            data["required"] = True
         return {k: v for k, v in data.items() if v is not None or k in {"required"}}
 
     @classmethod
     def from_dict(cls, name: str, raw: dict[str, Any]) -> "ExternalInputSpec":
         t = str(raw.get("type", InputType.STRING.value))
+        is_secret = (t == InputType.SECRET.value)
         # 값이 미등록 타입이면 그대로 유지 (외부 확장 여지) — 다만 validator 가 경고.
         return cls(
             name=name,
             type=t,
-            required=bool(raw.get("required", True)),
-            default=raw.get("default"),
+            required=True if is_secret else bool(raw.get("required", True)),
+            default=None if is_secret else raw.get("default"),
             description=str(raw.get("description", "")),
         )
 
@@ -139,11 +146,13 @@ def scan_placeholders(
                 if name in found:
                     continue
                 t = InputType.SECRET.value if name in api_envs else _guess_type(name)
-                has_default = default is not None
+                is_secret = (t == InputType.SECRET.value)
+                # SECRET 은 인라인 default(${KEY:sk-LIVE})를 무시 — baking 금지 + 항상 required.
+                has_default = default is not None and not is_secret
                 found[name] = ExternalInputSpec(
                     name=name,
                     type=t,
-                    required=not has_default,
+                    required=True if is_secret else not has_default,
                     default=default if has_default else None,
                     description=(description or "").strip(),
                 )
@@ -195,7 +204,8 @@ def collect_runtime_values(
         if name in env_map and env_map[name] != "":
             resolved[name] = env_map[name]
             continue
-        if spec.default is not None:
+        # SECRET 은 baked default 로 폴백하지 않는다 — 누락이면 명시적으로 에러(env/override 강제).
+        if spec.default is not None and str(spec.type) != InputType.SECRET.value:
             resolved[name] = spec.default
             continue
         if spec.required:

@@ -152,6 +152,15 @@ def test_google_has_default_base_url():
     assert url and "generativelanguage.googleapis.com" in url
 
 
+def test_google_base_url_normalizes_to_valid_endpoint():
+    # 회귀: v1.18.1 은 base 가 `.../openai/` 라 normalize 가 `/v1/chat/completions` 를
+    # 덧붙여 `.../openai/v1/chat/completions`(404) 를 만들었다. 끝까지 정상이어야.
+    inst = create_provider("google", "k", "gemini-2.0-flash")
+    endpoint = getattr(inst, "_base_url", "")
+    assert endpoint.endswith("/v1beta/openai/chat/completions"), endpoint
+    assert "/openai/v1/chat/completions" not in endpoint  # 잘못된 이중 v1 금지
+
+
 def test_base_url_env_overrides_registry(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_BASE_URL", "https://my-proxy.local/v1")
     assert get_provider_base_url("google") == "https://my-proxy.local/v1"
