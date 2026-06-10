@@ -134,6 +134,19 @@ class FinalizeStage(Stage):
         else:
             state.final_output = formatter(state)
 
+        # ── 빈 출력 fallback (v1.18.3) — retry 소진/마지막 턴 실패(provider 에러 등)로
+        #   last_assistant_text 까지 비면 그대로 "" 를 확정해 다운스트림이 빈값을 받았다.
+        #   런 중 만들어진 마지막 유효 산출물(직전 assistant 텍스트 → 마지막 도구 제출
+        #   payload)로 폴백해, 부분 결과라도 보존한다. 유효 출력이 있으면 동작 불변.
+        if not (state.final_output or "").strip():
+            _fb = self._fallback_output(state)
+            if _fb:
+                state.final_output = _fb
+                logger.warning(
+                    "[Finalize] 최종 출력 빈값 → fallback 보존(len=%d) — "
+                    "마지막 유효 응답/제출 payload 사용", len(_fb),
+                )
+
         # 2. 메트릭스 이벤트
         metrics = self._build_metrics(state)
         if state.event_emitter:
@@ -165,6 +178,54 @@ class FinalizeStage(Stage):
             result["persisted"] = persist_result
 
         return result
+
+    @staticmethod
+    def _fallback_output(state: PipelineState) -> str:
+        """빈 최종출력 폴백 — 런 중 마지막 유효 산출물을 찾는다.
+        ① messages 역순: 마지막 비어있지 않은 assistant 텍스트(직전 turn 들의 답).
+        ② tool_call_history 역순: 마지막 도구 호출의 input payload(submit 류 우선)
+           — 제출은 이미 외부(예: Redis)에 반영됐으므로 그 내용을 텍스트로 보존.
+        둘 다 없으면 ""(기존 동작)."""
+        try:
+            for m in reversed(getattr(state, "messages", None) or []):
+                role = (m.get("role") if isinstance(m, dict) else getattr(m, "role", "")) or ""
+                if str(role) != "assistant":
+                    continue
+                content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+                if isinstance(content, list):
+                    text = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                else:
+                    text = str(content or "")
+                if text.strip():
+                    return text.strip()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import json as _json
+            history = list(getattr(state, "tool_call_history", None) or [])
+            # submit 류 우선, 없으면 마지막 호출
+            ordered = (
+                [h for h in reversed(history) if "submit" in str((h or {}).get("tool_name", ""))]
+                + list(reversed(history))
+            )
+            for h in ordered:
+                if not isinstance(h, dict):
+                    continue
+                ti = h.get("tool_input")
+                if not ti:
+                    continue
+                body = ti if isinstance(ti, str) else _json.dumps(ti, ensure_ascii=False)
+                if body.strip():
+                    return (
+                        f"[finalize-fallback] 최종 답변 누락 — 마지막 도구 제출 내용 보존 "
+                        f"({h.get('tool_name')}):\n{body[:8000]}"
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
 
     def _build_metrics(self, state: PipelineState) -> dict:
         return {
