@@ -591,33 +591,3 @@ class Pipeline:
             if s.stage_id == stage.stage_id:
                 return i
         return 0
-
-
-def _find_role_in_registry(reg, config, role: str) -> Optional[Stage]:
-    """레지스트리에서 role 일치 Stage 를 찾아 인스턴스 반환.
-
-    v0.16.6 — Pipeline 이 Stage 이름 리터럴 없이 role 기반으로 특수 분기 찾도록.
-    외부 플러그인 Stage 가 같은 role 로 선언하면 자동으로 잡힌다.
-    """
-    try:
-        for sid in reg._registry.keys():  # type: ignore[attr-defined]
-            try:
-                cls = reg.get(sid, "default")
-                inst = cls()
-                if inst.role == role:
-                    return inst
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
-
-    def describe(self) -> list[dict]:
-        """파이프라인 스테이지 설명 목록 (API/UI용)"""
-        return [
-            {
-                **stage.describe().__dict__,
-                "strategies": [s.__dict__ for s in stage.list_strategies()],
-            }
-            for stage in self._all_stages
-        ]

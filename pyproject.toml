@@ -35,7 +35,7 @@ mcp = [
 ]
 
 [project.urls]
-Repository = "https://github.com/jinsoo96/xgen-harness-executor"
+Repository = "https://github.com/PlateerLab/xgen-harness-executor"
 
 # ─── 외부 패키지 확장 통로 ───
 # 외부 패키지가 자기 pyproject.toml 의 [project.entry-points."xgen_harness.<group>"] 에

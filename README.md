@@ -69,17 +69,27 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 
 ---
 
+## 장기실행(multi-session) 메모리
+세션은 분리 실행되고 각 세션은 이전 기억 없이 시작한다(Anthropic long-running-agents). `xgen_harness.memory` 가 세션 *간* 상태 인계를 책임진다(s06_context 의 세션 *내* 압축과 보완).
+- **`ProgressLog` / `ProgressItem`** — 세션 밖에 사는 progress artifact(작업항목·검증절차·pass/fail). `pending()` 으로 다음 할 일 즉시 복원.
+- **`SessionStore`**(Protocol) — `InMemory`/`File` 빌트인(무거운 의존성 0). 플랫폼은 `entry_points` 로 자기 DB 백엔드를 코어 수정 없이 끼운다. `save_session`/`load_session` 으로 세션↔store 인계.
+
+## 안정 에러코드
+모든 `HarnessError` 는 `exec.<component>.<reason>` 코드(메시지와 독립한 머신 식별자)를 들고 다닌다. 이식측·외부 소비자가 릴리즈 간 안정 분기 가능. `error_code(exc)` / `ALL_ERROR_CODES`.
+
+---
+
 ## 외부 확장점 (`entry_points`)
 외부 패키지가 자기 `pyproject.toml` 의 `[project.entry-points."xgen_harness.<group>"]` 에 항목을 추가하면 부팅 시 자동 발견·register (엔진 소스 수정 0). 주요 group:
 
-`stages` · `strategies` · `node_adapters` · `tool_sources` · `providers` · `capabilities` · `fan_out_strategies` · `evaluation_criteria` · `orchestrators` · `sandbox_verifiers` · `tools`(갤러리) · `phases` · `node_plugins` · `model_pricing` · `term_expanders` · `guards` · `active_policy_renderers` · `collection_enrichers` · `resource_providers`
+`stages` · `strategies` · `node_adapters` · `tool_sources` · `providers` · `capabilities` · `fan_out_strategies` · `evaluation_criteria` · `orchestrators` · `sandbox_verifiers` · `tools`(갤러리) · `phases` · `node_plugins` · `model_pricing` · `term_expanders` · `guards` · `active_policy_renderers` · `collection_enrichers` · `resource_providers` · `session_stores`
 
 > 내장 Guard 5+종(token_budget·cost_budget·iteration·content·tool_precondition·hitl)도 `guards` group 으로 등록 — 외부 기여자도 같은 경로.
 
 ---
 
 ## 공식 Public API
-`xgen_harness.__all__` 참조. 핵심: `Pipeline`, `PipelineState`, `HarnessConfig`, `TokenUsage`, `ALL_STAGES`, `REQUIRED_STAGES`, `PRESETS`, `compile_nom_graph`, `NOMGraph`. (`__version__` 은 설치 wheel 메타에서 런타임 조회.)
+`xgen_harness.__all__` 참조. 핵심: `Pipeline`, `PipelineState`, `HarnessConfig`, `TokenUsage`, `ALL_STAGES`, `REQUIRED_STAGES`, `PRESETS`, `compile_nom_graph`, `NOMGraph`, `ProgressLog`, `SessionStore`, `FileSessionStore`, `ALL_ERROR_CODES`. (`__version__` 은 설치 wheel 메타에서 런타임 조회.)
 
 ---
 
@@ -93,4 +103,4 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 ## 릴리즈
 `v*` 태그 push → GitHub Actions(`publish.yml`)가 PyPI Trusted Publishing(OIDC)으로 발행. 사용자 wheel 은 `publish-user-wheel.yml`(repository_dispatch). 절차: `version` bump → 태그 push.
 
-링크: [Repository](https://github.com/jinsoo96/xgen-harness-executor) · [CHANGELOG](CHANGELOG.md)
+링크: [Repository](https://github.com/PlateerLab/xgen-harness-executor) · [CHANGELOG](CHANGELOG.md)
