@@ -100,7 +100,32 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 
 ---
 
-## 릴리즈
-`v*` 태그 push → GitHub Actions(`publish.yml`)가 PyPI Trusted Publishing(OIDC)으로 발행. 사용자 wheel 은 `publish-user-wheel.yml`(repository_dispatch). 절차: `version` bump → 태그 push.
+## 배포 (Release)
+
+엔진은 PyPI 패키지 **`xgen-harness`** 로 배포된다. 버전을 올리고 두 가지 방법 중 하나로 발행한다.
+
+**0. 버전 올리기 + 테스트**
+```bash
+# pyproject.toml 의 version 을 X.Y.Z 로 수정 후
+python -m pytest -q          # tests/ 전부 green 확인
+```
+
+**A. 수동 배포 (어디서든 즉시 — PyPI 토큰만 있으면 됨)**
+```bash
+python -m build                                   # dist/xgen_harness-X.Y.Z-*.whl + .tar.gz
+TWINE_USERNAME=__token__ TWINE_PASSWORD=<pypi-token> \
+  python -m twine upload dist/xgen_harness-X.Y.Z*  # PyPI 발행
+git push <remote> main && git push <remote> vX.Y.Z # GitHub 반영 (+ 태그)
+```
+> Windows 콘솔에서 진행바 유니코드가 깨지면 `PYTHONUTF8=1 ... twine upload --disable-progress-bar`.
+
+**B. 자동 배포 (태그 push → GitHub Actions OIDC)**
+`v*` 태그를 push 하면 `publish.yml` 이 **PyPI Trusted Publishing(OIDC)** 으로 발행한다(토큰 불필요). 사전 1회: PyPI → `xgen-harness` → Settings → Publishing 에 해당 repo + `publish.yml` 을 trusted publisher 로 등록. (여러 repo 를 등록하면 어디서 태그를 밀든 발행 가능.)
+```bash
+git tag vX.Y.Z && git push <remote> vX.Y.Z        # → Actions 가 build + publish
+```
+
+- 컴파일된 사용자 워크플로우 wheel(`plateer-xgen-wf-*`)은 `publish-user-wheel.yml`(cluster repository_dispatch) 으로 별도 발행.
+- **이식측**(`xgen-harness>=N,<2.0` 핀)은 엔진 publish 후 핀을 범프하면 자동 반영.
 
 링크: [Repository](https://github.com/PlateerLab/xgen-harness-executor) · [CHANGELOG](CHANGELOG.md)

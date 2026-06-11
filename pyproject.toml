@@ -155,7 +155,7 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# v0.22.0 — test_*.py 는 레포 루트에 직접 위치. 이전 설정(`tests/`) 은 존재하지 않는
-# 디렉터리를 가리켜 `pytest` 가 0 건 수집하던 오래된 잔재였음.
-testpaths = ["."]
+# 테스트는 tests/ 디렉터리에 분리 (패키지 소스와 격리). `python -m pytest` 를 레포
+# 루트에서 실행하면 cwd 가 sys.path 에 들어가 `import xgen_harness` 가 동작한다.
+testpaths = ["tests"]
 python_files = ["test_*.py"]
