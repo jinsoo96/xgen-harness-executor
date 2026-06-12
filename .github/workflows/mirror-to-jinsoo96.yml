@@ -1,0 +1,24 @@
+name: Mirror to jinsoo96
+
+# PlateerLab(primary) 의 모든 push 를 원본 미러 jinsoo96/xgen-harness-executor 로 자동 동기.
+# 가드: PlateerLab 레포에서 실행될 때만 동작(jinsoo96 사본은 self-mirror 안 함 → 루프 방지).
+# 필요 secret: MIRROR_PAT (jinsoo96 write 권한 PAT).
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    if: github.repository == 'PlateerLab/xgen-harness-executor'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror PlateerLab -> jinsoo96
+        run: |
+          git clone --bare "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" repo.git
+          cd repo.git
+          DEST="https://x-access-token:${{ secrets.MIRROR_PAT }}@github.com/jinsoo96/xgen-harness-executor.git"
+          git push --force "$DEST" '+refs/heads/*:refs/heads/*'
+          git push --force "$DEST" '+refs/tags/*:refs/tags/*'
