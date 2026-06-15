@@ -359,6 +359,31 @@ class ToolIndexStage(Stage):
                 state.metadata.setdefault("tool_registry", {})[tname] = inst
             logger.info("[Tool Index] %s builtin registered (strategy-agnostic)", tname)
 
+        # v1.19.0 — Evidence Workspace 빌트인 (opt-in). builtin_tools 에 명시될 때만 등록.
+        # 검색형 하네스가 "근거 외부화(externalized working memory)" 가 필요할 때 활성화.
+        # 비검색 하네스는 selected_builtins 에 없으므로 영향 0 (도메인 agnostic 유지).
+        from ...tools.builtin import CurateTool, VerifyTool, ListEvidenceTool
+        _EVIDENCE_BUILTINS = [
+            ("curate", CurateTool),
+            ("verify", VerifyTool),
+            ("list_evidence", ListEvidenceTool),
+        ]
+        for tname, cls in _EVIDENCE_BUILTINS:
+            if tname not in selected_builtins:
+                continue
+            if any(td.get("name") == tname for td in augmented_defs):
+                continue
+            inst = cls(state)
+            augmented_defs.append(inst.to_api_format())
+            tool_index.append({
+                "name": inst.name,
+                "description": inst.description[:120],
+                "category": getattr(inst, "category", "evidence"),
+            })
+            if hasattr(state, "metadata"):
+                state.metadata.setdefault("tool_registry", {})[tname] = inst
+            logger.info("[Tool Index] %s evidence builtin registered (opt-in)", tname)
+
         state.tool_definitions = augmented_defs
         state.tool_index = tool_index
 

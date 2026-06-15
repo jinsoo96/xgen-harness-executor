@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.19.0 (2026-06-15) — 🧠 Evidence Workspace (외부화 작업기억) + anti-collapse Guard
+
+**배경**: Harness-1 (arXiv 2606.02373, "RL for Search Agents with State-Externalizing
+Harnesses") 의 핵심 — *bookkeeping 은 환경(하네스)이 들고, policy(LLM)는 의미 결정만 한다* —
+를 엔진 1급 자료구조로 채용. 검색·장기 추론 에이전트가 "무엇을 봤는지/어떤 근거가 유효한지/
+무엇을 검증했는지" 를 transcript 가 아니라 **외부화된 작업기억** 에 들고, 세션 압축에도 살아남게.
+
+엔진 철학 유지: **도메인 agnostic · opt-in · 무하드코딩 · Progressive Disclosure 정합**.
+RAG/임베딩 결선은 엔진이 아니라 이식측이 소유(여기는 generic 자료구조 + 통로만).
+
+- **`memory/evidence.py` — Evidence Workspace (신규 공개 API).**
+  - `Importance`(very_high/high/fair/low) · `EvidenceItem`(content/source/importance/score/
+    verified/verdict/turn/fingerprint) · `EvidenceSet`.
+  - `EvidenceSet`: importance 태깅 + **내용지문 dedup**(같은 id/본문 중복 누적 차단) +
+    **cap eviction**(최저 중요도→오래된 순, cap 은 파라미터) + `verify`(검증 기록) +
+    `ranked()` + `render()`(step-out compact 뷰) + JSON 직렬화(SessionStore 세션 인계).
+- **`memory/dedupe.py` — `content_fingerprint` / `dedupe`** 일반 유틸 (관측 중복 제거).
+- **빌트인 툴 `curate` / `verify` / `list_evidence`** (opt-in — s04 `builtin_tools` 에
+  명시될 때만 등록). policy 가 의미 결정만 emit, 전체 본문은 `pd_stores["evidence"]` 로
+  보존되어 `fetch_pd(kind="evidence", id=...)` 로 **step-in**, `list_evidence` 로 **step-out**.
+- **`tool_diversity` Guard (신규 내장).** 동일 (tool, args) 호출이 `max_repeats` 회 이상
+  누적되면 PRE_TOOL 차단 + "접근을 바꾸거나 멈추라" 교정. Harness-1 이 보고한 *검색 붕괴*
+  (tool-diversity 보상 부재 시 같은 검색 반복) 의 추론 시점 방어. `xgen_harness.guards` 등록.
+- **공개 API**: `xgen_harness.{Importance, EvidenceItem, EvidenceSet}` + `memory` 재export.
+- 코어 영향 0(비검색 하네스): s04 evidence 빌트인은 opt-in, guard 는 명시 활성 시만.
+  state.py / 기존 stage 동작 불변. 테스트 225 green.
+
 ## v1.18.6 (2026-06-10) — 🩹 standalone 컴파일 산출물 RAG 복구 (doc_service → services 브리지)
 
 **증상**: 컴파일된 wheel/npm 산출물을 외부 환경(cluster 밖)에서 `QDRANT_URL`+키 wire 후

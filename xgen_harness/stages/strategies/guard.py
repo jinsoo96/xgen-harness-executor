@@ -703,6 +703,95 @@ class HITLGuard(Guard):
         return ", ".join(parts) or "hitl trigger"
 
 
+class ToolDiversityGuard(Guard):
+    """동일 도구를 같은 인자로 반복 호출(검색 붕괴)하면 PRE_TOOL 에서 차단·교정 유도.
+
+    Harness-1 (arXiv 2606.02373) 의 발견: tool-diversity 보상이 없으면 에이전트가
+    "같은 검색 반복" 으로 붕괴한다(학습 plateau ~0.53). 추론 시점 등가물 — 같은
+    (tool_name, args) 호출이 max_repeats 회 이상 누적되면 차단하고, "접근을 바꾸거나
+    멈추라" 는 가짜 tool_result 로 교정한다. PRE_TOOL 훅이라 history 엔 직전 호출만 있다.
+
+    params:
+      max_repeats — 동일 호출 허용 횟수(이미 이만큼 했으면 다음 호출 차단). 기본 3.
+      window      — 최근 N개 이력만 고려 (0 = 전체). 기본 0.
+    """
+
+    _DEFAULT_MAX_REPEATS = 3
+
+    def __init__(self, max_repeats: int = 0, window: int = 0):
+        self._max_repeats = max_repeats or self._DEFAULT_MAX_REPEATS
+        self._window = window or 0
+
+    @property
+    def name(self) -> str:
+        return "tool_diversity"
+
+    @property
+    def description(self) -> str:
+        return "Block repeated identical tool calls (anti search-collapse)."
+
+    @property
+    def hook_points(self) -> set[HookPoint]:
+        return {HookPoint.PRE_TOOL}
+
+    @classmethod
+    def param_schema(cls) -> list[FieldSchema]:
+        return [
+            FieldSchema(id="max_repeats", type="number",
+                        default=cls._DEFAULT_MAX_REPEATS, min=1, max=100, step=1),
+            FieldSchema(id="window", type="number", default=0, min=0, max=1000, step=1),
+        ]
+
+    def configure(self, config: dict[str, Any]) -> None:
+        self._max_repeats = int(config.get("max_repeats", self._max_repeats) or self._DEFAULT_MAX_REPEATS)
+        self._window = int(config.get("window", self._window) or 0)
+
+    @staticmethod
+    def _signature(tool_name: str, tool_input: Any) -> str:
+        import json as _json
+        try:
+            payload = _json.dumps(tool_input, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            payload = str(tool_input)
+        return f"{tool_name}\x1f{payload}"
+
+    def check(self, state: Any, context: HookContext) -> GuardResult:
+        tc = context.pending_tool_call
+        if not isinstance(tc, dict):
+            return GuardResult(passed=True, guard_name=self.name)
+        name = tc.get("tool_name") or tc.get("name") or ""
+        if not name:
+            return GuardResult(passed=True, guard_name=self.name)
+        sig = self._signature(name, tc.get("tool_input", tc.get("input")))
+
+        history = context.tool_call_history or []
+        if self._window > 0:
+            history = history[-self._window:]
+        prior = 0
+        for h in history:
+            if not isinstance(h, dict):
+                continue
+            hname = h.get("tool_name") or h.get("name") or ""
+            if hname != name:
+                continue
+            if self._signature(hname, h.get("tool_input", h.get("input"))) == sig:
+                prior += 1
+
+        if prior >= self._max_repeats:
+            return GuardResult(
+                passed=False,
+                guard_name=self.name,
+                reason=f"동일 호출 {prior}회 반복 (max_repeats={self._max_repeats})",
+                severity="block",
+                tool_error_message=(
+                    f"You've already called '{name}' with identical arguments {prior} times. "
+                    f"Repeating it won't yield new information. Change your approach "
+                    f"(different query / tool / arguments) or stop and answer with what you have."
+                ),
+            )
+        return GuardResult(passed=True, guard_name=self.name)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  entry_points 기반 Guard discovery
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -737,6 +826,7 @@ def _discover_guards_once() -> None:
             "cost_budget": CostBudgetGuard,
             "iteration": IterationGuard,
             "content": ContentGuard,
+            "tool_diversity": ToolDiversityGuard,
         })
         return
 
@@ -763,6 +853,7 @@ def _discover_guards_once() -> None:
         ("cost_budget", CostBudgetGuard),
         ("iteration", IterationGuard),
         ("content", ContentGuard),
+        ("tool_diversity", ToolDiversityGuard),
     ):
         _DISCOVERED.setdefault(key, cls)
 

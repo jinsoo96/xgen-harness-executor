@@ -5,6 +5,13 @@
 """
 
 from .progress import ProgressStatus, ProgressItem, ProgressLog
+from .evidence import (
+    Importance,
+    EvidenceItem,
+    EvidenceSet,
+    DEFAULT_EVIDENCE_CAP,
+)
+from .dedupe import content_fingerprint, dedupe
 from .store import (
     SessionStore,
     InMemorySessionStore,
@@ -22,6 +29,12 @@ __all__ = [
     "ProgressStatus",
     "ProgressItem",
     "ProgressLog",
+    "Importance",
+    "EvidenceItem",
+    "EvidenceSet",
+    "DEFAULT_EVIDENCE_CAP",
+    "content_fingerprint",
+    "dedupe",
     "SessionStore",
     "InMemorySessionStore",
     "FileSessionStore",

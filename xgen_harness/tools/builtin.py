@@ -1661,6 +1661,261 @@ class SkillTool(Tool):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# v1.19.0 — Evidence Workspace 빌트인 (외부화 작업기억 — Harness-1 차용)
+#   policy(LLM) 는 curate / verify / list_evidence 로 *의미 결정* 만 emit.
+#   harness 는 중요도 랭킹·dedup·cap·검증기록·step-out 렌더를 소유 (memory/evidence).
+#   PD 정합: 전체 본문은 pd_stores["evidence"] → fetch_pd step-in, render → step-out.
+#   opt-in: s04 builtin_tools 에 명시될 때만 등록 (검색형 하네스만).
+# ────────────────────────────────────────────────────────────────────────────
+
+# pd_stores kind + state.metadata 키 — 한 곳에서만 정의 (오타 회귀 방지).
+EVIDENCE_PD_KIND = "evidence"
+_EVIDENCE_STATE_KEY = "evidence_set"
+
+
+def _get_evidence_set(state_ref):
+    """state.metadata 의 EvidenceSet 을 조회/생성. cap 은 config.evidence_cap 존중.
+
+    memory/evidence 는 state 를 모르는 순수 모듈이라 state 바인딩은 여기(툴 층)가 한다.
+    """
+    from ..memory.evidence import EvidenceSet, DEFAULT_EVIDENCE_CAP
+
+    meta = getattr(state_ref, "metadata", None)
+    if meta is None:
+        return EvidenceSet()
+    es = meta.get(_EVIDENCE_STATE_KEY)
+    if not isinstance(es, EvidenceSet):
+        cap = DEFAULT_EVIDENCE_CAP
+        cfg = getattr(state_ref, "config", None)
+        if cfg is not None:
+            try:
+                cap = int(getattr(cfg, "evidence_cap", DEFAULT_EVIDENCE_CAP) or DEFAULT_EVIDENCE_CAP)
+            except (TypeError, ValueError):
+                cap = DEFAULT_EVIDENCE_CAP
+        es = EvidenceSet(cap=cap)
+        meta[_EVIDENCE_STATE_KEY] = es
+    return es
+
+
+def _sync_evidence_pd(state_ref, item) -> None:
+    """근거 전체 본문을 pd_stores["evidence"] 로 — fetch_pd("evidence", id) step-in 지원.
+
+    eviction 으로 set 에서 빠진 항목의 pd 잔재는 무해(조회는 set 기준 id 로만 안내)."""
+    if not hasattr(state_ref, "pd_store"):
+        return
+    preview = (item.content or "")[:200]
+    state_ref.pd_store(
+        EVIDENCE_PD_KIND, item.id,
+        preview=preview, full=item.content or "",
+        meta={
+            "source": item.source,
+            "importance": item.importance.value,
+            "verified": item.verified,
+            "score": item.score,
+        },
+    )
+
+
+class CurateTool(Tool):
+    """근거를 워크스페이스에 보존(promote) — 외부화 작업기억의 핵심.
+
+    검색/도구로 찾은 근거 중 "남길 가치 있는 것" 을 LLM 이 직접 골라 importance 와 함께
+    저장한다. 같은 id/내용은 dedup 갱신, cap 초과 시 최저 중요도부터 자동 정리.
+    저장된 근거는 세션 압축에도 살아남고 list_evidence 로 step-out, fetch_pd 로 step-in.
+    """
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "curate"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Save a key piece of evidence to your persistent workspace (survives "
+            "context compaction). Pass a stable id, the content, and importance "
+            "(very_high|high|fair|low). Re-curating the same id/content updates it."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Stable id (e.g. doc/source/chunk id)."},
+                "content": {"type": "string", "description": "The evidence text to retain."},
+                "source": {"type": "string", "description": "Where it came from (file/url/collection)."},
+                "importance": {
+                    "type": "string",
+                    "enum": ["very_high", "high", "fair", "low"],
+                    "description": "How important this evidence is. Default fair.",
+                },
+                "score": {"type": "number", "description": "Optional retrieval/confidence score."},
+            },
+            "required": ["id", "content"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "evidence"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return False  # state(workspace) 변경
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True   # 같은 id/내용 재호출 = 갱신 (안전)
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False  # 프로세스 내부 state 만
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        rid = (input_data.get("id") or "").strip()
+        content = input_data.get("content") or ""
+        if not rid or not content.strip():
+            return ToolResult.error("'id' and 'content' are required.")
+        es = _get_evidence_set(self._state)
+        turn = int(getattr(self._state, "loop_iteration", 0) or 0)
+        item = es.curate(
+            id=rid, content=content,
+            source=(input_data.get("source") or "").strip(),
+            importance=input_data.get("importance", "fair"),
+            score=float(input_data.get("score") or 0.0),
+            turn=turn,
+        )
+        _sync_evidence_pd(self._state, item)
+        return ToolResult.success(
+            f"Curated '{item.id}' ({item.importance.value}). "
+            f"Workspace now has {len(es.items)} item(s) (cap={es.cap}). "
+            f"Recall with list_evidence; read full body with fetch_pd(kind='evidence', id='{item.id}').",
+            evidence_count=len(es.items),
+        )
+
+
+class VerifyTool(Tool):
+    """근거의 검증 결과를 기록 — verification cache.
+
+    LLM 이 한 근거를 (예: 다른 출처와 대조해) 확인/반증했을 때 그 판정을 워크스페이스에
+    남긴다. 같은 근거를 두 번 검증하지 않도록 verdict 가 보존된다(harness 가 기록 소유)."""
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "verify"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Record a verification verdict on a curated evidence item (ok=true/false "
+            "+ optional note). Prevents re-checking the same claim. Curate it first."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Id of a curated evidence item."},
+                "ok": {"type": "boolean", "description": "True if the evidence holds up, false if refuted."},
+                "note": {"type": "string", "description": "Why it passed/failed (optional)."},
+            },
+            "required": ["id", "ok"],
+        }
+
+    @property
+    def category(self) -> str:
+        return "evidence"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return False
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        rid = (input_data.get("id") or "").strip()
+        if not rid or "ok" not in input_data:
+            return ToolResult.error("'id' and 'ok' are required.")
+        es = _get_evidence_set(self._state)
+        item = es.verify(rid, bool(input_data.get("ok")), (input_data.get("note") or "").strip())
+        if item is None:
+            return ToolResult.error(
+                f"No curated evidence with id={rid!r}. Curate it first, then verify."
+            )
+        _sync_evidence_pd(self._state, item)
+        return ToolResult.success(
+            f"Recorded verify('{rid}') = {item.verified}"
+            + (f": {item.verdict}" if item.verdict else "")
+        )
+
+
+class ListEvidenceTool(Tool):
+    """워크스페이스 근거를 중요도 순 compact 뷰로 — step-out.
+
+    전체 본문이 아니라 한 줄 요약만. 특정 근거 본문이 필요하면 fetch_pd(kind='evidence',
+    id=...) 로 step-in. 누적 transcript 를 다시 읽지 않고 "지금까지 모은 근거" 를 회수."""
+
+    def __init__(self, state_ref):
+        self._state = state_ref
+
+    @property
+    def name(self) -> str:
+        return "list_evidence"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List your curated evidence (importance-ranked, compact). "
+            "Read a full body with fetch_pd(kind='evidence', id=...)."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "max_items": {"type": "integer", "description": "Cap rows returned (0 = all)."},
+            },
+        }
+
+    @property
+    def category(self) -> str:
+        return "evidence"
+
+    @property
+    def read_only_hint(self) -> bool:
+        return True
+
+    @property
+    def idempotent_hint(self) -> bool:
+        return True
+
+    @property
+    def open_world_hint(self) -> bool:
+        return False
+
+    async def execute(self, input_data: dict) -> ToolResult:
+        es = _get_evidence_set(self._state)
+        try:
+            max_items = int(input_data.get("max_items") or 0)
+        except (TypeError, ValueError):
+            max_items = 0
+        return ToolResult.success(es.render(max_items=max_items))
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # v1.6 — collection description enricher registry (default OFF)
 # ────────────────────────────────────────────────────────────────────────────
 
