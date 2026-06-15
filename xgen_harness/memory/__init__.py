@@ -5,11 +5,11 @@
 """
 
 from .progress import ProgressStatus, ProgressItem, ProgressLog
-from .evidence import (
-    Importance,
-    EvidenceItem,
-    EvidenceSet,
-    DEFAULT_EVIDENCE_CAP,
+from .recall import (
+    Priority,
+    RecallItem,
+    RecallSet,
+    DEFAULT_RECALL_CAP,
 )
 from .dedupe import content_fingerprint, dedupe
 from .store import (
@@ -29,10 +29,10 @@ __all__ = [
     "ProgressStatus",
     "ProgressItem",
     "ProgressLog",
-    "Importance",
-    "EvidenceItem",
-    "EvidenceSet",
-    "DEFAULT_EVIDENCE_CAP",
+    "Priority",
+    "RecallItem",
+    "RecallSet",
+    "DEFAULT_RECALL_CAP",
     "content_fingerprint",
     "dedupe",
     "SessionStore",

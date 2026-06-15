@@ -704,12 +704,12 @@ class HITLGuard(Guard):
 
 
 class ToolDiversityGuard(Guard):
-    """동일 도구를 같은 인자로 반복 호출(검색 붕괴)하면 PRE_TOOL 에서 차단·교정 유도.
+    """동일 도구를 같은 인자로 반복 호출(무의미한 루프)하면 PRE_TOOL 에서 차단·교정 유도.
 
-    Harness-1 (arXiv 2606.02373) 의 발견: tool-diversity 보상이 없으면 에이전트가
-    "같은 검색 반복" 으로 붕괴한다(학습 plateau ~0.53). 추론 시점 등가물 — 같은
-    (tool_name, args) 호출이 max_repeats 회 이상 누적되면 차단하고, "접근을 바꾸거나
-    멈추라" 는 가짜 tool_result 로 교정한다. PRE_TOOL 훅이라 history 엔 직전 호출만 있다.
+    에이전트가 같은 검색/도구를 같은 인자로 계속 반복하면 새 정보 없이 루프에 빠지고
+    예산만 소모한다. 같은 (tool_name, args) 호출이 max_repeats 회 이상 누적되면 차단하고,
+    "접근을 바꾸거나 멈추라" 는 가짜 tool_result 로 교정한다. PRE_TOOL 훅이라 history 엔
+    직전 호출만 있다.
 
     params:
       max_repeats — 동일 호출 허용 횟수(이미 이만큼 했으면 다음 호출 차단). 기본 3.

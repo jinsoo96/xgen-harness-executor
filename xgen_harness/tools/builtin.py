@@ -1661,67 +1661,67 @@ class SkillTool(Tool):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# v1.19.0 — Evidence Workspace 빌트인 (외부화 작업기억 — Harness-1 차용)
-#   policy(LLM) 는 curate / verify / list_evidence 로 *의미 결정* 만 emit.
-#   harness 는 중요도 랭킹·dedup·cap·검증기록·step-out 렌더를 소유 (memory/evidence).
-#   PD 정합: 전체 본문은 pd_stores["evidence"] → fetch_pd step-in, render → step-out.
-#   opt-in: s04 builtin_tools 에 명시될 때만 등록 (검색형 하네스만).
+# v1.19.1 — Recall Workspace 빌트인 (작업기억 보존소)
+#   policy(LLM) 는 keep / check / recall 로 *의미 결정* 만 emit.
+#   엔진은 우선순위 랭킹·dedup·cap·확인기록·step-out 렌더를 관리 (memory/recall).
+#   PD 정합: 전체 본문은 pd_stores["recall"] → fetch_pd step-in, render → step-out.
+#   opt-in: s04 builtin_tools 에 명시될 때만 등록 (긴 작업 하네스만).
 # ────────────────────────────────────────────────────────────────────────────
 
 # pd_stores kind + state.metadata 키 — 한 곳에서만 정의 (오타 회귀 방지).
-EVIDENCE_PD_KIND = "evidence"
-_EVIDENCE_STATE_KEY = "evidence_set"
+RECALL_PD_KIND = "recall"
+_RECALL_STATE_KEY = "recall_set"
 
 
-def _get_evidence_set(state_ref):
-    """state.metadata 의 EvidenceSet 을 조회/생성. cap 은 config.evidence_cap 존중.
+def _get_recall_set(state_ref):
+    """state.metadata 의 RecallSet 을 조회/생성. cap 은 config.recall_cap 존중.
 
-    memory/evidence 는 state 를 모르는 순수 모듈이라 state 바인딩은 여기(툴 층)가 한다.
+    memory/recall 은 state 를 모르는 순수 모듈이라 state 바인딩은 여기(툴 층)가 한다.
     """
-    from ..memory.evidence import EvidenceSet, DEFAULT_EVIDENCE_CAP
+    from ..memory.recall import RecallSet, DEFAULT_RECALL_CAP
 
     meta = getattr(state_ref, "metadata", None)
     if meta is None:
-        return EvidenceSet()
-    es = meta.get(_EVIDENCE_STATE_KEY)
-    if not isinstance(es, EvidenceSet):
-        cap = DEFAULT_EVIDENCE_CAP
+        return RecallSet()
+    rs = meta.get(_RECALL_STATE_KEY)
+    if not isinstance(rs, RecallSet):
+        cap = DEFAULT_RECALL_CAP
         cfg = getattr(state_ref, "config", None)
         if cfg is not None:
             try:
-                cap = int(getattr(cfg, "evidence_cap", DEFAULT_EVIDENCE_CAP) or DEFAULT_EVIDENCE_CAP)
+                cap = int(getattr(cfg, "recall_cap", DEFAULT_RECALL_CAP) or DEFAULT_RECALL_CAP)
             except (TypeError, ValueError):
-                cap = DEFAULT_EVIDENCE_CAP
-        es = EvidenceSet(cap=cap)
-        meta[_EVIDENCE_STATE_KEY] = es
-    return es
+                cap = DEFAULT_RECALL_CAP
+        rs = RecallSet(cap=cap)
+        meta[_RECALL_STATE_KEY] = rs
+    return rs
 
 
-def _sync_evidence_pd(state_ref, item) -> None:
-    """근거 전체 본문을 pd_stores["evidence"] 로 — fetch_pd("evidence", id) step-in 지원.
+def _sync_recall_pd(state_ref, item) -> None:
+    """항목 전체 본문을 pd_stores["recall"] 로 — fetch_pd("recall", id) step-in 지원.
 
     eviction 으로 set 에서 빠진 항목의 pd 잔재는 무해(조회는 set 기준 id 로만 안내)."""
     if not hasattr(state_ref, "pd_store"):
         return
     preview = (item.content or "")[:200]
     state_ref.pd_store(
-        EVIDENCE_PD_KIND, item.id,
+        RECALL_PD_KIND, item.id,
         preview=preview, full=item.content or "",
         meta={
             "source": item.source,
-            "importance": item.importance.value,
-            "verified": item.verified,
+            "priority": item.priority.value,
+            "checked": item.checked,
             "score": item.score,
         },
     )
 
 
-class CurateTool(Tool):
-    """근거를 워크스페이스에 보존(promote) — 외부화 작업기억의 핵심.
+class KeepTool(Tool):
+    """중요한 정보를 작업기억에 보존 — 긴 작업의 핵심 기억.
 
-    검색/도구로 찾은 근거 중 "남길 가치 있는 것" 을 LLM 이 직접 골라 importance 와 함께
-    저장한다. 같은 id/내용은 dedup 갱신, cap 초과 시 최저 중요도부터 자동 정리.
-    저장된 근거는 세션 압축에도 살아남고 list_evidence 로 step-out, fetch_pd 로 step-in.
+    검색/도구로 찾은 것 중 "남길 가치 있는 것" 을 LLM 이 직접 골라 priority 와 함께
+    저장한다. 같은 id/내용은 dedup 갱신, cap 초과 시 최저 우선순위부터 자동 정리.
+    저장된 항목은 세션 압축에도 살아남고 recall 로 step-out, fetch_pd 로 step-in.
     """
 
     def __init__(self, state_ref):
@@ -1729,14 +1729,14 @@ class CurateTool(Tool):
 
     @property
     def name(self) -> str:
-        return "curate"
+        return "keep"
 
     @property
     def description(self) -> str:
         return (
-            "Save a key piece of evidence to your persistent workspace (survives "
-            "context compaction). Pass a stable id, the content, and importance "
-            "(very_high|high|fair|low). Re-curating the same id/content updates it."
+            "Save a key piece of information to your persistent working memory "
+            "(survives context compaction). Pass a stable id, the content, and "
+            "priority (critical|high|normal|low). Re-keeping the same id/content updates it."
         )
 
     @property
@@ -1745,12 +1745,12 @@ class CurateTool(Tool):
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Stable id (e.g. doc/source/chunk id)."},
-                "content": {"type": "string", "description": "The evidence text to retain."},
+                "content": {"type": "string", "description": "The text to retain."},
                 "source": {"type": "string", "description": "Where it came from (file/url/collection)."},
-                "importance": {
+                "priority": {
                     "type": "string",
-                    "enum": ["very_high", "high", "fair", "low"],
-                    "description": "How important this evidence is. Default fair.",
+                    "enum": ["critical", "high", "normal", "low"],
+                    "description": "How important this is. Default normal.",
                 },
                 "score": {"type": "number", "description": "Optional retrieval/confidence score."},
             },
@@ -1759,11 +1759,11 @@ class CurateTool(Tool):
 
     @property
     def category(self) -> str:
-        return "evidence"
+        return "recall"
 
     @property
     def read_only_hint(self) -> bool:
-        return False  # state(workspace) 변경
+        return False  # state(working memory) 변경
 
     @property
     def idempotent_hint(self) -> bool:
@@ -1778,42 +1778,42 @@ class CurateTool(Tool):
         content = input_data.get("content") or ""
         if not rid or not content.strip():
             return ToolResult.error("'id' and 'content' are required.")
-        es = _get_evidence_set(self._state)
+        rs = _get_recall_set(self._state)
         turn = int(getattr(self._state, "loop_iteration", 0) or 0)
-        item = es.curate(
+        item = rs.keep(
             id=rid, content=content,
             source=(input_data.get("source") or "").strip(),
-            importance=input_data.get("importance", "fair"),
+            priority=input_data.get("priority", "normal"),
             score=float(input_data.get("score") or 0.0),
             turn=turn,
         )
-        _sync_evidence_pd(self._state, item)
+        _sync_recall_pd(self._state, item)
         return ToolResult.success(
-            f"Curated '{item.id}' ({item.importance.value}). "
-            f"Workspace now has {len(es.items)} item(s) (cap={es.cap}). "
-            f"Recall with list_evidence; read full body with fetch_pd(kind='evidence', id='{item.id}').",
-            evidence_count=len(es.items),
+            f"Kept '{item.id}' ({item.priority.value}). "
+            f"Working memory now has {len(rs.items)} item(s) (cap={rs.cap}). "
+            f"List with recall; read full body with fetch_pd(kind='recall', id='{item.id}').",
+            recall_count=len(rs.items),
         )
 
 
-class VerifyTool(Tool):
-    """근거의 검증 결과를 기록 — verification cache.
+class CheckTool(Tool):
+    """보존 항목의 확인 결과를 기록 — 재확인 방지.
 
-    LLM 이 한 근거를 (예: 다른 출처와 대조해) 확인/반증했을 때 그 판정을 워크스페이스에
-    남긴다. 같은 근거를 두 번 검증하지 않도록 verdict 가 보존된다(harness 가 기록 소유)."""
+    LLM 이 한 항목을 (예: 다른 출처와 대조해) 확인/반증했을 때 그 결과를 작업기억에
+    남긴다. 같은 항목을 두 번 확인하지 않도록 결과가 보존된다(엔진이 기록 관리)."""
 
     def __init__(self, state_ref):
         self._state = state_ref
 
     @property
     def name(self) -> str:
-        return "verify"
+        return "check"
 
     @property
     def description(self) -> str:
         return (
-            "Record a verification verdict on a curated evidence item (ok=true/false "
-            "+ optional note). Prevents re-checking the same claim. Curate it first."
+            "Record a check result on a kept item (ok=true/false + optional note). "
+            "Prevents re-checking the same item. Keep it first."
         )
 
     @property
@@ -1821,8 +1821,8 @@ class VerifyTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Id of a curated evidence item."},
-                "ok": {"type": "boolean", "description": "True if the evidence holds up, false if refuted."},
+                "id": {"type": "string", "description": "Id of a kept item."},
+                "ok": {"type": "boolean", "description": "True if it holds up, false if refuted."},
                 "note": {"type": "string", "description": "Why it passed/failed (optional)."},
             },
             "required": ["id", "ok"],
@@ -1830,7 +1830,7 @@ class VerifyTool(Tool):
 
     @property
     def category(self) -> str:
-        return "evidence"
+        return "recall"
 
     @property
     def read_only_hint(self) -> bool:
@@ -1848,37 +1848,37 @@ class VerifyTool(Tool):
         rid = (input_data.get("id") or "").strip()
         if not rid or "ok" not in input_data:
             return ToolResult.error("'id' and 'ok' are required.")
-        es = _get_evidence_set(self._state)
-        item = es.verify(rid, bool(input_data.get("ok")), (input_data.get("note") or "").strip())
+        rs = _get_recall_set(self._state)
+        item = rs.check(rid, bool(input_data.get("ok")), (input_data.get("note") or "").strip())
         if item is None:
             return ToolResult.error(
-                f"No curated evidence with id={rid!r}. Curate it first, then verify."
+                f"No kept item with id={rid!r}. Keep it first, then check."
             )
-        _sync_evidence_pd(self._state, item)
+        _sync_recall_pd(self._state, item)
         return ToolResult.success(
-            f"Recorded verify('{rid}') = {item.verified}"
-            + (f": {item.verdict}" if item.verdict else "")
+            f"Recorded check('{rid}') = {item.checked}"
+            + (f": {item.note}" if item.note else "")
         )
 
 
-class ListEvidenceTool(Tool):
-    """워크스페이스 근거를 중요도 순 compact 뷰로 — step-out.
+class RecallTool(Tool):
+    """작업기억을 우선순위 순 compact 뷰로 — step-out.
 
-    전체 본문이 아니라 한 줄 요약만. 특정 근거 본문이 필요하면 fetch_pd(kind='evidence',
-    id=...) 로 step-in. 누적 transcript 를 다시 읽지 않고 "지금까지 모은 근거" 를 회수."""
+    전체 본문이 아니라 한 줄 요약만. 특정 항목 본문이 필요하면 fetch_pd(kind='recall',
+    id=...) 로 step-in. 누적 transcript 를 다시 읽지 않고 "지금까지 모은 것" 을 회수."""
 
     def __init__(self, state_ref):
         self._state = state_ref
 
     @property
     def name(self) -> str:
-        return "list_evidence"
+        return "recall"
 
     @property
     def description(self) -> str:
         return (
-            "List your curated evidence (importance-ranked, compact). "
-            "Read a full body with fetch_pd(kind='evidence', id=...)."
+            "List your kept items (priority-ranked, compact). "
+            "Read a full body with fetch_pd(kind='recall', id=...)."
         )
 
     @property
@@ -1892,7 +1892,7 @@ class ListEvidenceTool(Tool):
 
     @property
     def category(self) -> str:
-        return "evidence"
+        return "recall"
 
     @property
     def read_only_hint(self) -> bool:
@@ -1907,12 +1907,12 @@ class ListEvidenceTool(Tool):
         return False
 
     async def execute(self, input_data: dict) -> ToolResult:
-        es = _get_evidence_set(self._state)
+        rs = _get_recall_set(self._state)
         try:
             max_items = int(input_data.get("max_items") or 0)
         except (TypeError, ValueError):
             max_items = 0
-        return ToolResult.success(es.render(max_items=max_items))
+        return ToolResult.success(rs.render(max_items=max_items))
 
 
 # ────────────────────────────────────────────────────────────────────────────
