@@ -1,15 +1,22 @@
 name: Publish to PyPI
 
+# 배포 정본 경로 = 수동 twine (CREDENTIALS 릴리즈 절차: build → twine upload → git push).
+# PyPI OIDC trusted publisher 가 PlateerLab/xgen-harness-executor 에 아직 등록되어 있지
+# 않아, 태그 push 자동 OIDC 발행은 publish 스텝에서 반드시 실패한다(빌드는 성공).
+# 그래서 자동 트리거(태그 push)를 끄고 수동 실행(workflow_dispatch)만 남긴다.
+#
+# CI 자동 발행을 원하면 둘 중 하나:
+#   (A) tokenless OIDC — PyPI → xgen-harness → Settings → Publishing 에 이 repo +
+#       publish.yml 을 trusted publisher 로 1회 등록. 그 후 아래 on: 에 tag push 복구.
+#   (B) token 방식 — repo secret PYPI_API_TOKEN 추가 후 publish 스텝 password 주석 해제.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # trusted publisher (PyPI OIDC)
+      id-token: write  # OIDC trusted publisher (A 설정 시 사용)
 
     steps:
       - uses: actions/checkout@v4
@@ -26,3 +33,7 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true   # 이미 올라간 버전이면 실패 대신 skip
+          # (B) token 방식: 위 secret 추가 후 다음 줄 주석 해제.
+          # password: ${{ secrets.PYPI_API_TOKEN }}
