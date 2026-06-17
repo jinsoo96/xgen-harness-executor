@@ -26,6 +26,8 @@ _SYMPTOM_EXPECTED: dict[str, tuple[str, str]] = {
     "missing_criterion": ("edit_criterion", "regulation"),
     "no_recovery": ("tune_scalar", "max_retries"),
     "retry_waste": ("tune_scalar", "max_retries"),
+    "low_judge_score": ("tune_scalar", "max_retries"),
+    "iteration_pressure": ("tune_scalar", "max_iterations"),
 }
 
 
@@ -63,11 +65,15 @@ def _measure(runner: Runner, config: dict[str, Any], bench: list[dict[str, Any]]
 
 
 def _validator_agrees(refl: Reflection, move: Move, algebra: EngineAlgebra) -> bool:
-    """Cross-check: legal + addresses the dominant symptom (single-knob, minimal)."""
+    """Cross-check (independent of the reflector): legal + addresses the dominant
+    symptom. Built-in symptoms match an expected (op, target); externally registered
+    symptoms fall back to a structural check (legal single-knob move)."""
     if not algebra.is_legal(move):
         return False
     expected = _SYMPTOM_EXPECTED.get(refl.dominant_symptom)
-    return bool(expected) and (move.op, move.target) == expected
+    if expected is None:
+        return True                                   # external symptom: structural check only
+    return (move.op, move.target) == expected
 
 
 class SelfForge:

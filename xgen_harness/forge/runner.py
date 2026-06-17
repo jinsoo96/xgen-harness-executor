@@ -152,14 +152,10 @@ class PipelineRunner:
         except Exception as exc:                       # broken config -> failure record
             return RunRecord(task["id"], 0.0, "failure", {"crash": 1.0}, error=f"{type(exc).__name__}: {exc}")
 
-        sig: dict[str, float] = {}
+        from .signals import extract_signals
+        sig = extract_signals(result, config)        # data-derived, extensible (no hardcode)
         score = result.validation_score
         if score is None:
-            sig["ungated_low_quality"] = 1.0
             score = 0.5 if (result.final_output or "").strip() else 0.0
-        if getattr(result, "policy_block_reason", None):
-            sig["policy_block"] = 1.0
-        if getattr(result, "retry_count", 0) and result.retry_count >= (config.get("max_retries") or 99):
-            sig["retry_exhausted"] = 1.0
         outcome = "success" if score >= 0.85 else "partial" if score >= 0.6 else "failure"
         return RunRecord(task["id"], round(float(score), 4), outcome, sig)

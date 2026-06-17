@@ -71,6 +71,46 @@ def test_synthetic_loop_improves(tmp_path):
     assert log.exists() and log.read_text(encoding="utf-8").strip()
 
 
+class _FakeState:
+    """Minimal stand-in for PipelineState (the engine state contract forge reads)."""
+    def __init__(self, **kw):
+        self.validation_score = kw.get("validation_score")
+        self.loop_iteration = kw.get("loop_iteration", 0)
+        self.loop_decision = kw.get("loop_decision", "complete")
+        self.policy_block_reason = kw.get("policy_block_reason")
+
+
+def test_signal_extraction_is_data_derived_and_extensible():
+    from xgen_harness.forge import extract_signals, register_signal_extractor
+
+    # judge off + hit iteration cap without converging
+    sig = extract_signals(
+        _FakeState(validation_score=None, loop_iteration=5, loop_decision="continue"),
+        {"validation_threshold": 0.8, "max_iterations": 4},
+    )
+    assert "ungated_low_quality" in sig
+    assert "iteration_pressure" in sig
+
+    # judge below threshold -> magnitude is the data-derived gap, not a magic number
+    sig2 = extract_signals(_FakeState(validation_score=0.6), {"validation_threshold": 0.8})
+    assert sig2.get("low_judge_score") == 0.2
+
+    # extensibility: external extractor is merged in
+    register_signal_extractor(lambda st, c: {"custom_symptom": 1.0})
+    assert "custom_symptom" in extract_signals(_FakeState(validation_score=0.95), {})
+
+
+def test_reflect_handles_real_trace_symptoms():
+    from xgen_harness.forge.reflect import reflect
+    from xgen_harness.forge.runner import RunRecord
+
+    refl = reflect([RunRecord("t", 0.5, "partial", {"low_judge_score": 0.3})])
+    assert refl and refl.dominant_symptom == "low_judge_score" and refl.candidates
+
+    refl2 = reflect([RunRecord("t", 0.4, "failure", {"iteration_pressure": 1.0})])
+    assert refl2 and refl2.candidates[0].op == "tune_scalar"
+
+
 def test_pipeline_runner_smoke():
     runner = PipelineRunner()                       # FakeProvider(judge_score=0.9)
     rec = runner.run(

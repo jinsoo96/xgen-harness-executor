@@ -52,7 +52,24 @@ _SYMPTOM_FIXES: dict[str, tuple[str, list[Move]]] = {
         "too many retries -> wasted loops",
         [Move("tune_scalar", "max_retries", 2)],
     ),
+    # real-trace symptoms (PipelineRunner via signals.py)
+    "low_judge_score": (
+        "judge score below threshold -> grant retry budget to self-correct",
+        [Move("tune_scalar", "max_retries", 2)],
+    ),
+    "iteration_pressure": (
+        "loop hit the iteration cap without converging -> raise max_iterations",
+        [Move("tune_scalar", "max_iterations", 8)],
+    ),
 }
+
+
+def register_symptom_fix(symptom: str, lesson: str, moves: list[Move]) -> None:
+    """Register/override a diagnosis: symptom -> (lesson, ranked candidate moves).
+
+    External packages add domain diagnoses without forking (extensibility).
+    """
+    _SYMPTOM_FIXES[symptom] = (lesson, list(moves))
 
 
 def reflect(traces: list[RunRecord]) -> Reflection | None:

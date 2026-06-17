@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.21.0 (2026-06-17) — ⚙️ Self-Forging 신호 추출 확장 레이어 (무하드코딩·확장성)
+
+실 trace 진단을 'ungated' 하나에서 **엔진 state 계약 기반 다중 증상**으로 확장. 증상은
+매직넘버가 아니라 데이터(validation_score vs threshold, loop_iteration vs cap)에서 유도하고,
+외부가 entry_points 로 detector 를 끼운다(연동성·확장성).
+
+- **`forge/signals.py` — 신호 추출 레지스트리.** built-in: judge(`ungated_low_quality` /
+  `low_judge_score` magnitude=threshold 갭) · iteration(`iteration_pressure`) ·
+  policy(`policy_block`). threshold 는 config 또는 엔진 `JUDGE_DEFAULTS` 에서 해석(하드코딩 X).
+  `register_signal_extractor` + entry_points `xgen_harness.forge_signal_extractors`
+  (lazy 발견) 로 도메인 detector 확장. `PipelineRunner` 가 inline 신호 대신 이걸 사용.
+- **`reflect.register_symptom_fix`** — 진단(증상→수) 규칙 외부 확장. 신규 증상
+  `low_judge_score`(→retry 부여) · `iteration_pressure`(→max_iterations↑) 매핑 추가.
+- **cross-check 확장** — 외부 등록 증상은 구조 검증(legal single-knob)으로 폴백, built-in 은
+  독립 `(op, target)` 매칭 유지(cross_check 원칙 보존).
+- 공개 API: `register_signal_extractor` · `extract_signals` · `register_symptom_fix`.
+- forge opt-in 불변, 코어 영향 0. 테스트 230 green (신규 2).
+
 ## v1.20.0 (2026-06-17) — ⚙️ Self-Forging (설정 자가개선 루프) + LLM judge 무음실패 수정
 
 하네스가 자기 실행 trace 로 약점을 진단해 `HarnessConfig`(stage별 strategy/guard/

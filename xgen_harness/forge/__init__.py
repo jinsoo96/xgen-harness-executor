@@ -16,14 +16,18 @@ from __future__ import annotations
 
 from .algebra import EngineAlgebra, Move
 from .loop import Commit, ForgeResult, SelfForge, forge_config
-from .reflect import Reflection, reflect
+from .reflect import Reflection, reflect, register_symptom_fix
 from .runner import FakeProvider, PipelineRunner, RunRecord, Runner, SyntheticRunner
+from .signals import extract_signals, register_signal_extractor
 
 __all__ = [
     "EngineAlgebra",
     "Move",
     "Reflection",
     "reflect",
+    "register_symptom_fix",
+    "extract_signals",
+    "register_signal_extractor",
     "Runner",
     "RunRecord",
     "PipelineRunner",
