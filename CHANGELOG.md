@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.22.0 (2026-06-17) — ⚙️ Self-Forging 하드닝: Goodhart 방어 + 합성/반성 확장점
+
+자가단조 루프를 신뢰 가능하게: 루프는 본질적으로 judge(proxy)를 게이밍하므로 진짜 품질을
+지키는 방어층과, config 선택을 넘어서는 확장 seam(반성·합성)을 추가. 전부 opt-in·무하드코딩·
+레지스트리/entry_points 확장(연동성·확장성 불침해), 코어 영향 0.
+
+- **`forge/objective.py` — Goodhart 방어 objective.** dev 로 최적화 → 동결 **held-out** 으로
+  승급 게이트(proposer 가 held-out 으로 후보선택 안 함) → **2차 judge-독립 지표** 비회귀 →
+  **held-out 정점서 early-stop**. proxy↑/held-out↓ = `overopt` 플래그 후 롤백(과최적화 차단).
+  `Objective(runner, dev, heldout, secondary=...)`; `Objective.from_bench`(dev==held-out)로
+  평범한 bench 는 기존 hill-climb 그대로(back-compat). 2차지표는 `register_secondary_metric`
+  / entry_points `xgen_harness.forge_secondary_metrics`(엔진은 도메인지표 미탑재).
+- **`forge/synthesis.py` — 프리미티브 합성 seam(안전부분집합).** *새* 프리미티브를 선언적
+  Move 로 제안→루프가 objective 로 게이트→생존분만 등재. **코드 실행 없음**. 내장
+  `promote_registered_criteria`(등록됐으나 미사용인 ALL_CRITERIA 를 criteria_defs 로). 무거운
+  합성기(LLM 작성 criteria/프롬프트, GEPA, codegen+unit-test)는 `register_synthesizer` /
+  entry_points `xgen_harness.forge_synthesizers` 로. SelfForge `enable_synthesis=True` 로 활성.
+- **`forge/reflect.py` — GEPA 가능화.** `RunRecord.feedback`(자연어 trace 피드백) +
+  `register_reflector` / entry_points `xgen_harness.forge_reflectors`(반성기 후보 Move 기여).
+  cross-check 는 built-in 증상=독립 (op,target), 외부=구조검증 폴백.
+- **테스트(통합/회귀 보강).** 실 Pipeline + judge 경로 회귀 가드(aux_max_tokens 미설정 시
+  `int(None)` 재발 방지), Goodhart 과최적화 차단, 합성 게이팅, 2차지표 — 234 green(신규 4).
+- UI/UX(노드)는 frontend 소관이라 본 릴리즈 제외(엔진 도메인-무지 유지).
+
 ## v1.21.0 (2026-06-17) — ⚙️ Self-Forging 신호 추출 확장 레이어 (무하드코딩·확장성)
 
 실 trace 진단을 'ungated' 하나에서 **엔진 state 계약 기반 다중 증상**으로 확장. 증상은

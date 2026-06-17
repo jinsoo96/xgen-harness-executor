@@ -26,6 +26,7 @@ class RunRecord:
     outcome: str                       # success | partial | failure
     signals: dict[str, float] = field(default_factory=dict)
     error: str = ""
+    feedback: str = ""                 # natural-language trace feedback (GEPA-style reflectors)
 
 
 class Runner(Protocol):

@@ -80,7 +80,8 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 - **치환대수(`EngineAlgebra`)** — 합법 수는 엔진 레지스트리(strategies·guards·evaluation_criteria·orchestrators·runtime_defaults)에서 **introspection** 으로만 생성(무하드코딩). 각 수는 `apply`/`inverse` 가역 → 롤백 결정론적.
 - **루프(`SelfForge`)** — `measure(J) → 진단(reflect) → 수 제안 → cross-check(제안자와 독립 validator) → inertia-brake(벤치 J 전후 비교) → 개선시 채택·회귀시 롤백 → 감사로그`.
 - **`Runner` 단일 계약** — `PipelineRunner`(실 Pipeline 구동, J=`validation_score`) / `SyntheticRunner`(오프라인) / `FakeProvider`(무API). 실·모의 동일 인터페이스.
-- **신호 추출 확장점** — 실행 trace→증상(symptom)은 엔진 state 계약에서 **데이터 유도**(매직넘버 X). `register_signal_extractor` 또는 entry_points `xgen_harness.forge_signal_extractors` 로 도메인 증상 detector 를 코어 수정 없이 추가. 진단 규칙도 `register_symptom_fix` 로 확장.
+- **Goodhart 방어 objective**(v1.22.0) — 루프는 judge 를 게이밍하므로: **dev 로 최적화 → 동결 held-out 으로 승급 게이트 → 2차 judge-독립 지표 비회귀 → held-out 정점서 early-stop**. proxy↑인데 held-out↓면 `overopt` 플래그 후 롤백. `Objective(runner, dev, heldout, secondary=...)`; 평범한 bench 리스트는 `Objective.from_bench`(dev==held-out)로 기존 동작 유지.
+- **확장점(전부 레지스트리+entry_points, 무하드코딩)** — 신호추출 `register_signal_extractor`(`forge_signal_extractors`) · 진단규칙 `register_symptom_fix` · 반성 `register_reflector`(`forge_reflectors`, GEPA/LLM 리플렉터) · 프리미티브 합성 `register_synthesizer`(`forge_synthesizers`, Voyager/LATM 안전부분집합 — 선언적 프리미티브만, 코드실행 X) · 2차지표 `register_secondary_metric`(`forge_secondary_metrics`).
 - opt-in: `import xgen_harness` 시 미로드.
 
 ```python

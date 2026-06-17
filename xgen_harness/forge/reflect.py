@@ -85,3 +85,46 @@ def reflect(traces: list[RunRecord]) -> Reflection | None:
     dominant = max(agg, key=agg.get)
     lesson, candidates = _SYMPTOM_FIXES[dominant]
     return Reflection(lesson=lesson, dominant_symptom=dominant, candidates=list(candidates))
+
+
+# ---- extensible reflector seam (GEPA / LLM reflectors plug in here) ----
+# A reflector reads traces (incl. RunRecord.feedback text) and proposes candidate
+# Moves. The loop gates them structurally (legal single-knob) — independent of the
+# heuristic reflect() above. Register via register_reflector() or entry_points
+# group `xgen_harness.forge_reflectors`. forge source 0.
+_REFLECTORS: list = []
+_discovered = False
+
+
+def register_reflector(fn) -> None:
+    """fn: (traces) -> list[Move]  (candidate moves from reflection over traces)."""
+    if fn not in _REFLECTORS:
+        _REFLECTORS.append(fn)
+
+
+def _discover_once() -> None:
+    global _discovered
+    if _discovered:
+        return
+    _discovered = True
+    try:
+        from importlib.metadata import entry_points
+        for ep in entry_points(group="xgen_harness.forge_reflectors"):
+            try:
+                register_reflector(ep.load())
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def extra_candidates(traces: list[RunRecord]) -> list[Move]:
+    """Candidate moves from all registered reflectors (none by default → empty)."""
+    _discover_once()
+    out: list[Move] = []
+    for fn in _REFLECTORS:
+        try:
+            out += fn(traces) or []
+        except Exception:
+            pass
+    return out

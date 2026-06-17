@@ -121,3 +121,67 @@ def test_pipeline_runner_smoke():
     assert rec.task_id == "smoke"
     assert 0.0 <= rec.score <= 1.0
     assert rec.outcome in {"success", "partial", "failure"}
+
+
+# ---- v1.22.0: Goodhart-defended objective, synthesis seam, judge-path regression ----
+import importlib
+_reflect_mod = importlib.import_module("xgen_harness.forge.reflect")  # submodule (name shadowed by the fn)
+from xgen_harness.forge import (
+    FakeProvider,
+    Objective,
+    RunRecord,
+    register_reflector,
+    register_secondary_metric,
+    synthesize,
+)
+
+
+class _GoodhartRunner:
+    """proxy(dev) tasks reward a high threshold; true(held-out) tasks are hurt by it
+    — overfitting the proxy degrades truth (the overoptimization the gate must block)."""
+    def run(self, config, task):
+        thr = config.get("validation_threshold", 0.5)
+        s = thr if task.get("proxy") else 1.0 - thr
+        return RunRecord(task["id"], round(max(0.0, min(1.0, s)), 4), "partial", {})
+
+
+def test_objective_blocks_overoptimization():
+    _reflect_mod._REFLECTORS.clear()
+    register_reflector(lambda tr: [Move("tune_scalar", "validation_threshold", 0.8)])
+    try:
+        runner = _GoodhartRunner()
+        obj = Objective(runner,
+                        dev=[{"id": "p1", "proxy": True}, {"id": "p2", "proxy": True}],
+                        heldout=[{"id": "t1"}, {"id": "t2"}])
+        res = SelfForge(runner, max_steps=3).run({"validation_threshold": 0.5}, obj)
+        assert res.final_j <= res.initial_j + 1e-9         # held-out (true) never regressed
+        assert any(c.overopt for c in res.commits)         # the proxy-up/true-down move was flagged
+        assert res.config["validation_threshold"] == 0.5   # and rejected (unchanged)
+    finally:
+        _reflect_mod._REFLECTORS.clear()
+
+
+def test_synthesis_proposes_registered_criteria_and_is_gated():
+    alg = EngineAlgebra()
+    moves = synthesize([], {"stage_params": {"s08_decide": {"criteria_defs": []}}}, alg)
+    assert moves and all(m.op == "edit_criterion" and alg.is_legal(m) for m in moves)
+    res = SelfForge(SyntheticRunner(), max_steps=6, enable_synthesis=True).run(WEAK_CONFIG, BENCH)
+    assert res.final_j > res.initial_j                     # gated synthesis never breaks the loop
+
+
+def test_secondary_metric_registry():
+    register_secondary_metric(
+        "frac_success", lambda recs: sum(r.outcome == "success" for r in recs) / max(1, len(recs)))
+    sc = Objective(SyntheticRunner(), dev=BENCH, heldout=BENCH, secondary="frac_success").evaluate(WEAK_CONFIG)
+    assert sc.secondary is not None and 0.0 <= sc.secondary <= 1.0
+
+
+def test_judge_path_no_int_none_regression():
+    # judge enabled, aux_max_tokens UNSET (None) — the int(None) bug crashed exactly here
+    rec = PipelineRunner(provider=FakeProvider(judge_score=0.8)).run(
+        {"stage_params": {"s08_decide": {"judge_enabled": True}}, "judge_use_main": True,
+         "max_iterations": 2, "max_retries": 0},
+        {"id": "j", "input": "Say hello in one word."},
+    )
+    assert "int()" not in (rec.error or "")                # the aux_max_tokens fix holds
+    assert 0.0 <= rec.score <= 1.0
