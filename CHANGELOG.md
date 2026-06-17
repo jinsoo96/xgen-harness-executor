@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.20.0 (2026-06-17) — ⚙️ Self-Forging (설정 자가개선 루프) + LLM judge 무음실패 수정
+
+하네스가 자기 실행 trace 로 약점을 진단해 `HarnessConfig`(stage별 strategy/guard/
+criteria/scalar)를 스스로 튜닝하는 **opt-in** 루프. stage 코드 불변 — 등록된 부품 중
+무엇을 쓸지(노브)만 진화. 합법 수는 엔진 레지스트리 introspection 으로만 생성(무하드코딩),
+벤치 J 로 검증해 개선시 채택·회귀시 inertia-brake 롤백. 엔진 철학 유지: 도메인 agnostic·
+opt-in·무하드코딩·`apply`/`inverse` 가역.
+
+- **`xgen_harness/forge/`** (opt-in — `import xgen_harness` 시 미로드):
+  - `EngineAlgebra` — strategies·guards·evaluation_criteria·orchestrators·runtime_defaults
+    레지스트리에서 합법 수 introspection. `apply`/`inverse` 가역(롤백 결정론적).
+  - `SelfForge` 루프 — measure → reflect(근본원인 진단) → propose → cross-check(제안자와
+    독립 validator) → inertia-brake(벤치 J 전후) → promote/rollback → 감사로그.
+  - `Runner` 단일 계약 — `PipelineRunner`(실 Pipeline 구동, J=`validation_score`) /
+    `SyntheticRunner`(오프라인) / `FakeProvider`(무API).
+- **fix: `aux_call` max_tokens `int(None)` (잠복 버그).** `config.aux_max_tokens` 가 기본
+  None sentinel 이라 `getattr(…, 500)` 의 기본값이 발동 안 하고 `int(None)` → TypeError →
+  **LLMJudge 가 매 호출 예외→score=0.7 폴백**(평가가 실제로 안 됨). aux_max_tokens 미지정이
+  기본이라 거의 모든 judge 사용 config 가 영향받았으나, 풀파이프라인 실-provider 테스트
+  부재로 미검출. 메인 경로와 동일하게 `resolve_with_default` 로 None→aux floor(500).
+  (실 LLM forge 실측 중 발견·검증.)
+- 코어 영향: forge 는 opt-in, judge fix 는 None-guard 추가뿐. state/기존 stage 동작 불변.
+  테스트 228 green (신규 3: introspection / 오프라인 루프 / 실 Pipeline 스모크).
+
 ## v1.19.1 (2026-06-15) — 🧠 Recall Workspace (작업기억 보존소) + 반복호출 방지 Guard
 
 긴 작업/검색 에이전트가 발견한 중요 정보를 "커지는 transcript" 가 아니라 별도 작업기억에

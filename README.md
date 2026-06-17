@@ -75,6 +75,21 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 - **`RecallSet` / `RecallItem`**(v1.19.1) — 긴 작업 에이전트의 **작업기억 보존소**. 우선순위 태깅 + dedup + cap 된 항목 집합. 전체 본문은 PD(`pd_stores["recall"]`)로 **step-in**(`fetch_pd`), compact 뷰는 **step-out**(`render()`). opt-in 빌트인 `keep`/`check`/`recall` 로 policy 는 의미 결정만, 엔진이 bookkeeping. 세션 압축에도 살아남음.
 - **`SessionStore`**(Protocol) — `InMemory`/`File` 빌트인(무거운 의존성 0). 플랫폼은 `entry_points` 로 자기 DB 백엔드를 코어 수정 없이 끼운다. `save_session`/`load_session` 으로 세션↔store 인계.
 
+## 자가단조(Self-Forging) — 설정 자가개선 (opt-in, v1.20.0)
+하네스가 자기 실행 trace 로 약점을 진단해 **`HarnessConfig` 자체를 진화**시킨다. stage 코드는 불변 — 어느 stage 에 어느 *등록된* strategy/guard/criteria/scalar 를 쓸지(노브)만 바꾼다.
+- **치환대수(`EngineAlgebra`)** — 합법 수는 엔진 레지스트리(strategies·guards·evaluation_criteria·orchestrators·runtime_defaults)에서 **introspection** 으로만 생성(무하드코딩). 각 수는 `apply`/`inverse` 가역 → 롤백 결정론적.
+- **루프(`SelfForge`)** — `measure(J) → 진단(reflect) → 수 제안 → cross-check(제안자와 독립 validator) → inertia-brake(벤치 J 전후 비교) → 개선시 채택·회귀시 롤백 → 감사로그`.
+- **`Runner` 단일 계약** — `PipelineRunner`(실 Pipeline 구동, J=`validation_score`) / `SyntheticRunner`(오프라인) / `FakeProvider`(무API). 실·모의 동일 인터페이스.
+- opt-in: `import xgen_harness` 시 미로드.
+
+```python
+from xgen_harness.forge import SelfForge, PipelineRunner
+res = SelfForge(PipelineRunner(provider=my_provider)).run(base_config, bench)
+print(res.initial_j, "->", res.final_j)   # 벤치(=목표)만 주면 수렴까지 자율
+```
+
+---
+
 ## 안정 에러코드
 모든 `HarnessError` 는 `exec.<component>.<reason>` 코드(메시지와 독립한 머신 식별자)를 들고 다닌다. 이식측·외부 소비자가 릴리즈 간 안정 분기 가능. `error_code(exc)` / `ALL_ERROR_CODES`.
 
