@@ -81,6 +81,7 @@ config = HarnessConfig(active_strategies={"s04_tool": "none"})
 - **루프(`SelfForge`)** — `measure(J) → 진단(reflect) → 수 제안 → cross-check(제안자와 독립 validator) → inertia-brake(벤치 J 전후 비교) → 개선시 채택·회귀시 롤백 → 감사로그`.
 - **`Runner` 단일 계약** — `PipelineRunner`(실 Pipeline 구동, J=`validation_score`) / `SyntheticRunner`(오프라인) / `FakeProvider`(무API). 실·모의 동일 인터페이스.
 - **Goodhart 방어 objective**(v1.22.0) — 루프는 judge 를 게이밍하므로: **dev 로 최적화 → 동결 held-out 으로 승급 게이트 → 2차 judge-독립 지표 비회귀 → held-out 정점서 early-stop**. proxy↑인데 held-out↓면 `overopt` 플래그 후 롤백. `Objective(runner, dev, heldout, secondary=...)`; 평범한 bench 리스트는 `Objective.from_bench`(dev==held-out)로 기존 동작 유지.
+- **GEPA 반성 리플렉터**(v1.23.0) — `GepaReflector(provider)` 가 실패 trace 피드백을 자연어로 반성해 system_prompt 의 관리 블록(`<forge_guidance>`)을 **append_guidance** 수로 진화(GEPA arXiv:2507.19457). provider 있으면 LLM aux-reflect, 없으면 휴리스틱. objective(held-out)로 게이트돼 *효과 있는 가이던스만* 생존. `register_reflector(GepaReflector(p))` 로 plug.
 - **확장점(전부 레지스트리+entry_points, 무하드코딩)** — 신호추출 `register_signal_extractor`(`forge_signal_extractors`) · 진단규칙 `register_symptom_fix` · 반성 `register_reflector`(`forge_reflectors`, GEPA/LLM 리플렉터) · 프리미티브 합성 `register_synthesizer`(`forge_synthesizers`, Voyager/LATM 안전부분집합 — 선언적 프리미티브만, 코드실행 X) · 2차지표 `register_secondary_metric`(`forge_secondary_metrics`).
 - opt-in: `import xgen_harness` 시 미로드.
 

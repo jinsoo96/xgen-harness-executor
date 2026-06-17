@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.23.0 (2026-06-17) — ⚙️ Self-Forging: GEPA 반성 프롬프트 진화 (실구현)
+
+config 노브를 넘어 **프롬프트(스캐폴드)** 까지 진화 — GEPA(arXiv:2507.19457) 식 reflective
+prompt-guidance. config-forge 의 reflector seam 에 실제 리플렉터를 꽂은 첫 구현.
+
+- **`forge/gepa.py` — `GepaReflector`.** 실패 trace 피드백(`RunRecord.feedback`)을 자연어로
+  반성 → system_prompt 의 관리 블록 `<forge_guidance>` 를 진화시키는 `append_guidance` Move
+  제안. provider 있으면 LLM aux-reflect(stream=False, STOP.text 수집), 없으면 휴리스틱 폴백.
+  objective(held-out)로 게이트돼 효과 있는 가이던스만 생존. `register_reflector(GepaReflector(p))`.
+- **`algebra` — 프롬프트 writable surface.** `append_guidance`(관리 블록 교체·중복 없음) +
+  `set_system_prompt`(전체 설정/역수). `inverse` 로 결정론적 롤백.
+- **`PipelineRunner`** 가 `RunRecord.feedback` 를 엔진 `validation_feedback` 에서 채움(반성 연료).
+- 테스트: append_guidance 왕복(중복 없음·inverse 복원), GEPA 리플렉터 제안, 프롬프트 진화 루프
+  (가이던스로 J↑). 237 green(신규 3). 실 Qwen 반성 검증(근거·정책인용 가이던스 생성).
+- opt-in·무하드코딩·코어 영향 0 유지.
+
 ## v1.22.0 (2026-06-17) — ⚙️ Self-Forging 하드닝: Goodhart 방어 + 합성/반성 확장점
 
 자가단조 루프를 신뢰 가능하게: 루프는 본질적으로 judge(proxy)를 게이밍하므로 진짜 품질을

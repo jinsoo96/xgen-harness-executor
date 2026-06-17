@@ -18,6 +18,7 @@ See spec: forge-engineering/spec/CONFIG-FORGE.md.
 from __future__ import annotations
 
 from .algebra import EngineAlgebra, Move
+from .gepa import GepaReflector
 from .loop import Commit, ForgeResult, SelfForge, forge_config
 from .objective import Objective, Score, register_secondary_metric
 from .reflect import Reflection, extra_candidates, reflect, register_reflector, register_symptom_fix
@@ -32,6 +33,7 @@ __all__ = [
     "reflect",
     "register_symptom_fix",
     "register_reflector",
+    "GepaReflector",
     "extra_candidates",
     "extract_signals",
     "register_signal_extractor",

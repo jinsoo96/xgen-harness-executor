@@ -128,6 +128,7 @@ import importlib
 _reflect_mod = importlib.import_module("xgen_harness.forge.reflect")  # submodule (name shadowed by the fn)
 from xgen_harness.forge import (
     FakeProvider,
+    GepaReflector,
     Objective,
     RunRecord,
     register_reflector,
@@ -185,3 +186,55 @@ def test_judge_path_no_int_none_regression():
     )
     assert "int()" not in (rec.error or "")                # the aux_max_tokens fix holds
     assert 0.0 <= rec.score <= 1.0
+
+
+# ---- v1.23.0: GEPA reflective prompt-guidance evolution ----
+
+def test_algebra_append_guidance_roundtrip():
+    alg = EngineAlgebra()
+    c1 = alg.apply({}, Move("append_guidance", "system_prompt", "Be GROUNDED."))
+    assert "<forge_guidance>" in c1["system_prompt"] and "Be GROUNDED." in c1["system_prompt"]
+    c2 = alg.apply(c1, Move("append_guidance", "system_prompt", "Cite sources."))
+    assert c2["system_prompt"].count("<forge_guidance>") == 1          # managed block, no duplication
+    assert "Cite sources." in c2["system_prompt"] and "Be GROUNDED." not in c2["system_prompt"]
+    inv = alg.inverse({}, Move("append_guidance", "system_prompt", "x"))
+    assert alg.apply(c1, inv).get("system_prompt", "") == ""           # inverse restores prior
+
+
+class _ReflectProvider:
+    provider_name = "reflect-fake"
+    model_name = "rf-1"
+    def supports_tool_use(self): return False
+    def supports_thinking(self): return False
+    async def chat(self, messages, system=None, tools=None, temperature=0.7, max_tokens=8192,
+                   stream=True, thinking=None, tool_choice=None):
+        from xgen_harness.providers.base import ProviderEvent, ProviderEventType
+        yield ProviderEvent(type=ProviderEventType.TEXT_DELTA, text="Always stay GROUNDED in the context.")
+        yield ProviderEvent(type=ProviderEventType.STOP, stop_reason="end_turn")
+
+
+def test_gepa_reflector_proposes_guidance():
+    moves = GepaReflector(provider=_ReflectProvider())(
+        [RunRecord("t", 0.4, "failure", {"low": 1.0}, feedback="answer not grounded")])
+    assert moves and moves[0].op == "append_guidance" and "GROUNDED" in moves[0].value
+
+
+class _PromptRunner:
+    """Rewards a system prompt containing the guidance keyword — prompt content matters."""
+    def run(self, config, task):
+        s = 0.9 if "GROUNDED" in (config.get("system_prompt") or "") else 0.4
+        return RunRecord(task["id"], s, "success" if s >= 0.85 else "failure",
+                         {} if s >= 0.85 else {"low": 1.0}, feedback="answer not grounded")
+
+
+def test_gepa_loop_evolves_prompt():
+    _reflect_mod._REFLECTORS.clear()
+    register_reflector(GepaReflector(provider=_ReflectProvider()))
+    try:
+        runner = _PromptRunner()
+        res = SelfForge(runner, max_steps=3).run(
+            {"system_prompt": ""}, Objective(runner, dev=[{"id": "d1"}], heldout=[{"id": "h1"}]))
+        assert res.final_j > res.initial_j
+        assert "GROUNDED" in (res.config.get("system_prompt") or "")
+    finally:
+        _reflect_mod._REFLECTORS.clear()

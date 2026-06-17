@@ -159,4 +159,5 @@ class PipelineRunner:
         if score is None:
             score = 0.5 if (result.final_output or "").strip() else 0.0
         outcome = "success" if score >= 0.85 else "partial" if score >= 0.6 else "failure"
-        return RunRecord(task["id"], round(float(score), 4), outcome, sig)
+        feedback = getattr(result, "validation_feedback", None) or ""   # for GEPA-style reflectors
+        return RunRecord(task["id"], round(float(score), 4), outcome, sig, feedback=feedback)

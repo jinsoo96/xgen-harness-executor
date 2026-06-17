@@ -16,8 +16,12 @@ Real config paths (verified against core/config.py + the s05/s08 stages):
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from typing import Any
+
+# Managed prompt block the GEPA reflector evolves (kept separate from the user's prompt).
+_GUIDANCE_RE = re.compile(r"\n*<forge_guidance>.*?</forge_guidance>", re.S)
 
 # Scalars the forge may tune, with a discretized candidate ladder. Keys must be
 # real HarnessConfig fields; ranges are clamped to runtime-default floors at use.
@@ -111,6 +115,8 @@ class EngineAlgebra:
             return ":" in move.target
         if move.op == "edit_criterion":
             return isinstance(move.value, dict)
+        if move.op in ("append_guidance", "set_system_prompt"):   # GEPA-evolved prompt surface
+            return isinstance(move.value, str)
         return False
 
     # ---- application / inversion -----------------------------------------
@@ -142,6 +148,12 @@ class EngineAlgebra:
             else:
                 defs.append({"name": move.target, **move.value})
             sp["criteria_defs"] = defs
+        elif move.op == "append_guidance":
+            base = _GUIDANCE_RE.sub("", c.get("system_prompt") or "").rstrip()
+            block = f"<forge_guidance>\n{move.value}\n</forge_guidance>"
+            c["system_prompt"] = (base + "\n\n" + block) if base else block
+        elif move.op == "set_system_prompt":
+            c["system_prompt"] = move.value
         return c
 
     def inverse(self, config_before: dict[str, Any], move: Move) -> Move:
@@ -160,4 +172,6 @@ class EngineAlgebra:
             existing = next((x for x in _stage_param(config_before, "s08_decide", "criteria_defs", []) or []
                              if x.get("name") == move.target), None)
             return Move("edit_criterion", move.target, dict(existing) if existing else {"weight": 0.0, "hard": False})
+        if move.op in ("append_guidance", "set_system_prompt"):
+            return Move("set_system_prompt", "system_prompt", config_before.get("system_prompt", ""))
         raise ValueError(move.op)
