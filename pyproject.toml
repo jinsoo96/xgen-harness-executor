@@ -116,6 +116,26 @@ tool_diversity    = "xgen_harness.stages.strategies.guard:ToolDiversityGuard"
 # 빌트인: memory(InMemory) / default. 파일은 FileSessionStore 직접 생성.
 # 예: my_pg = "my_pkg.stores:PostgresSessionStore"   # () -> SessionStore 인스턴스
 
+[project.entry-points."xgen_harness.embedders"]
+# 쿼리/문서 임베딩 백엔드. 엔진은 Embedder Protocol 만 알고, 외부가 자기 모델
+# (OpenAI/HF/vLLM/로컬)을 코어 수정 없이 끼운다. adapters/embedders.py 가 자동 발견.
+# 예: my_embed = "my_pkg.embedders:MyEmbedder"   # () -> Embedder 인스턴스
+
+# ─── Forge(자가단조) 확장 통로 ───
+# forge 알고리즘의 4 축(신호추출·반성·합성·2차지표)을 외부 패키지가 코어 수정 없이
+# 끼우는 통로. forge/{signals,reflect,synthesis,objective}.py 가 부팅 시 자동 발견.
+[project.entry-points."xgen_harness.forge_signal_extractors"]
+# RunRecord 트레이스 → 데이터유도 신호. 예: my_sig = "my_pkg.forge:extract_my_signal"
+
+[project.entry-points."xgen_harness.forge_reflectors"]
+# 트레이스 분석 → dominant_symptom + 후보 Move. 예: my_refl = "my_pkg.forge:MyReflector"
+
+[project.entry-points."xgen_harness.forge_synthesizers"]
+# 트레이스에서 신규 Move 합성(ML/휴리스틱). 예: my_syn = "my_pkg.forge:MySynthesizer"
+
+[project.entry-points."xgen_harness.forge_secondary_metrics"]
+# Goodhart 방어용 judge-독립 2차 지표. 예: my_metric = "my_pkg.forge:my_secondary_metric"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
