@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.24.0 (2026-06-29) — 🔁 Stateful Loop + forge 적응형 자가튜닝
+
+- **state_loop seam**: `StateProvider`(read)/`StateRecorder`(write) 훅을 파이프라인 루프에 배선. no-op 기본(미주입 시 동작 무변).
+- **state_bridge**: bounded provider(cap·char_budget, 무축적) + 무증식 recorder(seq만) 참조구현. + Reflexion 교훈(retry→정제→다음 회차).
+- **forge 적응형 자가튜닝**: 고정 ladder 폐기 → 범위(lo,hi,step)+현재값 기준 이웃 후보. `register_tunable_scalar`(list/tuple/dict) 확장 seam. state 노브를 HarnessConfig 정식 필드로 승격.
+
 ## v1.23.1 (2026-06-29) — 🩹 s07_act: ToolSource is_error 존중
 
 `_dispatch_tool` 이 ToolSource 결과의 `is_error` 를 무시하고 content 만 추출해, 빈/None
