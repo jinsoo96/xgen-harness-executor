@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.25.0 (2026-06-29) — 🧠 실행 간 학습 1차 (self-improvement §5.5)
+
+- **S09 평가 피드백 영속**: `validation_score` 만 남기던 persist 가 `validation_feedback` 텍스트도 저장(길이 상한 `feedback_text_cap` 설정 가능). 같은 실패가 반복돼도 다음 실행이 원인을 볼 수 있는 학습 원료.
+- **S03 개선지침 섹션**: `improvement_guidelines`(우선순위 2.6, rules 직후) 신설. 회상된 insight(`state.metadata['improvement_guidelines']`, 소스=이식)를 렌더, 비면 생략. in-run Reflexion 은 state_loop.apply_state_view 담당(중복 X). 주입 개수 `max_improvement_guidelines` 설정 가능.
+- 전부 가산적·설정가능·provider-agnostic. 미지정 시 기존 동작 동일(회귀 0).
+
 ## v1.24.0 (2026-06-29) — 🔁 Stateful Loop + forge 적응형 자가튜닝
 
 - **state_loop seam**: `StateProvider`(read)/`StateRecorder`(write) 훅을 파이프라인 루프에 배선. no-op 기본(미주입 시 동작 무변).
