@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.27.0 (2026-06-29) — 🧠 유저 기억 회상·추출 동작화 (메모리 P1 마감)
+
+- **S02 회상**: `memory_scopes` 설정 시 MemoryStore 에서 스코프 기억을 키워드 회상,
+  `state.metadata['recalled_user_memory']` 로 전달. 전략 무관, should_bypass 보강.
+- **S03 user_memory 섹션**(우선순위 2.3, rules 직후): 회상 기억을 "알려진 사실"로 렌더.
+  (이전: S02 가 system_prompt 에 append → S03 재조립에 유실되던 것 수정.)
+- **S09 추출 분리**: memory_extract 추출 훅을 persist 전략에서 분리해 turn-end 독립 실행
+  (캔버스 기본 finalize 전략에서도 동작).
+- 회귀 0 (미설정 시 기존 동작). 라이브 검증: 대화 경계 넘어 유저 이름/선호 회상 확인.
+
 ## v1.26.0 (2026-06-29) — 🧠 유저 단위 장기기억 1차 (메모리 P1 HP1~HP3)
 
 - **MemoryStore 프로토콜**(`memory/memory_store.py`): 스코프(user/room/org) 기반 기억 search/write/delete. entry_points `xgen_harness.memory_stores` 로 이식이 백엔드 주입. 빌트인 InMemory(키워드검색, 의존성 0).
