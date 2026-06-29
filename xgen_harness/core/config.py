@@ -181,6 +181,13 @@ class HarnessConfig:
     max_retries: Optional[int] = None          # 검증 재시도 한도
     validation_threshold: Optional[float] = None  # judge 통과 임계
 
+    # --- Stateful loop (정책 — sentinel; 미설정 시 state_bridge 시그니처 기본) ---
+    # 정식 필드라 strict from_dict 통과 + forge tune_scalar 대상이 됨(자가튜닝).
+    state_max_lessons: Optional[int] = None     # Reflexion 교훈 버퍼 깊이
+    state_max_refined: Optional[int] = None     # 정제 장기기억 노출 수
+    state_max_recall: Optional[int] = None      # 작업기억 노출 수
+    state_char_budget: Optional[int] = None     # state 뷰 char 예산
+
     # --- 시스템 프롬프트 ---
     system_prompt: str = ""
 
@@ -247,6 +254,14 @@ class HarnessConfig:
     # True 면 Pipeline/Stage 내부 세밀한 이벤트(ServiceLookup / CapabilityBind /
     # StageSubstep / Retry) 가 추가 발행. 기본 False 라 기존 SSE 출력량 변화 없음.
     verbose_events: bool = False
+
+    # --- 런타임 자기조정 게이트 (v1.24 — 자가설정 노드) ---
+    # 엔진은 "실행 중 자기 config 를 되쓰는" 중립 메커니즘(RuntimeConfigMutator)만 제공하고,
+    # 그 활성화 정책은 이식측이 이 한 값으로 opt-in 한다 (PHILOSOPHY: 엔진=메커니즘, 이식=정책).
+    #   - "off"     : 기본. Mutator 의 모든 변이가 no-op (default-inert). 동작 변화 0.
+    #   - "observe" : 변이를 적용하지 않고 제안(proposals)만 기록 — diff 가시화/HITL 용.
+    #   - "act"     : algebra 로 legality 검증 + inverse 저널 후 라이브 적용 (롤백 가능).
+    runtime_self_govern: str = "off"
 
     # --- Judge LLM (v1.1.0+) ---
     # s08_decide 의 judge_then_loop 가 사용하는 별도 평가 모델. 미지정(빈 문자열) 시
