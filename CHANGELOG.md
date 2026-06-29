@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.23.1 (2026-06-29) — 🩹 s07_act: ToolSource is_error 존중
+
+`_dispatch_tool` 이 ToolSource 결과의 `is_error` 를 무시하고 content 만 추출해, 빈/None
+도구결과가 success 로 기록되던 결함 수정. is_error 면 `ToolError` 로 올려 실패로 기록 →
+기존 graceful fallback(연속실패 가이드) 발동. (vLLM+빈 도구에서 모델이 무한 재시도하던 원인)
+
 ## v1.23.0 (2026-06-17) — ⚙️ Self-Forging: GEPA 반성 프롬프트 진화 (실구현)
 
 config 노브를 넘어 **프롬프트(스캐폴드)** 까지 진화 — GEPA(arXiv:2507.19457) 식 reflective
