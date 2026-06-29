@@ -1,6 +1,6 @@
 [project]
 name = "xgen-harness"
-version = "1.25.0"
+version = "1.26.0"
 description = "XGEN Harness — LLM 자율 조립 에이전트 하네스. 컴파일 산출물(npm tarball / Python wheel)이 동일 spec 으로 env-only standalone 실행. 버전 히스토리는 CHANGELOG.md 참조."
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -115,6 +115,15 @@ tool_diversity    = "xgen_harness.stages.strategies.guard:ToolDiversityGuard"
 # 알고, 플랫폼이 자기 DB(Postgres/Redis/S3 등) 구현을 코어 수정 없이 끼운다.
 # 빌트인: memory(InMemory) / default. 파일은 FileSessionStore 직접 생성.
 # 예: my_pg = "my_pkg.stores:PostgresSessionStore"   # () -> SessionStore 인스턴스
+
+[project.entry-points."xgen_harness.memory_stores"]
+# 스코프(user/room/org) 기반 장기기억 백엔드 (P1 HP1~HP3). 엔진은 MemoryStore
+# Protocol(search/write/delete) 만 알고, 이식이 DB·임베딩·권한 구현을 끼운다. 미주입 시 무동작.
+# 예: my_qdrant = "my_pkg.memory:QdrantUserMemoryStore"   # () -> MemoryStore
+
+[project.entry-points."xgen_harness.memory_extractors"]
+# S09 턴 종료 기억 추출 콜백 (HP3). fn(state) -> int|Awaitable|None. 판정·저장은 콜백 책임.
+# 예: my_extract = "my_pkg.memory:extract_and_store"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

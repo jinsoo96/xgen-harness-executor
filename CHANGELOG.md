@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.26.0 (2026-06-29) — 🧠 유저 단위 장기기억 1차 (메모리 P1 HP1~HP3)
+
+- **MemoryStore 프로토콜**(`memory/memory_store.py`): 스코프(user/room/org) 기반 기억 search/write/delete. entry_points `xgen_harness.memory_stores` 로 이식이 백엔드 주입. 빌트인 InMemory(키워드검색, 의존성 0).
+- **S02 multi-collection 회상**(HP2): `memory_collections`(복수) 병렬 검색·score 병합. `{user_id}`/`{interaction_id}` 치환. 미지정 시 단일 collection(하위호환).
+- **S09 memory_extract 훅**(HP3): 턴 종료 시 추출 콜백 호출(`memory_extract` 게이트). 판정·저장은 콜백(이식) 위임. entry_points `xgen_harness.memory_extractors`.
+- 전부 가산적·provider-agnostic. 미지정/미주입 시 기존 동작 동일(회귀 0).
+
 ## v1.25.0 (2026-06-29) — 🧠 실행 간 학습 1차 (self-improvement §5.5)
 
 - **S09 평가 피드백 영속**: `validation_score` 만 남기던 persist 가 `validation_feedback` 텍스트도 저장(길이 상한 `feedback_text_cap` 설정 가능). 같은 실패가 반복돼도 다음 실행이 원인을 볼 수 있는 학습 원료.

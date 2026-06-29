@@ -24,6 +24,17 @@ from .store import (
     attach_progress,
     read_progress,
 )
+from .memory_store import (
+    MemoryEntry,
+    MemoryStore,
+    InMemoryMemoryStore,
+    register_memory_store,
+    get_memory_store,
+    has_memory_store,
+    available_memory_stores,
+    register_memory_extractor,
+    get_memory_extractor,
+)
 
 __all__ = [
     "ProgressStatus",
@@ -45,4 +56,13 @@ __all__ = [
     "load_session",
     "attach_progress",
     "read_progress",
+    "MemoryEntry",
+    "MemoryStore",
+    "InMemoryMemoryStore",
+    "register_memory_store",
+    "get_memory_store",
+    "has_memory_store",
+    "available_memory_stores",
+    "register_memory_extractor",
+    "get_memory_extractor",
 ]
